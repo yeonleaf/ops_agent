@@ -1,0 +1,14 @@
+.env
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.db
+*.json
+*.code-workspace
+/vector_db/
