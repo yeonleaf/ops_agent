@@ -128,7 +128,7 @@ class FileTypeDetector:
             # 텍스트가 충분하고 이미지가 적으면 text-based
             if len(text_content.strip()) > 100 and image_count < 3:
                 return ContentType.TEXT_BASED
-        else:
+            else:
                 return ContentType.LAYOUT_BASED
                 
         except Exception:
@@ -470,11 +470,11 @@ class LayoutBasedProcessor:
                 pix = page.get_pixmap(matrix=mat)
                 
                 # 이미지 저장
-                                    temp_dir = "temp_images"
-                                    os.makedirs(temp_dir, exist_ok=True)
-                                    
+                temp_dir = "temp_images"
+                os.makedirs(temp_dir, exist_ok=True)
+                
                 image_filename = f"pdf_page{page_num + 1}.png"
-                                    image_path = os.path.join(temp_dir, image_filename)
+                image_path = os.path.join(temp_dir, image_filename)
                 pix.save(image_path)
                 
                 # GPT Vision으로 이미지 처리

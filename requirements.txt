@@ -18,4 +18,11 @@ google-api-python-client>=2.100.0
 # requests는 이미 위에 포함됨
 
 # 기타 유틸리티
-typing-extensions 
+typing-extensions
+
+# Jira 연동을 위한 패키지
+jira>=3.5.0
+
+# Rate limiting 및 backoff 전략을 위한 패키지들
+tenacity>=8.2.0
+ratelimit>=2.2.1 

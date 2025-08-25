@@ -447,16 +447,110 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
         
         if not emails_to_process:
             logging.warning("처리할 메일이 없습니다.")
-            return {'display_mode': 'no_emails', 'message': '처리할 새 메일이 없습니다.'}
+            return {
+                'display_mode': 'no_emails', 
+                'message': '처리할 새 메일이 없습니다.',
+                'tickets': [],
+                'non_work_emails': []
+            }
         
         # 2. 가져온 메일을 티켓 로직으로 처리합니다.
         logging.info(f"process_tickets 호출 시작: {len(emails_to_process)}개 메일")
         # user_query가 파라미터 딕셔너리인 경우 기본 티켓 생성 쿼리로 변경
         actual_query = "오늘 처리할 티켓 목록" if isinstance(user_query, str) and user_query.startswith('{') else (user_query or '오늘 처리할 티켓 목록')
         logging.info(f"실제 사용할 쿼리: {actual_query}")
-        result = service.process_tickets(emails_to_process, actual_query)
-        logging.info(f"process_tickets 결과: {result}")
         
+        # 메일 분류 및 티켓 생성
+        tickets = []
+        non_work_emails = []
+        new_tickets = 0
+        existing_tickets = 0
+        
+        service._init_classifier()
+        if not service.classifier:
+            logging.error("티켓 처리를 위한 분류기를 사용할 수 없습니다.")
+            raise RuntimeError("티켓 처리를 위한 분류기를 사용할 수 없습니다.")
+        
+        for i, email in enumerate(emails_to_process):
+            logging.info(f"메일 {i+1}/{len(emails_to_process)} 처리: {email.subject}")
+            
+            # EmailMessage 객체를 딕셔너리로 변환하여 JSON 직렬화 가능하게 만듦
+            email_dict = email.model_dump()
+            logging.info(f"메일 {i+1} 딕셔너리 변환 완료: {email_dict.get('subject')}")
+            
+            ticket_status, reason, details = service.classifier.should_create_ticket(email_dict, actual_query)
+            logging.info(f"메일 {i+1} 티켓 상태: {ticket_status}, 이유: {reason}")
+
+            if ticket_status == TicketCreationStatus.SHOULD_CREATE:
+                logging.info(f"메일 {i+1} 티켓 생성 시작")
+                ticket = service.classifier.create_ticket_from_email(email_dict, actual_query)
+                if ticket:
+                    # SQLite에 티켓 저장
+                    try:
+                        from sqlite_ticket_models import SQLiteTicketManager, Ticket
+                        ticket_manager = SQLiteTicketManager()
+                        
+                        # Ticket 객체 생성
+                        db_ticket = Ticket(
+                            ticket_id=None,  # SQLite에서 자동 생성
+                            original_message_id=ticket.get('original_message_id', ''),
+                            status=ticket.get('status', 'pending'),
+                            title=ticket.get('title', ''),
+                            description=ticket.get('description', ''),
+                            priority=ticket.get('priority', 'Medium'),
+                            ticket_type=ticket.get('type', 'Task'),
+                            reporter=ticket.get('reporter', ''),
+                            reporter_email='',
+                            labels=[],
+                            created_at=ticket.get('created_at', ''),
+                            updated_at=ticket.get('created_at', '')
+                        )
+                        
+                        # SQLite에 저장
+                        ticket_id = ticket_manager.insert_ticket(db_ticket)
+                        ticket['ticket_id'] = ticket_id
+                        logging.info(f"메일 {i+1} SQLite 저장 성공: ticket_id={ticket_id}")
+                        
+                    except Exception as e:
+                        logging.error(f"메일 {i+1} SQLite 저장 실패: {str(e)}")
+                    
+                    tickets.append(ticket)
+                    new_tickets += 1
+                    logging.info(f"메일 {i+1} 티켓 생성 성공: {ticket}")
+                else:
+                    logging.warning(f"메일 {i+1} 티켓 생성 실패")
+            elif ticket_status == TicketCreationStatus.ALREADY_EXISTS:
+                logging.info(f"메일 {i+1} 기존 티켓 발견")
+                # 간단한 기존 티켓 정보 생성
+                tickets.append({'ticket_id': details.get('ticket_id', 'N/A'), 'title': email.subject, 'status': 'existing'})
+                existing_tickets += 1
+            else:
+                logging.info(f"메일 {i+1} 티켓 생성 불필요: {reason}")
+                # 업무용이 아닌 메일을 non_work_emails에 추가
+                non_work_email = {
+                    'id': email_dict.get('id'),
+                    'subject': email_dict.get('subject', '제목 없음'),
+                    'sender': email_dict.get('sender', '발신자 없음'),
+                    'body': email_dict.get('body', '내용 없음'),
+                    'received_date': email_dict.get('received_date'),
+                    'is_read': email_dict.get('is_read', False),
+                    'priority': email_dict.get('priority', 'Normal'),
+                    'classification_reason': reason
+                }
+                non_work_emails.append(non_work_email)
+        
+        logging.info(f"티켓 처리 완료: 총 {len(tickets)}개, 새로 생성: {new_tickets}개, 기존: {existing_tickets}개, 업무용 아님: {len(non_work_emails)}개")
+        
+        result = {
+            'display_mode': 'tickets',
+            'tickets': tickets,
+            'non_work_emails': non_work_emails,
+            'new_tickets_created': new_tickets,
+            'existing_tickets_found': existing_tickets,
+            'summary': { 'total_tasks': len(tickets) }
+        }
+        
+        logging.info(f"최종 결과: {result}")
         return result
         
     except Exception as e:
@@ -467,8 +561,79 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
         return {
             'display_mode': 'error',
             'message': f'메일 처리 중 오류가 발생했습니다: {str(e)}',
-            'error': str(e)
+            'error': str(e),
+            'tickets': [],
+            'non_work_emails': []
         }
+
+def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
+    """
+    단일 이메일을 티켓으로 변환하는 함수
+    
+    Args:
+        email_data: 이메일 데이터 딕셔너리
+        
+    Returns:
+        생성된 티켓 정보
+    """
+    try:
+        import logging
+        logging.info(f"create_ticket_from_single_email 시작: {email_data.get('subject', '제목 없음')}")
+        
+        # 기본 제공자로 UnifiedEmailService 생성
+        service = UnifiedEmailService()
+        service._init_classifier()
+        
+        if not service.classifier:
+            logging.error("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
+            raise RuntimeError("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
+        
+        # 티켓 생성
+        ticket = service.classifier.create_ticket_from_email(email_data, "사용자 요청으로 티켓 생성")
+        
+        if not ticket:
+            logging.error("티켓 생성에 실패했습니다.")
+            raise RuntimeError("티켓 생성에 실패했습니다.")
+        
+        # SQLite에 티켓 저장
+        try:
+            from sqlite_ticket_models import SQLiteTicketManager, Ticket
+            ticket_manager = SQLiteTicketManager()
+            
+            # Ticket 객체 생성
+            db_ticket = Ticket(
+                ticket_id=None,  # SQLite에서 자동 생성
+                original_message_id=ticket.get('original_message_id', ''),
+                status=ticket.get('status', 'pending'),
+                title=ticket.get('title', ''),
+                description=ticket.get('description', ''),
+                priority=ticket.get('priority', 'Medium'),
+                ticket_type=ticket.get('type', 'Task'),
+                reporter=ticket.get('reporter', ''),
+                reporter_email='',
+                labels=[],
+                created_at=ticket.get('created_at', ''),
+                updated_at=ticket.get('created_at', '')
+            )
+            
+            # SQLite에 저장
+            ticket_id = ticket_manager.insert_ticket(db_ticket)
+            ticket['ticket_id'] = ticket_id
+            logging.info(f"SQLite 저장 성공: ticket_id={ticket_id}")
+            
+        except Exception as e:
+            logging.error(f"SQLite 저장 실패: {str(e)}")
+            # SQLite 저장 실패해도 티켓은 반환
+        
+        logging.info(f"티켓 생성 완료: {ticket}")
+        return ticket
+        
+    except Exception as e:
+        import logging
+        logging.error(f"create_ticket_from_single_email 오류: {str(e)}")
+        import traceback
+        logging.error(f"오류 상세: {traceback.format_exc()}")
+        raise e
 
 def get_email_provider_status(provider_name: str = None) -> Dict[str, Any]:
     """이메일 제공자 상태를 확인합니다."""

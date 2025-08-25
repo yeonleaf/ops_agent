@@ -1,0 +1,331 @@
+2025-08-24 14:01:21,436 - jira_connector - INFO - 📝 Jira 로깅 시작: logs/jira_sync_20250824_140121.log
+2025-08-24 14:01:28,789 - jira_connector - INFO - 🔗 Jira 설정 로드 완료: https://juyeonjo633.atlassian.net, juyeonjo633@gmail.com
+2025-08-24 14:01:28,789 - jira_connector - INFO - 🔗 Jira 서버에 연결 시도: https://juyeonjo633.atlassian.net
+2025-08-24 14:01:28,789 - jira_connector - INFO - 📧 사용자 이메일: juyeonjo633@gmail.com
+2025-08-24 14:01:28,790 - jira_connector - INFO - 🔑 API 토큰 길이: 192자
+2025-08-24 14:01:29,303 - jira_connector - INFO - ✅ Jira 클라이언트 초기화 성공: https://juyeonjo633.atlassian.net
+2025-08-24 14:01:29,303 - jira_connector - INFO - 📊 서버 정보: Jira
+2025-08-24 14:01:29,303 - jira_connector - INFO - 📊 서버 버전: 1001.0.0-SNAPSHOT
+2025-08-24 14:01:29,303 - jira_connector - INFO - 📊 빌드 번호: 100288
+2025-08-24 14:01:29,303 - jira_connector - INFO - 📊 서버 시간: 2025-08-24T14:01:29.334+0900
+2025-08-24 14:01:29,306 - jira_connector - INFO - ✅ SQLite DB 연결 성공
+2025-08-24 14:01:29,312 - jira_connector - INFO - ✅ 벡터 DB 매니저 초기화 성공
+2025-08-24 14:01:29,312 - jira_connector - INFO - ✅ Rate limiting 설정 완료 (검색: 100/분, 일반: 1000/분)
+2025-08-24 14:01:29,312 - jira_connector - INFO - ✅ Exponential backoff 전략 설정 완료 (최대 5회 재시도)
+2025-08-24 14:01:29,312 - jira_connector - INFO - 🚀 Jira 데이터 동기화 시작
+2025-08-24 14:01:29,312 - jira_connector - INFO - 📅 마지막 동기화: 1900-01-01 00:00:00
+2025-08-24 14:01:29,312 - jira_connector - INFO - 🔍 1단계: 전체 이슈 수 확인
+2025-08-24 14:01:29,313 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:29,702 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:29,703 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:29,703 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:29 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': '3edfa91a1e8feb5ea9d9768929b7ea45', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '312c39640c1a43bb8dc76aaa8da749bc', 'Atl-Request-Id': '312c3964-0c1a-43bb-8dc7-6aaa8da749bc', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=74,atl-edge-internal;dur=15,atl-edge-upstream;dur=60,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 bced12c2399c71886cefb7ebb01b87d0.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN80-P2', 'X-Amz-Cf-Id': 'VPS7yKTl_qApFnLTGznqT9FojBMzoqhcK_YZVwU9pjKYVq3iSLGqsA=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:29,704 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:29,704 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:29,706 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140129.txt
+2025-08-24 14:01:29,707 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:29,707 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:29,707 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:29,707 - jira_connector - WARNING - 🔄 재시도 1/5 - 대기 시간: 4.0초
+2025-08-24 14:01:33,708 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:33,799 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:33,799 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:33,799 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:33 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': '8bf8088ab91217d3a1268323feb17bb6', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': 'd6654d503ebf4ec49f57a1bba10d3a63', 'Atl-Request-Id': 'd6654d50-3ebf-4ec4-9f57-a1bba10d3a63', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=59,atl-edge-internal;dur=14,atl-edge-upstream;dur=45,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 bced12c2399c71886cefb7ebb01b87d0.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN80-P2', 'X-Amz-Cf-Id': 'bWi7CBf3oZymuVJzEw-j02KBXB8ZOXbrYVmQpSlGDQ1gSy-0l_NDYQ=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:33,799 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:33,799 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:33,800 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140133.txt
+2025-08-24 14:01:33,800 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:33,800 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:33,800 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:33,800 - jira_connector - WARNING - 🔄 재시도 2/5 - 대기 시간: 4.0초
+2025-08-24 14:01:37,801 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:37,897 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:37,898 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:37,898 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:37 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': 'ccc3aecc95f6f74cb46e90b464434b8a', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '7a08103f56094d3c9cd3939f283ca3d7', 'Atl-Request-Id': '7a08103f-5609-4d3c-9cd3-939f283ca3d7', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=60,atl-edge-internal;dur=16,atl-edge-upstream;dur=43,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 bced12c2399c71886cefb7ebb01b87d0.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN80-P2', 'X-Amz-Cf-Id': 'DwedxGPhTBMf0IX567BIpSRDA02lObpor023DVglMVIR1CuhpRhgKQ=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:37,898 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:37,898 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:37,899 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140137.txt
+2025-08-24 14:01:37,899 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:37,899 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:37,899 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:37,899 - jira_connector - WARNING - 🔄 재시도 3/5 - 대기 시간: 4.0초
+2025-08-24 14:01:41,294 - jira_connector - INFO - 🔗 Jira 설정 로드 완료: https://juyeonjo633.atlassian.net, juyeonjo633@gmail.com
+2025-08-24 14:01:41,294 - jira_connector - INFO - 🔗 Jira 서버에 연결 시도: https://juyeonjo633.atlassian.net
+2025-08-24 14:01:41,294 - jira_connector - INFO - 📧 사용자 이메일: juyeonjo633@gmail.com
+2025-08-24 14:01:41,294 - jira_connector - INFO - 🔑 API 토큰 길이: 192자
+2025-08-24 14:01:41,491 - jira_connector - INFO - ✅ Jira 클라이언트 초기화 성공: https://juyeonjo633.atlassian.net
+2025-08-24 14:01:41,492 - jira_connector - INFO - 📊 서버 정보: Jira
+2025-08-24 14:01:41,492 - jira_connector - INFO - 📊 서버 버전: 1001.0.0-SNAPSHOT
+2025-08-24 14:01:41,492 - jira_connector - INFO - 📊 빌드 번호: 100288
+2025-08-24 14:01:41,492 - jira_connector - INFO - 📊 서버 시간: 2025-08-24T14:01:41.520+0900
+2025-08-24 14:01:41,494 - jira_connector - INFO - ✅ SQLite DB 연결 성공
+2025-08-24 14:01:41,502 - jira_connector - INFO - ✅ 벡터 DB 매니저 초기화 성공
+2025-08-24 14:01:41,502 - jira_connector - INFO - ✅ Rate limiting 설정 완료 (검색: 100/분, 일반: 1000/분)
+2025-08-24 14:01:41,503 - jira_connector - INFO - ✅ Exponential backoff 전략 설정 완료 (최대 5회 재시도)
+2025-08-24 14:01:41,503 - jira_connector - INFO - 🚀 Jira 데이터 동기화 시작
+2025-08-24 14:01:41,503 - jira_connector - INFO - 📅 마지막 동기화: 1900-01-01 00:00:00
+2025-08-24 14:01:41,503 - jira_connector - INFO - 🔍 1단계: 전체 이슈 수 확인
+2025-08-24 14:01:41,503 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:41,776 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:41,777 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:41,777 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:41 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': 'd5c6d03ef0c08354c391e32626b05a75', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '812a8563849e433aa480e0598143d257', 'Atl-Request-Id': '812a8563-849e-433a-a480-e0598143d257', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=59,atl-edge-internal;dur=17,atl-edge-upstream;dur=41,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 f292525632ff4da4658e70c2b7b83518.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN57-P5', 'X-Amz-Cf-Id': 'X-IdZ5IA8OzT2rgK4NUpgvNMKjQz80V5gRtltVJusA-e960_2ibICg=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:41,778 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:41,778 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:41,782 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140141.txt
+2025-08-24 14:01:41,782 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:41,783 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:41,783 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:41,784 - jira_connector - WARNING - 🔄 재시도 1/5 - 대기 시간: 4.0초
+2025-08-24 14:01:41,903 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:41,999 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:42,000 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:42,000 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:42 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': 'c1cf89dab93c03e1097e9480ffd4de3e', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '7125c9767ca3452a9e370aab71329cb4', 'Atl-Request-Id': '7125c976-7ca3-452a-9e37-0aab71329cb4', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=66,atl-edge-internal;dur=14,atl-edge-upstream;dur=51,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 bced12c2399c71886cefb7ebb01b87d0.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN80-P2', 'X-Amz-Cf-Id': 'pLs1fzVJUNX1z_K-bQmX7xwzo2la2i64VKg3WHJqqQjEMt1BTO9kuA=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:42,000 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:42,000 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:42,001 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140142.txt
+2025-08-24 14:01:42,001 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:42,001 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:42,001 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:42,001 - jira_connector - WARNING - 🔄 재시도 4/5 - 대기 시간: 8.0초
+2025-08-24 14:01:45,785 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:45,876 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:45,876 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:45,876 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:45 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': '785e41895efda53434d7b46b36655d0d', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '8d35044d0f0f4f8d885a1c03176c3072', 'Atl-Request-Id': '8d35044d-0f0f-4f8d-885a-1c03176c3072', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=63,atl-edge-internal;dur=17,atl-edge-upstream;dur=46,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 f292525632ff4da4658e70c2b7b83518.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN57-P5', 'X-Amz-Cf-Id': 'FYPN1KZb9pC5fDOne-zgVwC6idb5_-1Ra_Z9wm_rOoMu_JkM0cMxVg=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:45,876 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:45,876 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:45,877 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140145.txt
+2025-08-24 14:01:45,877 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:45,877 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:45,877 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:45,877 - jira_connector - WARNING - 🔄 재시도 2/5 - 대기 시간: 4.0초
+2025-08-24 14:01:49,882 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:49,964 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:49,965 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:49,965 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:49 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': '0272ad38e0f2ba50e1d28fc86bb81c7b', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': 'ff89b4db8f534a45a886b4e15c64365b', 'Atl-Request-Id': 'ff89b4db-8f53-4a45-a886-b4e15c64365b', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=63,atl-edge-internal;dur=15,atl-edge-upstream;dur=47,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 f292525632ff4da4658e70c2b7b83518.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN57-P5', 'X-Amz-Cf-Id': 'TJl2NBuDq7XcPk8yIWs_xUlNrKkbYFvC_r9W1wpKyOPryAzT1NdWUw=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:49,965 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:49,966 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:49,967 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140149.txt
+2025-08-24 14:01:49,967 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:49,968 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:49,968 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:49,968 - jira_connector - WARNING - 🔄 재시도 3/5 - 대기 시간: 4.0초
+2025-08-24 14:01:50,006 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:50,086 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:50,086 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:50,086 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:50 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': '7260ea23a1f4b884c623dcbcf00dfe02', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': 'db38038970304b76bb434defc75256a1', 'Atl-Request-Id': 'db380389-7030-4b76-bb43-4defc75256a1', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=59,atl-edge-internal;dur=17,atl-edge-upstream;dur=42,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 bced12c2399c71886cefb7ebb01b87d0.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN80-P2', 'X-Amz-Cf-Id': 'adiYegsPXZQeO0F1UpqyXmxjLB2pcb9MN6glybJqhSdkmyfpY8aNWQ=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:50,086 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:50,086 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:50,087 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140150.txt
+2025-08-24 14:01:50,087 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:50,087 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:50,087 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:50,087 - jira_connector - WARNING - ⚠️ 전체 이슈 수 확인 실패: RetryError[<Future at 0x16ed8fa50 state=finished raised JIRAError>]
+2025-08-24 14:01:50,087 - jira_connector - INFO - 🔍 2단계: 프로젝트별 이슈 확인
+2025-08-24 14:01:50,241 - jira_connector - INFO - 📊 접근 가능한 프로젝트 수: 2
+2025-08-24 14:01:50,242 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BPM ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:01:50,616 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:01:50,616 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:01:50,617 - jira_connector - INFO -   - 총 이슈 수: 3
+2025-08-24 14:01:50,617 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:01:50,617 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:01:50,617 - jira_connector - INFO -   - 실제 반환된 이슈 수: 3
+2025-08-24 14:01:50,618 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:01:50,618 - jira_connector - INFO - 📊 프로젝트 BPM: 3개 이슈
+2025-08-24 14:01:50,618 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BTVO ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:01:50,948 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:01:50,949 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:01:50,950 - jira_connector - INFO -   - 총 이슈 수: 5
+2025-08-24 14:01:50,950 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:01:50,950 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:01:50,950 - jira_connector - INFO -   - 실제 반환된 이슈 수: 5
+2025-08-24 14:01:50,951 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:01:50,951 - jira_connector - INFO - 📊 프로젝트 BTVO: 5개 이슈
+2025-08-24 14:01:50,951 - jira_connector - INFO - 🔍 3단계: 메인 JQL 쿼리 실행
+2025-08-24 14:01:50,951 - jira_connector - INFO - 📅 날짜가 너무 오래되어 최근 1년으로 제한: updated >= "2024-08-24" ORDER BY updated DESC
+2025-08-24 14:01:50,952 - jira_connector - INFO - 🔍 JQL 쿼리 실행: updated >= "2024-08-24" ORDER BY updated DESC
+2025-08-24 14:01:50,952 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('updated >= "2024-08-24" ORDER BY updated DESC',), {'maxResults': 1000, 'fields': 'summary,description,status,priority,assignee,reporter,created,updated,comment'}
+2025-08-24 14:01:51,267 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:01:51,267 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:01:51,267 - jira_connector - INFO -   - 총 이슈 수: 11
+2025-08-24 14:01:51,267 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:01:51,267 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:01:51,267 - jira_connector - INFO -   - 실제 반환된 이슈 수: 11
+2025-08-24 14:01:51,267 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:01:51,268 - jira_connector - INFO - 📊 Jira API 응답 객체 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:01:51,268 - jira_connector - INFO - 📊 총 이슈 수: 11
+2025-08-24 14:01:51,268 - jira_connector - INFO - 📊 최대 결과 수: 0
+2025-08-24 14:01:51,268 - jira_connector - INFO - 📊 시작 위치: 0
+2025-08-24 14:01:51,268 - jira_connector - INFO - 📊 실제 반환된 이슈 수: 11
+2025-08-24 14:01:51,268 - jira_connector - INFO - ✅ 11개의 업데이트된 티켓 조회 완료
+2025-08-24 14:01:51,268 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-16 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:51,528 - jira_connector - INFO - ✅ 티켓 BTVO-16 벡터 DB 추가 완료
+2025-08-24 14:01:51,529 - jira_connector - INFO - ✅ 티켓 BTVO-16 처리 완료 (1/11)
+2025-08-24 14:01:51,529 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-14 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:51,619 - jira_connector - INFO - ✅ 티켓 BTVO-14 벡터 DB 추가 완료
+2025-08-24 14:01:51,619 - jira_connector - INFO - ✅ 티켓 BTVO-14 처리 완료 (2/11)
+2025-08-24 14:01:51,619 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-13 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:51,705 - jira_connector - INFO - ✅ 티켓 BTVO-13 벡터 DB 추가 완료
+2025-08-24 14:01:51,705 - jira_connector - INFO - ✅ 티켓 BTVO-13 처리 완료 (3/11)
+2025-08-24 14:01:51,705 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-8 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:51,785 - jira_connector - INFO - ✅ 티켓 BTVO-8 벡터 DB 추가 완료
+2025-08-24 14:01:51,786 - jira_connector - INFO - ✅ 티켓 BTVO-8 처리 완료 (4/11)
+2025-08-24 14:01:51,786 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-12 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:51,871 - jira_connector - INFO - ✅ 티켓 BTVO-12 벡터 DB 추가 완료
+2025-08-24 14:01:51,872 - jira_connector - INFO - ✅ 티켓 BTVO-12 처리 완료 (5/11)
+2025-08-24 14:01:51,872 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-11 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:51,957 - jira_connector - INFO - ✅ 티켓 BTVO-11 벡터 DB 추가 완료
+2025-08-24 14:01:51,957 - jira_connector - INFO - ✅ 티켓 BTVO-11 처리 완료 (6/11)
+2025-08-24 14:01:51,957 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-9 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:52,038 - jira_connector - INFO - ✅ 티켓 BTVO-9 벡터 DB 추가 완료
+2025-08-24 14:01:52,038 - jira_connector - INFO - ✅ 티켓 BTVO-9 처리 완료 (7/11)
+2025-08-24 14:01:52,038 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-10 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:52,126 - jira_connector - INFO - ✅ 티켓 BTVO-10 벡터 DB 추가 완료
+2025-08-24 14:01:52,126 - jira_connector - INFO - ✅ 티켓 BTVO-10 처리 완료 (8/11)
+2025-08-24 14:01:52,126 - jira_connector - WARNING - ⚠️ 기존 티켓 BPM-3 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:52,211 - jira_connector - INFO - ✅ 티켓 BPM-3 벡터 DB 추가 완료
+2025-08-24 14:01:52,211 - jira_connector - INFO - ✅ 티켓 BPM-3 처리 완료 (9/11)
+2025-08-24 14:01:52,211 - jira_connector - WARNING - ⚠️ 기존 티켓 BPM-2 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:52,296 - jira_connector - INFO - ✅ 티켓 BPM-2 벡터 DB 추가 완료
+2025-08-24 14:01:52,296 - jira_connector - INFO - ✅ 티켓 BPM-2 처리 완료 (10/11)
+2025-08-24 14:01:52,296 - jira_connector - INFO - ⏳ Rate limiting: 10개 티켓 처리 후 잠시 대기...
+2025-08-24 14:01:53,301 - jira_connector - WARNING - ⚠️ 기존 티켓 BPM-1 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:01:53,435 - jira_connector - INFO - ✅ 티켓 BPM-1 벡터 DB 추가 완료
+2025-08-24 14:01:53,435 - jira_connector - INFO - ✅ 티켓 BPM-1 처리 완료 (11/11)
+2025-08-24 14:01:53,435 - jira_connector - INFO - ✅ 총 11개 티켓 벡터 DB 적재 완료
+2025-08-24 14:01:53,436 - jira_connector - INFO - ✅ 마지막 동기화 시각 업데이트 완료: 2025-08-24T14:01:53.435257
+2025-08-24 14:01:53,436 - jira_connector - INFO - 🎉 Jira 동기화 완료: 11개 티켓, 24.12초 소요
+2025-08-24 14:01:53,971 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:01:54,057 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:01:54,057 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:01:54,057 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:01:54 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': 'b013a85ce55ab78f4831c91bbe1e2770', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '440f41465cae481ea91c29cd6c5671e5', 'Atl-Request-Id': '440f4146-5cae-481e-a91c-29cd6c5671e5', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=58,atl-edge-internal;dur=16,atl-edge-upstream;dur=42,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 f292525632ff4da4658e70c2b7b83518.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN57-P5', 'X-Amz-Cf-Id': '3hgfWjAEY16M8aY2NPkAUbQ2BlAbMbkVr1_ao4lwrOexH0DscPLgeQ=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:01:54,057 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:01:54,057 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:01:54,058 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140154.txt
+2025-08-24 14:01:54,059 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:01:54,059 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:01:54,059 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:01:54,059 - jira_connector - WARNING - 🔄 재시도 4/5 - 대기 시간: 8.0초
+2025-08-24 14:02:02,062 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:02:02,159 - jira_connector - ERROR - ❌ 검색 API 오류 상세 정보:
+2025-08-24 14:02:02,160 - jira_connector - ERROR -   - 오류 타입: <class 'jira.exceptions.JIRAError'>
+2025-08-24 14:02:02,160 - jira_connector - ERROR -   - 오류 메시지: JiraError HTTP 400 url: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+	text: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+	
+	response headers = {'Content-Type': 'application/json;charset=UTF-8', 'Transfer-Encoding': 'chunked', 'Connection': 'keep-alive', 'Date': 'Sun, 24 Aug 2025 05:02:02 GMT', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': '5e6bec8e8274c4ccff200e5f01f3bbb1', 'X-Aaccountid': '712020%3A9180da22-e533-4958-8c64-4c16c0e32405', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '1f2249ff544f40c38fa42880209261f2', 'Atl-Request-Id': '1f2249ff-544f-40c3-8fa4-2880209261f2', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Server-Timing': 'atl-edge;dur=68,atl-edge-internal;dur=17,atl-edge-upstream;dur=50,atl-edge-pop;desc="aws-ap-northeast-2"', 'X-Cache': 'Error from cloudfront', 'Via': '1.1 f292525632ff4da4658e70c2b7b83518.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'ICN57-P5', 'X-Amz-Cf-Id': 'adT6yU8RkHeNJaeYtqC1bSpTj5PsFADpG_SW1H33ACxa1vu5LpkiHQ=='}
+	response text = {"errorMessages":["무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요."],"errors":{}}
+2025-08-24 14:02:02,160 - jira_connector - ERROR -   - HTTP 상태 코드: 400
+2025-08-24 14:02:02,160 - jira_connector - ERROR -   - 응답 본문: 무제한 JQL 쿼리는 여기에서 허용되지 않습니다. 쿼리에 검색 제한을 추가하세요.
+2025-08-24 14:02:02,161 - jira_connector - INFO - 📁 오류 응답 본문 저장됨: logs/error_responses/jira_error_검색 API_20250824_140202.txt
+2025-08-24 14:02:02,161 - jira_connector - ERROR -   - 요청 URL: https://juyeonjo633.atlassian.net/rest/api/2/search/jql?jql=ORDER+BY+updated+DESC&fields=issuekey&maxResults=1
+2025-08-24 14:02:02,161 - jira_connector - ERROR -   - 응답 헤더: {'User-Agent': 'python-requests/2.32.4', 'Accept-Encoding': 'gzip, deflate, zstd', 'Accept': 'application/json,*/*;q=0.9', 'Connection': 'keep-alive', 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check'}
+2025-08-24 14:02:02,161 - jira_connector - ERROR -   - 응답 객체: <Response [400]>
+2025-08-24 14:02:02,161 - jira_connector - WARNING - ⚠️ 전체 이슈 수 확인 실패: RetryError[<Future at 0x10d56c7a0 state=finished raised JIRAError>]
+2025-08-24 14:02:02,161 - jira_connector - INFO - 🔍 2단계: 프로젝트별 이슈 확인
+2025-08-24 14:02:02,332 - jira_connector - INFO - 📊 접근 가능한 프로젝트 수: 2
+2025-08-24 14:02:02,332 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BPM ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:02:02,549 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:02:02,549 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:02:02,549 - jira_connector - INFO -   - 총 이슈 수: 3
+2025-08-24 14:02:02,549 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:02:02,550 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:02:02,550 - jira_connector - INFO -   - 실제 반환된 이슈 수: 3
+2025-08-24 14:02:02,550 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:02:02,550 - jira_connector - INFO - 📊 프로젝트 BPM: 3개 이슈
+2025-08-24 14:02:02,550 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BTVO ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:02:02,813 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:02:02,813 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:02:02,813 - jira_connector - INFO -   - 총 이슈 수: 5
+2025-08-24 14:02:02,813 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:02:02,814 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:02:02,814 - jira_connector - INFO -   - 실제 반환된 이슈 수: 5
+2025-08-24 14:02:02,814 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:02:02,814 - jira_connector - INFO - 📊 프로젝트 BTVO: 5개 이슈
+2025-08-24 14:02:02,814 - jira_connector - INFO - 🔍 3단계: 메인 JQL 쿼리 실행
+2025-08-24 14:02:02,814 - jira_connector - INFO - 📅 날짜가 너무 오래되어 최근 1년으로 제한: updated >= "2024-08-24" ORDER BY updated DESC
+2025-08-24 14:02:02,814 - jira_connector - INFO - 🔍 JQL 쿼리 실행: updated >= "2024-08-24" ORDER BY updated DESC
+2025-08-24 14:02:02,815 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('updated >= "2024-08-24" ORDER BY updated DESC',), {'maxResults': 1000, 'fields': 'summary,description,status,priority,assignee,reporter,created,updated,comment'}
+2025-08-24 14:02:03,147 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:02:03,147 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:02:03,147 - jira_connector - INFO -   - 총 이슈 수: 11
+2025-08-24 14:02:03,147 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:02:03,147 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:02:03,147 - jira_connector - INFO -   - 실제 반환된 이슈 수: 11
+2025-08-24 14:02:03,147 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:02:03,147 - jira_connector - INFO - 📊 Jira API 응답 객체 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:02:03,147 - jira_connector - INFO - 📊 총 이슈 수: 11
+2025-08-24 14:02:03,147 - jira_connector - INFO - 📊 최대 결과 수: 0
+2025-08-24 14:02:03,147 - jira_connector - INFO - 📊 시작 위치: 0
+2025-08-24 14:02:03,147 - jira_connector - INFO - 📊 실제 반환된 이슈 수: 11
+2025-08-24 14:02:03,147 - jira_connector - INFO - ✅ 11개의 업데이트된 티켓 조회 완료
+2025-08-24 14:02:03,147 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-16 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,232 - jira_connector - INFO - ✅ 티켓 BTVO-16 벡터 DB 추가 완료
+2025-08-24 14:02:03,232 - jira_connector - INFO - ✅ 티켓 BTVO-16 처리 완료 (1/11)
+2025-08-24 14:02:03,232 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-14 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,319 - jira_connector - INFO - ✅ 티켓 BTVO-14 벡터 DB 추가 완료
+2025-08-24 14:02:03,319 - jira_connector - INFO - ✅ 티켓 BTVO-14 처리 완료 (2/11)
+2025-08-24 14:02:03,319 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-13 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,404 - jira_connector - INFO - ✅ 티켓 BTVO-13 벡터 DB 추가 완료
+2025-08-24 14:02:03,404 - jira_connector - INFO - ✅ 티켓 BTVO-13 처리 완료 (3/11)
+2025-08-24 14:02:03,404 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-8 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,488 - jira_connector - INFO - ✅ 티켓 BTVO-8 벡터 DB 추가 완료
+2025-08-24 14:02:03,488 - jira_connector - INFO - ✅ 티켓 BTVO-8 처리 완료 (4/11)
+2025-08-24 14:02:03,488 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-12 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,569 - jira_connector - INFO - ✅ 티켓 BTVO-12 벡터 DB 추가 완료
+2025-08-24 14:02:03,569 - jira_connector - INFO - ✅ 티켓 BTVO-12 처리 완료 (5/11)
+2025-08-24 14:02:03,570 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-11 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,651 - jira_connector - INFO - ✅ 티켓 BTVO-11 벡터 DB 추가 완료
+2025-08-24 14:02:03,651 - jira_connector - INFO - ✅ 티켓 BTVO-11 처리 완료 (6/11)
+2025-08-24 14:02:03,651 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-9 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,734 - jira_connector - INFO - ✅ 티켓 BTVO-9 벡터 DB 추가 완료
+2025-08-24 14:02:03,734 - jira_connector - INFO - ✅ 티켓 BTVO-9 처리 완료 (7/11)
+2025-08-24 14:02:03,734 - jira_connector - WARNING - ⚠️ 기존 티켓 BTVO-10 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,821 - jira_connector - INFO - ✅ 티켓 BTVO-10 벡터 DB 추가 완료
+2025-08-24 14:02:03,821 - jira_connector - INFO - ✅ 티켓 BTVO-10 처리 완료 (8/11)
+2025-08-24 14:02:03,821 - jira_connector - WARNING - ⚠️ 기존 티켓 BPM-3 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,905 - jira_connector - INFO - ✅ 티켓 BPM-3 벡터 DB 추가 완료
+2025-08-24 14:02:03,905 - jira_connector - INFO - ✅ 티켓 BPM-3 처리 완료 (9/11)
+2025-08-24 14:02:03,905 - jira_connector - WARNING - ⚠️ 기존 티켓 BPM-2 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:03,993 - jira_connector - INFO - ✅ 티켓 BPM-2 벡터 DB 추가 완료
+2025-08-24 14:02:03,993 - jira_connector - INFO - ✅ 티켓 BPM-2 처리 완료 (10/11)
+2025-08-24 14:02:03,994 - jira_connector - INFO - ⏳ Rate limiting: 10개 티켓 처리 후 잠시 대기...
+2025-08-24 14:02:04,999 - jira_connector - WARNING - ⚠️ 기존 티켓 BPM-1 삭제 중 오류: Expected include item to be one of documents, embeddings, metadatas, distances, uris, data, got ids in get.
+2025-08-24 14:02:05,101 - jira_connector - INFO - ✅ 티켓 BPM-1 벡터 DB 추가 완료
+2025-08-24 14:02:05,101 - jira_connector - INFO - ✅ 티켓 BPM-1 처리 완료 (11/11)
+2025-08-24 14:02:05,101 - jira_connector - INFO - ✅ 총 11개 티켓 벡터 DB 적재 완료
+2025-08-24 14:02:05,102 - jira_connector - INFO - ✅ 마지막 동기화 시각 업데이트 완료: 2025-08-24T14:02:05.101423
+2025-08-24 14:02:05,102 - jira_connector - INFO - 🎉 Jira 동기화 완료: 11개 티켓, 23.60초 소요

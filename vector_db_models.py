@@ -28,6 +28,25 @@ class Mail:
     key_points: List[str]  # 핵심 포인트
     created_at: str  # 생성 시각
 
+@dataclass
+class FileChunk:
+    """파일 청크 모델 - Vector DB Collection용"""
+    chunk_id: str  # PK - 고유 청크 ID
+    file_name: str  # 원본 파일명
+    file_hash: str  # 파일 해시값 (중복 방지용)
+    text_chunk: str  # 임베딩할 텍스트 내용
+    architecture: str  # dual_path_hybrid 또는 simple_conversion
+    processing_method: str  # 처리 방법
+    vision_analysis: bool  # Vision 분석 적용 여부
+    section_title: str  # 섹션 제목
+    page_number: int  # 페이지/슬라이드 번호
+    element_count: int  # 요소 개수
+    file_type: str  # pptx, docx, pdf, xlsx, txt, md, csv, scds
+    elements: List[Dict[str, Any]]  # 요소별 상세 정보
+    created_at: str  # 생성 시각
+    file_size: int  # 파일 크기 (bytes)
+    processing_duration: float  # 처리 소요 시간 (초)
+
 class VectorDBManager:
     """Vector DB 관리자 - ChromaDB 사용"""
     
@@ -277,3 +296,236 @@ class VectorDBManager:
         except Exception as e:
             print(f"컬렉션 초기화 오류: {e}")
             return False
+
+class SystemInfoVectorDBManager:
+    """시스템 정보 파일 저장용 Vector DB 관리자 - ChromaDB 사용"""
+    
+    def __init__(self, db_path: str = "./vector_db"):
+        """ChromaDB 클라이언트 초기화"""
+        self.client = chromadb.PersistentClient(
+            path=db_path,
+            settings=Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
+        self.collection_name = "system_info"
+        self.collection = self._get_or_create_collection()
+    
+    def _get_or_create_collection(self):
+        """system_info 컬렉션 생성 또는 가져오기"""
+        try:
+            return self.client.get_collection(name=self.collection_name)
+        except Exception:
+            return self.client.create_collection(
+                name=self.collection_name,
+                metadata={
+                    "description": "System information and document chunks for knowledge base",
+                    "created_at": datetime.now().isoformat(),
+                    "type": "document_chunks"
+                }
+            )
+    
+    def _calculate_file_hash(self, file_content: bytes) -> str:
+        """파일 내용의 SHA-256 해시 계산"""
+        import hashlib
+        return hashlib.sha256(file_content).hexdigest()
+    
+    def _is_file_already_processed(self, file_hash: str) -> bool:
+        """파일이 이미 처리되었는지 확인 (해시 기반 중복 방지)"""
+        try:
+            # 메타데이터에서 file_hash 검색
+            results = self.collection.get(
+                where={"file_hash": file_hash},
+                include=["metadatas"]
+            )
+            return len(results['ids']) > 0
+        except Exception:
+            return False
+    
+    def save_file_chunks(self, chunks: List[Dict[str, Any]], file_content: bytes, 
+                        file_name: str, processing_duration: float) -> Dict[str, Any]:
+        """파일 청크들을 Vector DB에 저장 (중복 방지 포함)"""
+        try:
+            # 파일 해시 계산
+            file_hash = self._calculate_file_hash(file_content)
+            
+            # 중복 파일 확인
+            if self._is_file_already_processed(file_hash):
+                return {
+                    "success": True,
+                    "message": f"✅ {file_name}은 이미 처리된 파일입니다 (중복 방지)",
+                    "file_hash": file_hash,
+                    "duplicate": True,
+                    "chunks_saved": 0
+                }
+            
+            # 각 청크를 Vector DB에 저장
+            saved_chunks = []
+            for chunk in chunks:
+                chunk_id = str(uuid.uuid4())
+                
+                # 메타데이터 준비
+                metadata = {
+                    "file_name": file_name,
+                    "file_hash": file_hash,
+                    "architecture": chunk.get('metadata', {}).get('architecture', 'unknown'),
+                    "processing_method": chunk.get('metadata', {}).get('processing_method', 'unknown'),
+                    "vision_analysis": chunk.get('metadata', {}).get('vision_analysis', False),
+                    "section_title": chunk.get('metadata', {}).get('section_title', ''),
+                    "page_number": chunk.get('metadata', {}).get('page_number', 1),
+                    "element_count": chunk.get('metadata', {}).get('element_count', 0),
+                    "file_type": chunk.get('metadata', {}).get('file_type', 'unknown'),
+                    "file_size": len(file_content),
+                    "processing_duration": processing_duration,
+                    "created_at": datetime.now().isoformat()
+                }
+                
+                # 요소 정보를 JSON 문자열로 변환 (ChromaDB 메타데이터 제한)
+                elements = chunk.get('metadata', {}).get('elements', [])
+                if elements:
+                    metadata["elements_summary"] = f"{len(elements)}개 요소: {', '.join([e.get('element_type', 'unknown') for e in elements[:5]])}"
+                    if len(elements) > 5:
+                        metadata["elements_summary"] += f" 외 {len(elements) - 5}개"
+                
+                # 텍스트 내용 (임베딩할 텍스트)
+                text_content = chunk.get('text_chunk_to_embed', '')
+                if not text_content:
+                    text_content = f"파일: {file_name}, 아키텍처: {metadata['architecture']}, 요소: {metadata['element_count']}개"
+                
+                # ChromaDB에 저장
+                self.collection.add(
+                    documents=[text_content],
+                    metadatas=[metadata],
+                    ids=[chunk_id]
+                )
+                
+                saved_chunks.append(chunk_id)
+            
+            return {
+                "success": True,
+                "message": f"✅ {file_name} 처리가 완료되어 {len(saved_chunks)}개의 청크가 system_info 컬렉션에 저장되었습니다.",
+                "file_hash": file_hash,
+                "duplicate": False,
+                "chunks_saved": len(saved_chunks),
+                "chunk_ids": saved_chunks
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"❌ {file_name} 저장 중 오류 발생: {str(e)}"
+            }
+    
+    def search_similar_chunks(self, query: str, n_results: int = 5, 
+                             file_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        """유사한 청크 검색"""
+        try:
+            # 검색 조건 설정
+            where_filter = {}
+            if file_type:
+                where_filter["file_type"] = file_type
+            
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                where=where_filter if where_filter else None,
+                include=["metadatas", "documents", "distances"]
+            )
+            
+            chunks = []
+            for i, chunk_id in enumerate(results['ids'][0]):
+                metadata = results['metadatas'][0][i]
+                document = results['documents'][0][i]
+                distance = results['distances'][0][i] if 'distances' in results else None
+                
+                chunks.append({
+                    "chunk_id": chunk_id,
+                    "text_content": document,
+                    "metadata": metadata,
+                    "similarity_score": 1 - distance if distance is not None else None
+                })
+            
+            return chunks
+            
+        except Exception as e:
+            print(f"Vector DB 검색 오류: {e}")
+            return []
+    
+    def get_file_chunks(self, file_name: str) -> List[Dict[str, Any]]:
+        """특정 파일의 모든 청크 조회"""
+        try:
+            results = self.collection.get(
+                where={"file_name": file_name},
+                include=["metadatas", "documents"]
+            )
+            
+            chunks = []
+            for i, chunk_id in enumerate(results['ids']):
+                metadata = results['metadatas'][i]
+                document = results['documents'][i]
+                
+                chunks.append({
+                    "chunk_id": chunk_id,
+                    "text_content": document,
+                    "metadata": metadata
+                })
+            
+            return chunks
+            
+        except Exception as e:
+            print(f"Vector DB 조회 오류: {e}")
+            return []
+    
+    def get_collection_stats(self) -> Dict[str, Any]:
+        """컬렉션 통계 정보 조회"""
+        try:
+            # 전체 데이터 조회
+            result = self.collection.get(include=["metadatas"])
+            
+            if not result['ids']:
+                return {
+                    "total_chunks": 0, 
+                    "file_types": {}, 
+                    "total_files": 0,
+                    "collection_name": self.collection_name
+                }
+            
+            # 파일 타입별 통계
+            file_types = {}
+            unique_files = set()
+            
+            for metadata in result['metadatas']:
+                file_type = metadata.get('file_type', 'unknown')
+                file_types[file_type] = file_types.get(file_type, 0) + 1
+                
+                file_name = metadata.get('file_name', '')
+                if file_name:
+                    unique_files.add(file_name)
+            
+            return {
+                "total_chunks": len(result['ids']),
+                "file_types": file_types,
+                "total_files": len(unique_files),
+                "collection_name": self.collection_name
+            }
+            
+        except Exception as e:
+            print(f"컬렉션 통계 조회 오류: {e}")
+            return {
+                "error": str(e),
+                "total_chunks": 0,
+                "file_types": {},
+                "total_files": 0,
+                "collection_name": self.collection_name
+            }
+    
+    def reset_collection(self):
+        """컬렉션 초기화"""
+        try:
+            self.client.delete_collection(name=self.collection_name)
+            self.collection = self._get_or_create_collection()
+            print(f"✅ {self.collection_name} 컬렉션이 초기화되었습니다.")
+        except Exception as e:
+            print(f"❌ 컬렉션 초기화 실패: {e}")

@@ -1,0 +1,196 @@
+2025-08-24 14:08:31,794 - jira_connector - INFO - 📝 Jira 로깅 시작: logs/jira_sync_20250824_140831.log
+2025-08-24 14:08:35,306 - jira_connector - INFO - 🔗 Jira 설정 로드 완료: https://juyeonjo633.atlassian.net, juyeonjo633@gmail.com
+2025-08-24 14:08:35,307 - jira_connector - INFO - 🔗 Jira 서버에 연결 시도: https://juyeonjo633.atlassian.net
+2025-08-24 14:08:35,307 - jira_connector - INFO - 📧 사용자 이메일: juyeonjo633@gmail.com
+2025-08-24 14:08:35,307 - jira_connector - INFO - 🔑 API 토큰 길이: 192자
+2025-08-24 14:08:35,600 - jira_connector - INFO - ✅ Jira 클라이언트 초기화 성공: https://juyeonjo633.atlassian.net
+2025-08-24 14:08:35,601 - jira_connector - INFO - 📊 서버 정보: Jira
+2025-08-24 14:08:35,601 - jira_connector - INFO - 📊 서버 버전: 1001.0.0-SNAPSHOT
+2025-08-24 14:08:35,601 - jira_connector - INFO - 📊 빌드 번호: 100288
+2025-08-24 14:08:35,601 - jira_connector - INFO - 📊 서버 시간: 2025-08-24T14:08:35.627+0900
+2025-08-24 14:08:35,603 - jira_connector - INFO - ✅ SQLite DB 연결 성공
+2025-08-24 14:08:35,610 - jira_connector - INFO - ✅ 벡터 DB 매니저 초기화 성공
+2025-08-24 14:08:35,611 - jira_connector - INFO - ✅ Rate limiting 설정 완료 (검색: 100/분, 일반: 1000/분)
+2025-08-24 14:08:35,611 - jira_connector - INFO - ✅ Exponential backoff 전략 설정 완료 (최대 5회 재시도)
+2025-08-24 14:08:35,611 - jira_connector - INFO - 🚀 Jira 데이터 동기화 시작
+2025-08-24 14:08:35,612 - jira_connector - INFO - 📅 마지막 동기화: 2025-08-24T14:02:05.101423
+2025-08-24 14:08:35,612 - jira_connector - INFO - 🔍 1단계: 전체 이슈 수 확인
+2025-08-24 14:08:35,612 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: status != Closed ORDER BY updated DESC
+2025-08-24 14:08:35,612 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('status != Closed ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:08:36,106 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:08:36,107 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:08:36,107 - jira_connector - INFO -   - 총 이슈 수: 1
+2025-08-24 14:08:36,107 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:08:36,107 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:08:36,107 - jira_connector - INFO -   - 실제 반환된 이슈 수: 1
+2025-08-24 14:08:36,107 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:08:36,107 - jira_connector - INFO - 📊 전체 이슈 수 (닫히지 않은 것만): 1
+2025-08-24 14:08:36,107 - jira_connector - INFO - 🔍 2단계: 프로젝트별 이슈 확인
+2025-08-24 14:08:36,276 - jira_connector - INFO - 📊 접근 가능한 프로젝트 수: 2
+2025-08-24 14:08:36,276 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: project = BPM ORDER BY updated DESC
+2025-08-24 14:08:36,277 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BPM ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:08:36,511 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:08:36,511 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:08:36,511 - jira_connector - INFO -   - 총 이슈 수: 3
+2025-08-24 14:08:36,511 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:08:36,511 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:08:36,511 - jira_connector - INFO -   - 실제 반환된 이슈 수: 3
+2025-08-24 14:08:36,511 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:08:36,511 - jira_connector - INFO - 📊 프로젝트 BPM: 3개 이슈 (닫히지 않은 것만)
+2025-08-24 14:08:36,511 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: project = BTVO ORDER BY updated DESC
+2025-08-24 14:08:36,511 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BTVO ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:08:36,734 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:08:36,734 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:08:36,734 - jira_connector - INFO -   - 총 이슈 수: 5
+2025-08-24 14:08:36,734 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:08:36,735 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:08:36,735 - jira_connector - INFO -   - 실제 반환된 이슈 수: 5
+2025-08-24 14:08:36,735 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:08:36,736 - jira_connector - INFO - 📊 프로젝트 BTVO: 5개 이슈 (닫히지 않은 것만)
+2025-08-24 14:08:36,736 - jira_connector - INFO - 🔍 3단계: 메인 JQL 쿼리 실행
+2025-08-24 14:08:36,736 - jira_connector - INFO - 🔍 JQL 쿼리 실행: updated >= "2025-08-24T14:02:05.101423" ORDER BY updated DESC
+2025-08-24 14:08:36,736 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('updated >= "2025-08-24T14:02:05.101423" ORDER BY updated DESC',), {'maxResults': 1000, 'fields': 'summary,description,status,priority,assignee,reporter,created,updated,comment'}
+2025-08-24 14:08:36,910 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:08:36,911 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:08:36,911 - jira_connector - INFO -   - 총 이슈 수: 0
+2025-08-24 14:08:36,911 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:08:36,911 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:08:36,911 - jira_connector - INFO -   - 실제 반환된 이슈 수: 0
+2025-08-24 14:08:36,911 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:08:36,911 - jira_connector - INFO - 📊 Jira API 응답 객체 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:08:36,912 - jira_connector - INFO - 📊 총 이슈 수: 0
+2025-08-24 14:08:36,912 - jira_connector - INFO - 📊 최대 결과 수: 0
+2025-08-24 14:08:36,912 - jira_connector - INFO - 📊 시작 위치: 0
+2025-08-24 14:08:36,912 - jira_connector - INFO - 📊 실제 반환된 이슈 수: 0
+2025-08-24 14:08:36,912 - jira_connector - WARNING - ⚠️ Jira API에서 유효한 응답을 받지 못했습니다
+2025-08-24 14:08:36,912 - jira_connector - INFO - ℹ️ 동기화할 새로운 티켓이 없습니다.
+2025-08-24 14:21:22,437 - jira_connector - INFO - 🔗 Jira 설정 로드 완료: https://juyeonjo633.atlassian.net, juyeonjo633@gmail.com
+2025-08-24 14:21:22,438 - jira_connector - INFO - 🔗 Jira 서버에 연결 시도: https://juyeonjo633.atlassian.net
+2025-08-24 14:21:22,438 - jira_connector - INFO - 📧 사용자 이메일: juyeonjo633@gmail.com
+2025-08-24 14:21:22,438 - jira_connector - INFO - 🔑 API 토큰 길이: 192자
+2025-08-24 14:21:22,856 - jira_connector - INFO - ✅ Jira 클라이언트 초기화 성공: https://juyeonjo633.atlassian.net
+2025-08-24 14:21:22,857 - jira_connector - INFO - 📊 서버 정보: Jira
+2025-08-24 14:21:22,857 - jira_connector - INFO - 📊 서버 버전: 1001.0.0-SNAPSHOT
+2025-08-24 14:21:22,858 - jira_connector - INFO - 📊 빌드 번호: 100288
+2025-08-24 14:21:22,858 - jira_connector - INFO - 📊 서버 시간: 2025-08-24T14:21:22.896+0900
+2025-08-24 14:21:22,862 - jira_connector - INFO - ✅ SQLite DB 연결 성공
+2025-08-24 14:21:22,878 - jira_connector - INFO - ✅ 벡터 DB 매니저 초기화 성공
+2025-08-24 14:21:22,878 - jira_connector - INFO - ✅ Rate limiting 설정 완료 (검색: 100/분, 일반: 1000/분)
+2025-08-24 14:21:22,879 - jira_connector - INFO - ✅ Exponential backoff 전략 설정 완료 (최대 5회 재시도)
+2025-08-24 14:21:22,879 - jira_connector - INFO - 🚀 Jira 데이터 동기화 시작
+2025-08-24 14:21:22,879 - jira_connector - INFO - 📅 마지막 동기화: 2025-08-24T14:02:05.101423
+2025-08-24 14:21:22,879 - jira_connector - INFO - 🔍 1단계: 전체 이슈 수 확인
+2025-08-24 14:21:22,879 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: status != Closed ORDER BY updated DESC
+2025-08-24 14:21:22,879 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('status != Closed ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:21:23,488 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:21:23,489 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:21:23,489 - jira_connector - INFO -   - 총 이슈 수: 1
+2025-08-24 14:21:23,489 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:21:23,489 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:21:23,489 - jira_connector - INFO -   - 실제 반환된 이슈 수: 1
+2025-08-24 14:21:23,489 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:21:23,489 - jira_connector - INFO - 📊 전체 이슈 수 (닫히지 않은 것만): 1
+2025-08-24 14:21:23,490 - jira_connector - INFO - 🔍 2단계: 프로젝트별 이슈 확인
+2025-08-24 14:21:23,629 - jira_connector - INFO - 📊 접근 가능한 프로젝트 수: 2
+2025-08-24 14:21:23,629 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: project = BPM ORDER BY updated DESC
+2025-08-24 14:21:23,629 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BPM ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:21:23,833 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:21:23,833 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:21:23,834 - jira_connector - INFO -   - 총 이슈 수: 3
+2025-08-24 14:21:23,834 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:21:23,834 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:21:23,834 - jira_connector - INFO -   - 실제 반환된 이슈 수: 3
+2025-08-24 14:21:23,834 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:21:23,835 - jira_connector - INFO - 📊 프로젝트 BPM: 3개 이슈 (닫히지 않은 것만)
+2025-08-24 14:21:23,835 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: project = BTVO ORDER BY updated DESC
+2025-08-24 14:21:23,835 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BTVO ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:21:24,089 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:21:24,090 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:21:24,090 - jira_connector - INFO -   - 총 이슈 수: 5
+2025-08-24 14:21:24,091 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:21:24,091 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:21:24,091 - jira_connector - INFO -   - 실제 반환된 이슈 수: 5
+2025-08-24 14:21:24,091 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:21:24,092 - jira_connector - INFO - 📊 프로젝트 BTVO: 5개 이슈 (닫히지 않은 것만)
+2025-08-24 14:21:24,092 - jira_connector - INFO - 🔍 3단계: 메인 JQL 쿼리 실행
+2025-08-24 14:21:24,092 - jira_connector - INFO - 🔍 JQL 쿼리 실행: updated >= "2025-08-24T14:02:05.101423" ORDER BY updated DESC
+2025-08-24 14:21:24,092 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('updated >= "2025-08-24T14:02:05.101423" ORDER BY updated DESC',), {'maxResults': 1000, 'fields': 'summary,description,status,priority,assignee,reporter,created,updated,comment'}
+2025-08-24 14:21:24,267 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:21:24,267 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:21:24,268 - jira_connector - INFO -   - 총 이슈 수: 0
+2025-08-24 14:21:24,268 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:21:24,268 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:21:24,268 - jira_connector - INFO -   - 실제 반환된 이슈 수: 0
+2025-08-24 14:21:24,269 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:21:24,269 - jira_connector - INFO - 📊 Jira API 응답 객체 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:21:24,269 - jira_connector - INFO - 📊 총 이슈 수: 0
+2025-08-24 14:21:24,269 - jira_connector - INFO - 📊 최대 결과 수: 0
+2025-08-24 14:21:24,269 - jira_connector - INFO - 📊 시작 위치: 0
+2025-08-24 14:21:24,270 - jira_connector - INFO - 📊 실제 반환된 이슈 수: 0
+2025-08-24 14:21:24,270 - jira_connector - WARNING - ⚠️ Jira API에서 유효한 응답을 받지 못했습니다
+2025-08-24 14:21:24,270 - jira_connector - INFO - ℹ️ 동기화할 새로운 티켓이 없습니다.
+2025-08-24 14:33:19,481 - jira_connector - INFO - 🔗 Jira 설정 로드 완료: https://juyeonjo633.atlassian.net, juyeonjo633@gmail.com
+2025-08-24 14:33:19,481 - jira_connector - INFO - 🔗 Jira 서버에 연결 시도: https://juyeonjo633.atlassian.net
+2025-08-24 14:33:19,481 - jira_connector - INFO - 📧 사용자 이메일: juyeonjo633@gmail.com
+2025-08-24 14:33:19,482 - jira_connector - INFO - 🔑 API 토큰 길이: 192자
+2025-08-24 14:33:19,917 - jira_connector - INFO - ✅ Jira 클라이언트 초기화 성공: https://juyeonjo633.atlassian.net
+2025-08-24 14:33:19,917 - jira_connector - INFO - 📊 서버 정보: Jira
+2025-08-24 14:33:19,918 - jira_connector - INFO - 📊 서버 버전: 1001.0.0-SNAPSHOT
+2025-08-24 14:33:19,919 - jira_connector - INFO - 📊 빌드 번호: 100288
+2025-08-24 14:33:19,919 - jira_connector - INFO - 📊 서버 시간: 2025-08-24T14:33:19.959+0900
+2025-08-24 14:33:19,925 - jira_connector - INFO - ✅ SQLite DB 연결 성공
+2025-08-24 14:33:19,932 - jira_connector - INFO - ✅ 벡터 DB 매니저 초기화 성공
+2025-08-24 14:33:19,932 - jira_connector - INFO - ✅ Rate limiting 설정 완료 (검색: 100/분, 일반: 1000/분)
+2025-08-24 14:33:19,933 - jira_connector - INFO - ✅ Exponential backoff 전략 설정 완료 (최대 5회 재시도)
+2025-08-24 14:33:19,933 - jira_connector - INFO - 🚀 Jira 데이터 동기화 시작
+2025-08-24 14:33:19,933 - jira_connector - INFO - 📅 마지막 동기화: 2025-08-24T14:02:05.101423
+2025-08-24 14:33:19,933 - jira_connector - INFO - 🔍 1단계: 전체 이슈 수 확인
+2025-08-24 14:33:19,933 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: status != Closed ORDER BY updated DESC
+2025-08-24 14:33:19,933 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('status != Closed ORDER BY updated DESC',), {'maxResults': 1, 'fields': 'key'}
+2025-08-24 14:33:20,387 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:33:20,387 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:33:20,387 - jira_connector - INFO -   - 총 이슈 수: 1
+2025-08-24 14:33:20,387 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:33:20,387 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:33:20,387 - jira_connector - INFO -   - 실제 반환된 이슈 수: 1
+2025-08-24 14:33:20,387 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:33:20,388 - jira_connector - INFO - 📊 전체 이슈 수 (닫히지 않은 것만): 1
+2025-08-24 14:33:20,388 - jira_connector - INFO - 🔍 2단계: 프로젝트별 이슈 확인
+2025-08-24 14:33:20,559 - jira_connector - INFO - 📊 접근 가능한 프로젝트 수: 2
+2025-08-24 14:33:20,560 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: project = BPM ORDER BY updated DESC
+2025-08-24 14:33:20,560 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BPM ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:33:20,757 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:33:20,758 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:33:20,758 - jira_connector - INFO -   - 총 이슈 수: 3
+2025-08-24 14:33:20,758 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:33:20,759 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:33:20,759 - jira_connector - INFO -   - 실제 반환된 이슈 수: 3
+2025-08-24 14:33:20,759 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:33:20,759 - jira_connector - INFO - 📊 프로젝트 BPM: 3개 이슈 (닫히지 않은 것만)
+2025-08-24 14:33:20,759 - jira_connector - INFO - 🔒 안전한 JQL 쿼리 생성: project = BTVO ORDER BY updated DESC
+2025-08-24 14:33:20,759 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('project = BTVO ORDER BY updated DESC',), {'maxResults': 5, 'fields': 'key,summary'}
+2025-08-24 14:33:21,028 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:33:21,028 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:33:21,028 - jira_connector - INFO -   - 총 이슈 수: 5
+2025-08-24 14:33:21,028 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:33:21,028 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:33:21,028 - jira_connector - INFO -   - 실제 반환된 이슈 수: 5
+2025-08-24 14:33:21,029 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:33:21,029 - jira_connector - INFO - 📊 프로젝트 BTVO: 5개 이슈 (닫히지 않은 것만)
+2025-08-24 14:33:21,029 - jira_connector - INFO - 🔍 3단계: 메인 JQL 쿼리 실행
+2025-08-24 14:33:21,029 - jira_connector - INFO - 🔍 JQL 쿼리 실행: updated >= "2025-08-24T14:02:05.101423" ORDER BY updated DESC
+2025-08-24 14:33:21,029 - jira_connector - INFO - 🔍 Jira 검색 API 호출 시작: ('updated >= "2025-08-24T14:02:05.101423" ORDER BY updated DESC',), {'maxResults': 1000, 'fields': 'summary,description,status,priority,assignee,reporter,created,updated,comment'}
+2025-08-24 14:33:21,261 - jira_connector - INFO - 📊 검색 API 응답 상세 정보:
+2025-08-24 14:33:21,261 - jira_connector - INFO -   - 응답 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:33:21,261 - jira_connector - INFO -   - 총 이슈 수: 0
+2025-08-24 14:33:21,262 - jira_connector - INFO -   - 최대 결과 수: 0
+2025-08-24 14:33:21,262 - jira_connector - INFO -   - 시작 위치: 0
+2025-08-24 14:33:21,262 - jira_connector - INFO -   - 실제 반환된 이슈 수: 0
+2025-08-24 14:33:21,262 - jira_connector - INFO -   - 응답 객체 속성: ['startAt', 'maxResults', 'isLast', 'total', 'iterable', 'current', 'nextPageToken']
+2025-08-24 14:33:21,263 - jira_connector - INFO - 📊 Jira API 응답 객체 타입: <class 'jira.client.ResultList'>
+2025-08-24 14:33:21,263 - jira_connector - INFO - 📊 총 이슈 수: 0
+2025-08-24 14:33:21,263 - jira_connector - INFO - 📊 최대 결과 수: 0
+2025-08-24 14:33:21,263 - jira_connector - INFO - 📊 시작 위치: 0
+2025-08-24 14:33:21,263 - jira_connector - INFO - 📊 실제 반환된 이슈 수: 0
+2025-08-24 14:33:21,263 - jira_connector - WARNING - ⚠️ Jira API에서 유효한 응답을 받지 못했습니다
+2025-08-24 14:33:21,263 - jira_connector - INFO - ℹ️ 동기화할 새로운 티켓이 없습니다.

@@ -34,6 +34,12 @@ from unified_email_service import (
     get_raw_emails
 )
 
+# 파일 처리 및 임베딩 관련 import
+from module.file_processor_refactored import FileProcessor
+from pathlib import Path
+import tempfile
+import shutil
+
 # --- 1. 로그 및 파서 함수 (기존과 동일, 안정성 강화) ---
 
 # logging 설정
@@ -62,6 +68,151 @@ logging.basicConfig(
 print(f"✅ 로깅 시스템 초기화 완료 - 로그 파일: {log_filename}")
 print(f"📁 현재 디렉토리: {os.getcwd()}")
 print(f"🔍 로그 파일 경로: {os.path.abspath(log_filename)}")
+
+def detect_file_type_by_content(file_path: str) -> str:
+    """
+    파일 내용을 기반으로 실제 파일 형식을 감지
+    
+    Args:
+        file_path: 파일 경로
+        
+    Returns:
+        감지된 파일 형식 (확장자 포함)
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(8)  # 처음 8바이트 읽기
+            
+            # 파일 형식별 매직 넘버 확인
+            if header.startswith(b'PK\x03\x04'):
+                # ZIP 기반 파일들 - 내부 구조로 구분
+                try:
+                    import zipfile
+                    with zipfile.ZipFile(file_path, 'r') as zip_file:
+                        file_list = zip_file.namelist()
+                        
+                        # PPTX 확인
+                        if any('ppt/' in name for name in file_list):
+                            return '.pptx'
+                        # DOCX 확인  
+                        elif any('word/' in name for name in file_list):
+                            return '.docx'
+                        # XLSX 확인
+                        elif any('xl/' in name for name in file_list):
+                            return '.xlsx'
+                        else:
+                            return '.zip'  # 일반 ZIP 파일
+                except:
+                    return '.zip'
+                    
+            elif header.startswith(b'%PDF'):
+                return '.pdf'
+            elif header.startswith(b'SCDS'):
+                return '.scds'  # SCDS 바이너리 파일
+            elif header.startswith(b'\x53\x43\x44\x53'):  # SCDS in hex: 53 43 44 53
+                return '.scds'  # SCDS 바이너리 파일
+            elif header.startswith(b'\xff\xfe') or header.startswith(b'\xfe\xff'):
+                return '.txt'  # 유니코드 텍스트
+            elif header.startswith(b'\xef\xbb\xbf'):
+                return '.txt'  # UTF-8 BOM 텍스트
+            elif all(32 <= b <= 126 or b in [9, 10, 13] for b in header):
+                return '.txt'  # 일반 텍스트
+            else:
+                return '.bin'  # 바이너리 파일
+                
+    except Exception as e:
+        return '.unknown'
+
+def embed_and_store_chunks(chunks: List[Dict[str, Any]], file_name: str, file_content: bytes, 
+                          processing_duration: float) -> Dict[str, Any]:
+    """
+    텍스트 청크를 임베딩하고 벡터 데이터베이스에 저장
+    
+    Args:
+        chunks: FileProcessor가 반환한 청크 리스트
+        file_name: 원본 파일명
+        file_content: 파일 내용 (바이트)
+        processing_duration: 처리 소요 시간 (초)
+        
+    Returns:
+        저장 결과 요약
+    """
+    try:
+        # SystemInfoVectorDBManager 초기화
+        if 'system_info_db' not in st.session_state:
+            from vector_db_models import SystemInfoVectorDBManager
+            st.session_state.system_info_db = SystemInfoVectorDBManager()
+        
+        # 벡터DB에 저장
+        db_result = st.session_state.system_info_db.save_file_chunks(
+            chunks=chunks,
+            file_content=file_content,
+            file_name=file_name,
+            processing_duration=processing_duration
+        )
+        
+        if db_result["success"]:
+            # 중복 파일인 경우
+            if db_result.get("duplicate", False):
+                return {
+                    "success": True,
+                    "file_name": file_name,
+                    "total_chunks": 0,
+                    "total_elements": 0,
+                    "total_text_length": 0,
+                    "architectures": [],
+                    "vision_analysis_count": 0,
+                    "duplicate": True,
+                    "file_hash": db_result.get("file_hash", ""),
+                    "message": db_result["message"]
+                }
+            
+            # 새로 저장된 경우
+            total_chunks = len(chunks)
+            total_elements = sum(len(chunk.get('metadata', {}).get('elements', [])) for chunk in chunks)
+            total_text_length = sum(len(chunk.get('text_chunk_to_embed', '')) for chunk in chunks)
+            
+            # 아키텍처 정보 수집
+            architectures = set()
+            vision_analysis_count = 0
+            
+            for chunk in chunks:
+                metadata = chunk.get('metadata', {})
+                architecture = metadata.get('architecture', 'unknown')
+                architectures.add(architecture)
+                
+                if metadata.get('vision_analysis', False):
+                    vision_analysis_count += 1
+            
+            return {
+                "success": True,
+                "file_name": file_name,
+                "total_chunks": total_chunks,
+                "total_elements": total_elements,
+                "total_text_length": total_text_length,
+                "architectures": list(architectures),
+                "vision_analysis_count": vision_analysis_count,
+                "duplicate": False,
+                "file_hash": db_result.get("file_hash", ""),
+                "chunks_saved": db_result.get("chunks_saved", 0),
+                "message": db_result["message"]
+            }
+        else:
+            # 벡터DB 저장 실패
+            return {
+                "success": False,
+                "file_name": file_name,
+                "error": db_result.get("error", "알 수 없는 오류"),
+                "message": db_result["message"]
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "file_name": file_name,
+            "error": str(e),
+            "message": f"❌ {file_name} 처리 중 오류 발생: {str(e)}"
+        }
 
 def determine_ui_mode(query: str, response_data: Dict[str, Any]) -> str:
     """쿼리와 응답 데이터를 기반으로 UI 모드를 결정합니다."""
@@ -949,51 +1100,851 @@ def main():
 
     # --- 메인 페이지 ---
     
-    # 1. 채팅 기록 표시
-    for message in st.session_state.messages:
-        role = "user" if isinstance(message, HumanMessage) else "assistant"
-        with st.chat_message(role):
-            st.markdown(message.content)
+    # 탭 구조로 UI 분리
+    tab1, tab2, tab3 = st.tabs(["🤖 AI 챗봇", "📎 첨부파일 임베더", "🎫 Jira 연동"])
+    
+    # 탭 1: AI 챗봇
+    with tab1:
+        # 1. 채팅 기록 표시
+        for message in st.session_state.messages:
+            role = "user" if isinstance(message, HumanMessage) else "assistant"
+            with st.chat_message(role):
+                st.markdown(message.content)
 
-    # 2. 최신 응답 데이터가 있으면 UI 컴포넌트 렌더링
-    st.markdown("---")
-    st.subheader("🔍 디버깅 정보")
-    
-    # 세션 상태 확인
-    st.write("**세션 상태:**")
-    st.write(f"- latest_response 존재: {st.session_state.get('latest_response') is not None}")
-    st.write(f"- messages 개수: {len(st.session_state.get('messages', []))}")
-    
-    if response_data := st.session_state.get('latest_response'):
-        display_mode = response_data.get('display_mode')
-        ui_mode = response_data.get('ui_mode', 'text_only')
+        # 2. 최신 응답 데이터가 있으면 UI 컴포넌트 렌더링
+        st.markdown("---")
+        st.subheader("🔍 디버깅 정보")
         
-        st.success(f"✅ 응답 데이터 발견: display_mode={display_mode}, ui_mode={ui_mode}")
-        st.json(response_data)
+        # 세션 상태 확인
+        st.write("**세션 상태:**")
+        st.write(f"- latest_response 존재: {st.session_state.get('latest_response') is not None}")
+        st.write(f"- messages 개수: {len(st.session_state.get('messages', []))}")
         
-        if display_mode == 'tickets':
-            if ui_mode == 'button_list':
-                display_ticket_list_with_sidebar(response_data, "요청하신 티켓 목록")
-            else:
-                # 텍스트 형태로 간단히 표시
-                tickets = response_data.get('tickets', [])
-                if tickets:
-                    st.subheader("📋 티켓 요약")
-                    for i, ticket in enumerate(tickets, 1):
-                        st.write(f"{i}. {ticket.get('title', '제목 없음')} - {ticket.get('status', '상태 불명')}")
+        if response_data := st.session_state.get('latest_response'):
+            display_mode = response_data.get('display_mode')
+            ui_mode = response_data.get('ui_mode', 'text_only')
+            
+            st.success(f"✅ 응답 데이터 발견: display_mode={display_mode}, ui_mode={ui_mode}")
+            st.json(response_data)
+            
+            if display_mode == 'tickets':
+                if ui_mode == 'button_list':
+                    display_ticket_list_with_sidebar(response_data, "요청하신 티켓 목록")
                 else:
-                    st.info("표시할 티켓이 없습니다.")
+                    # 텍스트 형태로 간단히 표시
+                    tickets = response_data.get('tickets', [])
+                    if tickets:
+                        st.subheader("📋 티켓 요약")
+                        for i, ticket in enumerate(tickets, 1):
+                            st.write(f"{i}. {ticket.get('title', '제목 없음')} - {ticket.get('status', '상태 불명')}")
+                    else:
+                        st.info("표시할 티켓이 없습니다.")
+                        
+            elif display_mode == 'mail_list':
+                if ui_mode == 'button_list':
+                    create_mail_list_with_sidebar(response_data.get('mail_list', []), "요청하신 메일 목록")
+                else:
+                    create_mail_list_ui(response_data.get('mail_list', []), "요청하신 메일 목록")
                     
-        elif display_mode == 'mail_list':
-            if ui_mode == 'button_list':
-                create_mail_list_with_sidebar(response_data.get('mail_list', []), "요청하신 메일 목록")
-            else:
-                create_mail_list_ui(response_data.get('mail_list', []), "요청하신 메일 목록")
+            elif display_mode in ['no_emails', 'error']:
+                st.info(response_data.get('message', '알 수 없는 응답입니다.'))
+        else:
+            st.info("🔍 디버깅: latest_response가 없습니다.")
+    
+    # 탭 2: 첨부파일 임베더
+    with tab2:
+        st.header("📎 첨부파일 임베더")
+        st.markdown("문서 파일을 업로드하면 AI가 분석하고 벡터 데이터베이스에 저장합니다.")
+        
+        # 파일 업로더
+        uploaded_files = st.file_uploader(
+            "문서 파일을 선택하세요",
+            type=['docx', 'pptx', 'pdf', 'xlsx', 'txt', 'md', 'csv', 'scds'],
+            accept_multiple_files=True,
+            help="여러 파일을 동시에 선택할 수 있습니다. 파일이 손상되지 않았는지 확인해주세요."
+        )
+        
+        # 파일 업로드 가이드
+        with st.expander("📋 파일 업로드 가이드"):
+            st.markdown("""
+            **지원 파일 형식:**
+            - **문서**: DOCX, PPTX, PDF
+            - **스프레드시트**: XLSX, CSV  
+            - **텍스트**: TXT, MD
+            - **바이너리**: SCDS (System Configuration Data Set)
+            
+            **주의사항:**
+            - 파일이 손상되지 않았는지 확인
+            - 파일 크기는 100MB 이하 권장
+            - 한글 파일명 지원
+            - 파일 업로드 후 크기가 0이 아닌지 확인
+            """)
+            
+            st.warning("""
+            **문제 해결:**
+            - 파일이 손상된 경우: 원본 파일을 다시 다운로드
+            - 업로드 실패 시: 브라우저 새로고침 후 재시도
+            - 큰 파일: 네트워크 연결 상태 확인
+            """)
+        
+        # 벡터DB 관리 기능
+        st.markdown("---")
+        st.subheader("🗄️ 벡터DB 관리")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📊 벡터DB 통계 조회", use_container_width=True):
+                try:
+                    if 'system_info_db' not in st.session_state:
+                        from vector_db_models import SystemInfoVectorDBManager
+                        st.session_state.system_info_db = SystemInfoVectorDBManager()
+                    
+                    stats = st.session_state.system_info_db.get_collection_stats()
+                    
+                    if "error" not in stats:
+                        st.success("✅ 벡터DB 통계 조회 성공!")
+                        
+                        # 통계 표시 (안전한 키 접근)
+                        col_a, col_b, col_c = st.columns(3)
+                        with col_a:
+                            st.metric("총 청크 수", stats.get('total_chunks', 0))
+                        with col_b:
+                            st.metric("총 파일 수", stats.get('total_files', 0))
+                        with col_c:
+                            st.metric("컬렉션명", stats.get('collection_name', 'system_info'))
+                        
+                        # 파일 타입별 통계
+                        file_types = stats.get('file_types', {})
+                        if file_types:
+                            st.subheader("📁 파일 타입별 통계")
+                            for file_type, count in file_types.items():
+                                st.info(f"• {file_type}: {count}개 청크")
+                    else:
+                        st.error(f"❌ 벡터DB 통계 조회 실패: {stats['error']}")
+                except Exception as e:
+                    st.error(f"❌ 벡터DB 통계 조회 중 오류: {str(e)}")
+        
+        with col2:
+            if st.button("🗑️ 벡터DB 초기화", use_container_width=True, type="secondary"):
+                try:
+                    if 'system_info_db' in st.session_state:
+                        st.session_state.system_info_db.reset_collection()
+                        st.success("✅ 벡터DB가 초기화되었습니다!")
+                    else:
+                        st.warning("⚠️ 벡터DB가 초기화되지 않았습니다.")
+                except Exception as e:
+                    st.error(f"❌ 벡터DB 초기화 중 오류: {str(e)}")
+        
+        # 벡터DB 검색 기능
+        st.markdown("---")
+        st.subheader("🔍 벡터DB 검색")
+        
+        search_query = st.text_input("검색어를 입력하세요", placeholder="예: 시스템 아키텍처, UI 설계...")
+        search_file_type = st.selectbox(
+            "파일 타입 필터 (선택사항)",
+            ["전체", "pptx", "docx", "pdf", "xlsx", "txt", "md", "csv", "scds"]
+        )
+        
+        if st.button("🔍 검색 시작", use_container_width=True) and search_query:
+            try:
+                if 'system_info_db' not in st.session_state:
+                    from vector_db_models import SystemInfoVectorDBManager
+                    st.session_state.system_info_db = SystemInfoVectorDBManager()
                 
-        elif display_mode in ['no_emails', 'error']:
-            st.info(response_data.get('message', '알 수 없는 응답입니다.'))
-    else:
-        st.info("🔍 디버깅: latest_response가 없습니다.")
+                # 파일 타입 필터 적용
+                file_type_filter = None if search_file_type == "전체" else search_file_type
+                
+                search_results = st.session_state.system_info_db.search_similar_chunks(
+                    query=search_query,
+                    n_results=10,
+                    file_type=file_type_filter
+                )
+                
+                if search_results:
+                    st.success(f"✅ 검색 완료! {len(search_results)}개 결과를 찾았습니다.")
+                    
+                    # 검색 결과 표시
+                    for i, result in enumerate(search_results, 1):
+                        with st.expander(f"🔍 검색 결과 {i}"):
+                            metadata = result['metadata']
+                            st.write(f"**파일명:** {metadata.get('file_name', '알 수 없음')}")
+                            st.write(f"**섹션:** {metadata.get('section_title', '제목 없음')}")
+                            st.write(f"**파일 타입:** {metadata.get('file_type', '알 수 없음')}")
+                            st.write(f"**아키텍처:** {metadata.get('architecture', 'unknown')}")
+                            
+                            # 유사도 점수
+                            similarity = result.get('similarity_score', 0)
+                            if similarity is not None:
+                                st.progress(similarity)
+                                st.write(f"**유사도:** {similarity:.3f}")
+                            
+                            # 텍스트 내용
+                            text_content = result['text_content']
+                            if text_content:
+                                st.text_area(f"📝 내용", text_content, height=100, disabled=True)
+                else:
+                    st.info("🔍 검색 결과가 없습니다.")
+                    
+            except Exception as e:
+                st.error(f"❌ 검색 중 오류 발생: {str(e)}")
+        
+        if uploaded_files:
+            st.success(f"✅ {len(uploaded_files)}개 파일이 업로드되었습니다.")
+            
+            # 파일 목록 표시
+            st.subheader("📋 업로드된 파일 목록")
+            for i, file in enumerate(uploaded_files, 1):
+                col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+                with col1:
+                    st.write(f"**{i}. {file.name}**")
+                with col2:
+                    st.write(f"크기: {file.size / 1024:.1f} KB")
+                with col3:
+                    st.write(f"타입: {file.type}")
+                with col4:
+                    # 파일 상태 표시
+                    if file.size > 0:
+                        st.success("✅ 정상")
+                    else:
+                        st.error("❌ 빈 파일")
+            
+            # 파일 검증 요약
+            valid_files = [f for f in uploaded_files if f.size > 0]
+            if len(valid_files) != len(uploaded_files):
+                st.warning(f"⚠️ {len(uploaded_files) - len(valid_files)}개 파일이 비어있습니다.")
+                st.info("빈 파일은 처리에서 제외됩니다.")
+            
+            # 분석 및 임베딩 시작 버튼
+            if st.button("🚀 분석 및 임베딩 시작", type="primary", use_container_width=True):
+                if 'file_processor' not in st.session_state:
+                    st.session_state.file_processor = FileProcessor()
+                
+                # 결과를 저장할 리스트
+                processing_results = []
+                
+                # 유효한 파일만 처리 (빈 파일 제외)
+                valid_files = [f for f in uploaded_files if f.size > 0]
+                if len(valid_files) == 0:
+                    st.error("❌ 처리할 수 있는 파일이 없습니다. 모든 파일이 비어있습니다.")
+                    return
+                
+                st.info(f"📊 {len(valid_files)}개 유효한 파일을 처리합니다.")
+                
+                # 각 파일 처리
+                for file in valid_files:
+                    # 임시 디렉토리 생성 및 파일 저장
+                    temp_dir = tempfile.mkdtemp()
+                    try:
+                        # 원본 파일 확장자 유지
+                        file_ext = Path(file.name).suffix.lower()
+                        temp_file_path = os.path.join(temp_dir, f"uploaded_file{file_ext}")
+                        
+                        # 파일 내용을 임시 파일에 저장
+                        with open(temp_file_path, 'wb') as f:
+                            f.write(file.getvalue())
+                        
+                        # 파일 존재 확인
+                        if not os.path.exists(temp_file_path):
+                            raise Exception(f"임시 파일 생성 실패: {temp_file_path}")
+                        
+                        # 파일 크기 확인
+                        file_size = os.path.getsize(temp_file_path)
+                        if file_size == 0:
+                            raise Exception("업로드된 파일이 비어있습니다")
+                        
+                        st.info(f"📁 임시 파일 생성: {temp_file_path} (크기: {file_size} bytes)")
+                        
+                        # 실제 파일 형식 감지
+                        detected_type = detect_file_type_by_content(temp_file_path)
+                        st.info(f"🔍 감지된 실제 파일 형식: {detected_type}")
+                        
+                        # 확장자와 실제 형식이 다른 경우 경고
+                        if detected_type != file_ext:
+                            st.warning(f"⚠️  파일 확장자({file_ext})와 실제 형식({detected_type})이 다릅니다!")
+                            st.info(f"💡 파일을 {detected_type} 확장자로 다시 업로드하거나, 원본 파일을 확인해주세요.")
+                        
+                        # 파일 타입별 추가 검증
+                        if file_ext == '.pptx':
+                            # PPTX 파일 헤더 검증
+                            with open(temp_file_path, 'rb') as f:
+                                header = f.read(4)
+                                if header != b'PK\x03\x04':
+                                    # 더 자세한 오류 정보 제공
+                                    st.error(f"❌ PPTX 파일 헤더 검증 실패")
+                                    st.error(f"예상: PK 03 04, 실제: {' '.join(f'{b:02x}' for b in header)}")
+                                    
+                                    # 파일 내용 일부 확인
+                                    f.seek(0)
+                                    first_32_bytes = f.read(32)
+                                    st.error(f"파일 시작 부분: {' '.join(f'{b:02x}' for b in first_32_bytes)}")
+                                    
+                                    # 파일 형식 추측 시도
+                                    st.info("🔍 파일 형식 추측 중...")
+                                    f.seek(0)
+                                    full_header = f.read(64)
+                                    
+                                    # 다양한 파일 형식 확인
+                                    if full_header.startswith(b'%PDF'):
+                                        st.warning("💡 이 파일은 PDF 파일로 보입니다. 확장자를 .pdf로 변경해주세요.")
+                                    elif full_header.startswith(b'\xff\xfe') or full_header.startswith(b'\xfe\xff'):
+                                        st.warning("💡 이 파일은 유니코드 텍스트 파일로 보입니다.")
+                                    elif full_header.startswith(b'\xef\xbb\xbf'):
+                                        st.warning("💡 이 파일은 UTF-8 BOM 텍스트 파일로 보입니다.")
+                                    elif all(32 <= b <= 126 or b in [9, 10, 13] for b in full_header[:32]):
+                                        st.warning("💡 이 파일은 일반 텍스트 파일로 보입니다.")
+                                    else:
+                                        st.warning("💡 이 파일은 알 수 없는 바이너리 파일입니다.")
+                                    
+                                    # 파일 크기 정보
+                                    file_size = os.path.getsize(temp_file_path)
+                                    st.info(f"📏 파일 크기: {file_size:,} bytes ({file_size/1024:.1f} KB)")
+                                    
+                                    raise Exception(f"올바른 PPTX 파일이 아닙니다 (ZIP 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
+                            st.info("✅ PPTX 파일 헤더 검증 완료")
+                        
+                        elif file_ext == '.docx':
+                            # DOCX 파일 헤더 검증
+                            with open(temp_file_path, 'rb') as f:
+                                header = f.read(4)
+                                if header != b'PK\x03\x04':
+                                    st.error(f"❌ DOCX 파일 헤더 검증 실패")
+                                    st.error(f"예상: PK 03 04, 실제: {' '.join(f'{b:02x}' for b in header)}")
+                                    
+                                    # 파일 형식 추측
+                                    f.seek(0)
+                                    full_header = f.read(64)
+                                    if full_header.startswith(b'%PDF'):
+                                        st.warning("💡 이 파일은 PDF 파일로 보입니다. 확장자를 .pdf로 변경해주세요.")
+                                    elif full_header.startswith(b'\x50\x4b\x03\x04'):
+                                        st.warning("💡 이 파일은 PPTX 파일로 보입니다. 확장자를 .pptx로 변경해주세요.")
+                                    
+                                    raise Exception(f"올바른 DOCX 파일이 아닙니다 (ZIP 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
+                            st.info("✅ DOCX 파일 헤더 검증 완료")
+                        
+                        elif file_ext == '.pdf':
+                            # PDF 파일 헤더 검증
+                            with open(temp_file_path, 'rb') as f:
+                                header = f.read(4)
+                                if header != b'%PDF':
+                                    st.error(f"❌ PDF 파일 헤더 검증 실패")
+                                    st.error(f"예상: %PDF, 실제: {' '.join(f'{b:02x}' for b in header)}")
+                                    
+                                    # 파일 형식 추측
+                                    f.seek(0)
+                                    full_header = f.read(64)
+                                    if full_header.startswith(b'PK\x03\x04'):
+                                        st.warning("💡 이 파일은 Office 문서(PPTX/DOCX/XLSX)로 보입니다. 확장자를 확인해주세요.")
+                                    
+                                    raise Exception(f"올바른 PDF 파일이 아닙니다 (PDF 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
+                            st.info("✅ PDF 파일 헤더 검증 완료")
+                        
+                        # 파일 처리
+                        import time
+                        start_time = time.time()
+                        
+                        with st.spinner(f"📄 {file.name} 처리 중..."):
+                            st.info(f"🔍 FileProcessor 시작: {temp_file_path}")
+                            
+                            # 실제 형식에 따라 처리 방식 결정
+                            if detected_type != file_ext:
+                                st.info(f"🔄 실제 형식({detected_type})에 맞춰 처리 방식을 조정합니다.")
+                                
+                                # 임시로 올바른 확장자로 파일 복사
+                                corrected_file_path = temp_file_path.replace(file_ext, detected_type)
+                                import shutil
+                                shutil.copy2(temp_file_path, corrected_file_path)
+                                st.info(f"📝 수정된 파일 경로: {corrected_file_path}")
+                                
+                                # 수정된 파일로 처리
+                                try:
+                                    result = st.session_state.file_processor.process_file(corrected_file_path)
+                                    st.info(f"✅ FileProcessor 완료 (수정된 형식): {len(result.get('chunks', [])) if result else 0}개 청크")
+                                except Exception as proc_error:
+                                    st.error(f"❌ FileProcessor 오류 (수정된 형식): {str(proc_error)}")
+                                    raise proc_error
+                            else:
+                                # 원래 확장자로 처리
+                                try:
+                                    result = st.session_state.file_processor.process_file(temp_file_path)
+                                    st.info(f"✅ FileProcessor 완료: {len(result.get('chunks', [])) if result else 0}개 청크")
+                                except Exception as proc_error:
+                                    st.error(f"❌ FileProcessor 오류: {str(proc_error)}")
+                                    raise proc_error
+                        
+                        # 처리 시간 계산
+                        processing_duration = time.time() - start_time
+                        st.info(f"⏱️ 파일 처리 소요 시간: {processing_duration:.2f}초")
+                        
+                        # 결과 처리 로직
+                        if result and not result.get("error"):
+                            # 임베딩 및 저장
+                            chunks = result.get('chunks', [])
+                            embed_result = embed_and_store_chunks(chunks, file.name, file.getvalue(), processing_duration)
+                            
+                            if embed_result["success"]:
+                                # 중복 파일인 경우
+                                if embed_result.get("duplicate", False):
+                                    st.success(embed_result["message"])
+                                    st.info(f"🔍 파일 해시: {embed_result.get('file_hash', '')[:16]}...")
+                                else:
+                                    st.success(embed_result["message"])
+                                
+                                # 결과 상세 정보를 expander로 표시
+                                with st.expander(f"📊 {file.name} 처리 결과 상세보기"):
+                                    st.json(result)
+                                    
+                                    # 요약 정보
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("총 청크 수", embed_result["total_chunks"])
+                                    with col2:
+                                        st.metric("총 요소 수", embed_result["total_elements"])
+                                    with col3:
+                                        st.metric("텍스트 길이", embed_result["total_text_length"])
+                                    
+                                    # 아키텍처 정보
+                                    st.subheader("🏗️ 처리 아키텍처")
+                                    for arch in embed_result["architectures"]:
+                                        st.info(f"• {arch}")
+                                    
+                                    if embed_result["vision_analysis_count"] > 0:
+                                        st.success(f"👁️ Vision 분석 적용: {embed_result['vision_analysis_count']}개 청크")
+                                    
+                                    # 청크별 상세 정보
+                                    st.subheader("📝 청크별 상세 정보")
+                                    for i, chunk in enumerate(chunks, 1):
+                                        with st.expander(f"청크 {i}"):
+                                            metadata = chunk.get('metadata', {})
+                                            st.write(f"**아키텍처:** {metadata.get('architecture', 'unknown')}")
+                                            st.write(f"**처리 방법:** {metadata.get('processing_method', 'unknown')}")
+                                            st.write(f"**Vision 분석:** {metadata.get('vision_analysis', False)}")
+                                            st.write(f"**요소 개수:** {metadata.get('element_count', 0)}")
+                                            
+                                            # text_chunk_to_embed 미리보기
+                                            text_content = chunk.get('text_chunk_to_embed', '')
+                                            if text_content:
+                                                st.text_area(f"📝 청크 {i} 내용", text_content, height=100, disabled=True)
+                                            else:
+                                                st.info("텍스트 내용이 없습니다 (단순 변환 방식)")
+                                            
+                                            # 요소 정보
+                                            elements = metadata.get('elements', [])
+                                            if elements:
+                                                st.write(f"**요소 정보:**")
+                                                for j, element in enumerate(elements[:5], 1):  # 처음 5개만 표시
+                                                    st.write(f"  {j}. {element.get('element_type', 'unknown')}: {str(element.get('content', ''))[:100]}...")
+                                                if len(elements) > 5:
+                                                    st.write(f"  ... 외 {len(elements) - 5}개")
+                                
+                                processing_results.append({
+                                    "file_name": file.name,
+                                    "success": True,
+                                    "result": embed_result
+                                })
+                            
+                            else:
+                                st.error(embed_result["message"])
+                                processing_results.append({
+                                    "file_name": file.name,
+                                    "success": False,
+                                    "error": embed_result.get("error", "알 수 없는 오류")
+                                })
+                        
+                        else:
+                            error_msg = result.get('message', '알 수 없는 오류') if result else '파일 처리 실패'
+                            st.error(f"❌ {file.name} 처리 실패: {error_msg}")
+                            processing_results.append({
+                                "file_name": file.name,
+                                "success": False,
+                                "error": error_msg
+                            })
+                    
+                    except Exception as e:
+                        st.error(f"❌ {file.name} 처리 중 오류 발생: {str(e)}")
+                        processing_results.append({
+                            "file_name": file.name,
+                            "success": False,
+                            "error": str(e)
+                        })
+                    
+                    finally:
+                        # 임시 디렉토리 정리
+                        try:
+                            import shutil
+                            shutil.rmtree(temp_dir)
+                            st.success(f"✅ {file.name} 임시 파일 정리 완료")
+                        except Exception as cleanup_error:
+                            st.warning(f"⚠️  임시 파일 정리 실패: {cleanup_error}")
+                
+                # 전체 처리 결과 요약
+                if processing_results:
+                    st.markdown("---")
+                    st.subheader("📊 전체 처리 결과 요약")
+                    
+                    successful = sum(1 for r in processing_results if r["success"])
+                    total = len(processing_results)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("성공", successful)
+                    with col2:
+                        st.metric("실패", total - successful)
+                    
+                    if successful == total:
+                        st.success("🎉 모든 파일이 성공적으로 처리되었습니다!")
+                    elif successful > 0:
+                        st.warning(f"⚠️ {successful}/{total}개 파일이 성공적으로 처리되었습니다.")
+                    else:
+                        st.error("❌ 모든 파일 처리에 실패했습니다.")
+                    
+                    # 실패한 파일 목록
+                    failed_files = [r for r in processing_results if not r["success"]]
+                    if failed_files:
+                        st.subheader("❌ 실패한 파일들")
+                        for failed in failed_files:
+                            st.error(f"• {failed['file_name']}: {failed['error']}")
+                    
+                    # 벡터DB 통계 표시
+                    if successful > 0:
+                        st.markdown("---")
+                        st.subheader("🗄️ 벡터DB 상태")
+                        
+                        try:
+                            if 'system_info_db' in st.session_state:
+                                stats = st.session_state.system_info_db.get_collection_stats()
+                                
+                                if "error" not in stats:
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("총 청크 수", stats['total_chunks'])
+                                    with col2:
+                                        st.metric("총 파일 수", stats['total_files'])
+                                    with col3:
+                                        st.metric("컬렉션명", stats.get('collection_name', 'system_info'))
+                                    
+                                    # 파일 타입별 통계
+                                    if stats['file_types']:
+                                        st.subheader("📁 파일 타입별 통계")
+                                        for file_type, count in stats['file_types'].items():
+                                            st.info(f"• {file_type}: {count}개 청크")
+                                else:
+                                    st.error(f"벡터DB 통계 조회 실패: {stats['error']}")
+                            else:
+                                st.info("벡터DB가 초기화되지 않았습니다.")
+                        except Exception as e:
+                            st.warning(f"벡터DB 통계 조회 중 오류: {str(e)}")
+        else:
+            st.info("📁 문서 파일을 업로드해주세요. 지원 형식: DOCX, PPTX, PDF, XLSX, TXT, MD, CSV")
+    
+    # 탭 3: Jira 연동
+    with tab3:
+        st.header("🎫 Jira 연동")
+        st.markdown("Jira 프로젝트의 티켓 데이터를 벡터 데이터베이스에 동기화합니다.")
+        
+        # Jira 연결 상태 확인
+        try:
+            from jira_connector import JiraConnector
+            from dotenv import load_dotenv
+            
+            # .env 파일 로드
+            load_dotenv()
+            
+            # 환경 변수에서 Jira 설정 확인
+            jira_url = os.getenv('JIRA_API_ENDPOINT', '').replace('/rest/api/2/', '')
+            jira_email = os.getenv('JIRA_USER_EMAIL')
+            jira_token = os.getenv('JIRA_API_TOKEN')
+            
+            if all([jira_url, jira_email, jira_token]):
+                st.success("✅ .env 파일에서 Jira 설정을 자동으로 읽어왔습니다!")
+                
+                # 현재 설정 정보 표시
+                with st.expander("🔍 현재 Jira 설정 정보"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.info(f"**Jira URL:** {jira_url}")
+                        st.info(f"**사용자 이메일:** {jira_email}")
+                    with col2:
+                        st.info(f"**API 토큰:** {jira_token[:10]}...")
+                        st.info("**상태:** 설정 완료")
+                
+                # 자동 동기화 버튼
+                if st.button("🚀 자동 Jira 동기화 시작", use_container_width=True, type="primary"):
+                    try:
+                        with st.spinner("🔄 Jira 데이터 동기화 중..."):
+                            # JiraConnector 인스턴스 생성 (인자 없이 자동 설정)
+                            connector = JiraConnector()
+                            
+                            # 동기화 실행
+                            sync_result = connector.sync_jira()
+                            
+                            if sync_result["success"]:
+                                st.success(sync_result["message"])
+                                
+                                # 동기화 결과 상세 표시
+                                with st.expander("📊 동기화 결과 상세보기"):
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("처리된 티켓", sync_result["tickets_processed"])
+                                    with col2:
+                                        st.metric("발견된 티켓", sync_result["total_tickets_found"])
+                                    with col3:
+                                        st.metric("동기화 시간", f"{sync_result['sync_duration']:.2f}초")
+                                    
+                                    # 동기화 정보
+                                    st.subheader("🕒 동기화 정보")
+                                    st.info(f"**시작 시간:** {sync_result['start_time']}")
+                                    st.info(f"**완료 시간:** {sync_result['end_time']}")
+                                    st.info(f"**마지막 동기화:** {sync_result['last_sync_time']}")
+                                    
+                                    # 성공 메시지
+                                    if sync_result["tickets_processed"] > 0:
+                                        st.success(f"🎉 {sync_result['tickets_processed']}개 티켓이 성공적으로 동기화되었습니다!")
+                                    else:
+                                        st.info("ℹ️ 동기화할 새로운 티켓이 없습니다.")
+                                
+                                # Jira 연결 상태 업데이트
+                                st.session_state.jira_connected = True
+                                
+                            else:
+                                st.error(sync_result["message"])
+                                st.error(f"❌ 동기화 실패: {sync_result.get('error', '알 수 없는 오류')}")
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        st.error(f"❌ Jira 동기화 중 오류 발생: {error_msg}")
+                        
+                        # 에러 유형별 특별한 안내
+                        if "429" in error_msg or "Rate Limit" in error_msg:
+                            st.error("🚫 Rate Limit 초과!")
+                            st.info("💡 Jira API 요청 한도를 초과했습니다.")
+                            st.info("💡 해결 방법:")
+                            st.info("1. 잠시 후 다시 시도해주세요 (자동으로 재시도됩니다)")
+                            st.info("2. 대량의 티켓이 있는 경우 배치 크기를 줄여주세요")
+                            st.info("3. 동기화 주기를 늘려주세요")
+                            
+                            # 자동 재시도 안내
+                            st.warning("🔄 자동 재시도가 활성화되어 있습니다. 잠시 후 다시 시도해보세요.")
+                            
+                        elif "401" in error_msg or "Unauthorized" in error_msg:
+                            st.error("🔐 인증 오류가 발생했습니다!")
+                            st.info("💡 해결 방법:")
+                            st.info("1. Jira API 토큰이 만료되었을 수 있습니다.")
+                            st.info("2. [Atlassian 계정 설정](https://id.atlassian.com/manage-profile/security/api-tokens)에서 새 토큰을 생성하세요.")
+                            st.info("3. .env 파일의 JIRA_API_TOKEN을 새 토큰으로 업데이트하세요.")
+                            st.info("4. Jira 계정에 해당 프로젝트에 대한 접근 권한이 있는지 확인하세요.")
+                            
+                        elif "403" in error_msg or "권한 부족" in error_msg:
+                            st.error("🚫 권한 부족!")
+                            st.info("💡 Jira 프로젝트에 대한 접근 권한이 없습니다.")
+                            st.info("💡 해결 방법:")
+                            st.info("1. Jira 계정에 해당 프로젝트에 대한 읽기 권한이 있는지 확인하세요")
+                            st.info("2. 프로젝트 관리자에게 권한 요청을 하세요")
+                            st.info("3. API 토큰이 올바른 권한을 가지고 있는지 확인하세요")
+                            
+                        else:
+                            st.info("💡 .env 파일의 Jira 설정을 확인해주세요.")
+                            st.info("💡 네트워크 연결 상태를 확인해주세요.")
+                
+                # 수동 설정 옵션
+                st.markdown("---")
+                st.subheader("⚙️ 수동 설정 (선택사항)")
+                st.info("기본 설정 외에 다른 Jira 인스턴스를 사용하려면 아래 폼을 사용하세요.")
+                
+            else:
+                st.warning("⚠️ .env 파일에 Jira 설정이 완전하지 않습니다.")
+                st.info("아래 폼을 통해 수동으로 Jira 연결 정보를 입력해주세요.")
+            
+        except ImportError:
+            st.error("❌ Jira 라이브러리가 설치되지 않았습니다. `pip install jira` 명령으로 설치해주세요.")
+            return
+        
+        # 수동 Jira 연동 정보 입력 폼
+        with st.form("jira_connection_form"):
+            st.subheader("🔗 수동 Jira 연결 정보")
+            
+            manual_jira_url = st.text_input(
+                "Jira URL", 
+                placeholder="https://your-domain.atlassian.net",
+                help="Jira 서버의 URL을 입력하세요 (예: https://company.atlassian.net)",
+                key="manual_jira_url"
+            )
+            
+            manual_jira_email = st.text_input(
+                "이메일 주소",
+                placeholder="your-email@company.com",
+                help="Jira 계정의 이메일 주소를 입력하세요",
+                key="manual_jira_email"
+            )
+            
+            manual_jira_token = st.text_input(
+                "API 토큰",
+                type="password",
+                placeholder="API 토큰을 입력하세요",
+                help="Jira API 토큰을 입력하세요. Atlassian 계정 설정에서 생성할 수 있습니다.",
+                key="manual_jira_token"
+            )
+            
+            # 폼 제출 버튼
+            submit_button = st.form_submit_button("🚀 수동 Jira 동기화 시작", use_container_width=True)
+            
+            if submit_button:
+                if not all([manual_jira_url, manual_jira_email, manual_jira_token]):
+                    st.error("❌ 모든 필드를 입력해주세요.")
+                else:
+                    try:
+                        # JiraConnector import 및 인스턴스 생성
+                        with st.spinner("🔄 수동 Jira 데이터 동기화 중..."):
+                            # JiraConnector 인스턴스 생성 (수동 설정)
+                            connector = JiraConnector(
+                                url=manual_jira_url,
+                                email=manual_jira_email,
+                                token=manual_jira_token
+                            )
+                            
+                            # 동기화 실행
+                            sync_result = connector.sync_jira()
+                            
+                            if sync_result["success"]:
+                                st.success(sync_result["message"])
+                                
+                                # 동기화 결과 상세 표시
+                                with st.expander("📊 수동 동기화 결과 상세보기"):
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("처리된 티켓", sync_result["tickets_processed"])
+                                    with col2:
+                                        st.metric("발견된 티켓", sync_result["total_tickets_found"])
+                                    with col3:
+                                        st.metric("동기화 시간", f"{sync_result['sync_duration']:.2f}초")
+                                    
+                                    # 동기화 정보
+                                    st.subheader("🕒 동기화 정보")
+                                    st.info(f"**시작 시간:** {sync_result['start_time']}")
+                                    st.info(f"**완료 시간:** {sync_result['end_time']}")
+                                    st.info(f"**마지막 동기화:** {sync_result['last_sync_time']}")
+                                    
+                                    # 성공 메시지
+                                    if sync_result["tickets_processed"] > 0:
+                                        st.success(f"🎉 {sync_result['tickets_processed']}개 티켓이 성공적으로 동기화되었습니다!")
+                                    else:
+                                        st.info("ℹ️ 동기화할 새로운 티켓이 없습니다.")
+                                
+                                # Jira 연결 상태 업데이트
+                                st.session_state.jira_connected = True
+                                
+                            else:
+                                st.error(sync_result["message"])
+                                st.error(f"❌ 동기화 실패: {sync_result.get('error', '알 수 없는 오류')}")
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        st.error(f"❌ Jira 동기화 중 오류 발생: {error_msg}")
+                        
+                        # 에러 유형별 특별한 안내
+                        if "429" in error_msg or "Rate Limit" in error_msg:
+                            st.error("🚫 Rate Limit 초과!")
+                            st.info("💡 Jira API 요청 한도를 초과했습니다.")
+                            st.info("💡 해결 방법:")
+                            st.info("1. 잠시 후 다시 시도해주세요 (자동으로 재시도됩니다)")
+                            st.info("2. 대량의 티켓이 있는 경우 배치 크기를 줄여주세요")
+                            st.info("3. 동기화 주기를 늘려주세요")
+                            
+                        elif "401" in error_msg or "Unauthorized" in error_msg:
+                            st.error("🔐 인증 오류가 발생했습니다!")
+                            st.info("💡 해결 방법:")
+                            st.info("1. Jira URL이 올바른지 확인하세요")
+                            st.info("2. 이메일 주소가 정확한지 확인하세요")
+                            st.info("3. API 토큰이 유효한지 확인하세요")
+                            
+                        elif "403" in error_msg or "권한 부족" in error_msg:
+                            st.error("🚫 권한 부족!")
+                            st.info("💡 Jira 프로젝트에 대한 접근 권한이 없습니다.")
+                            st.info("💡 해결 방법:")
+                            st.info("1. Jira 계정에 해당 프로젝트에 대한 읽기 권한이 있는지 확인하세요")
+                            st.info("2. 프로젝트 관리자에게 권한 요청을 하세요")
+                            
+                        else:
+                            st.info("💡 Jira URL, 이메일, API 토큰이 올바른지 확인해주세요.")
+                            st.info("💡 네트워크 연결 상태를 확인해주세요.")
+        
+        # Jira 연동 가이드
+        with st.expander("📚 Jira 연동 가이드"):
+            st.markdown("""
+            ### 🔑 API 토큰 생성 방법
+            1. [Atlassian 계정 설정](https://id.atlassian.com/manage-profile/security/api-tokens)에 접속
+            2. "API 토큰" 섹션에서 "토큰 생성" 클릭
+            3. 토큰 이름 입력 (예: "Streamlit Jira Sync")
+            4. 생성된 토큰을 복사하여 위 폼에 입력
+            
+            ### 📋 동기화되는 데이터
+            - **티켓 요약**: 제목과 설명
+            - **상태 정보**: 현재 상태, 우선순위, 담당자
+            - **코멘트**: 최신 3개 코멘트
+            - **메타데이터**: 생성/수정 시간, 보고자 등
+            
+            ### ⚠️ 주의사항
+            - API 토큰은 안전하게 보관하세요
+            - 대량의 티켓이 있는 경우 동기화에 시간이 걸릴 수 있습니다
+            - 동기화는 마지막 동기화 이후 변경된 티켓만 처리합니다
+            
+            ### 🚫 Rate Limiting & Backoff 전략
+            - **자동 재시도**: 429 에러 시 최대 5회까지 자동 재시도
+            - **지능적 대기**: 에러 유형에 따른 적응적 대기 시간 (4초~60초)
+            - **Rate Limiting**: 검색 100/분, 일반 1000/분 제한 자동 적용
+            - **배치 처리**: 대량 티켓 처리 시 자동으로 적절한 간격 유지
+            """)
+        
+        # Jira 벡터DB 검색 기능
+        st.markdown("---")
+        st.subheader("🔍 Jira 티켓 검색")
+        
+        jira_search_query = st.text_input(
+            "Jira 티켓 검색어",
+            placeholder="예: 버그 수정, 기능 개발...",
+            key="jira_search"
+        )
+        
+        if st.button("🔍 Jira 검색 시작", use_container_width=True) and jira_search_query:
+            try:
+                if 'system_info_db' not in st.session_state:
+                    from vector_db_models import SystemInfoVectorDBManager
+                    st.session_state.system_info_db = SystemInfoVectorDBManager()
+                
+                # jira_info 컬렉션에서 검색
+                search_results = st.session_state.system_info_db.search_similar_chunks(
+                    query=jira_search_query,
+                    n_results=10
+                )
+                
+                if search_results:
+                    st.success(f"✅ Jira 검색 완료! {len(search_results)}개 결과를 찾았습니다.")
+                    
+                    # 검색 결과 표시
+                    for i, result in enumerate(search_results, 1):
+                        with st.expander(f"🎫 Jira 티켓 {i}"):
+                            metadata = result['metadata']
+                            st.write(f"**티켓 키:** {metadata.get('ticket_key', '알 수 없음')}")
+                            st.write(f"**요약:** {metadata.get('summary', '제목 없음')}")
+                            st.write(f"**상태:** {metadata.get('status', '알 수 없음')}")
+                            st.write(f"**우선순위:** {metadata.get('priority', '알 수 없음')}")
+                            st.write(f"**담당자:** {metadata.get('assignee', '알 수 없음')}")
+                            
+                            # 유사도 점수
+                            similarity = result.get('similarity_score', 0)
+                            if similarity is not None:
+                                st.progress(similarity)
+                                st.write(f"**유사도:** {similarity:.3f}")
+                            
+                            # 티켓 내용
+                            text_content = result['text_content']
+                            if text_content:
+                                st.text_area(f"📝 티켓 내용", text_content, height=150, disabled=True)
+                else:
+                    st.info("🔍 Jira 검색 결과가 없습니다.")
+                    
+            except Exception as e:
+                st.error(f"❌ Jira 검색 중 오류 발생: {str(e)}")
 
     # 3. 사용자 입력 처리
     if prompt := st.chat_input("메일에 대해 무엇이든 물어보세요..."):
