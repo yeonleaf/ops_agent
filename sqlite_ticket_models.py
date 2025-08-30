@@ -297,6 +297,51 @@ class SQLiteTicketManager:
         except Exception as e:
             print(f"❌ VectorDB 상태 동기화 실패: {str(e)}")
     
+    def update_ticket_labels(self, ticket_id: int, new_labels: List[str], old_labels: List[str]):
+        """티켓 레이블 업데이트 (RDB + VectorDB 동기화)"""
+        current_time = datetime.now().isoformat()
+        
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            # 티켓 레이블 업데이트 (JSON 형태로 저장)
+            labels_json = json.dumps(new_labels)
+            cursor.execute("""
+                UPDATE tickets 
+                SET labels = ?, updated_at = ?
+                WHERE ticket_id = ?
+            """, (labels_json, current_time, ticket_id))
+            
+            # 이벤트 기록
+            old_labels_str = ', '.join(old_labels) if old_labels else '없음'
+            new_labels_str = ', '.join(new_labels) if new_labels else '없음'
+            cursor.execute("""
+                INSERT INTO ticket_events (ticket_id, event_type, old_value, new_value, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (ticket_id, "labels_change", old_labels_str, new_labels_str, current_time))
+            
+            conn.commit()
+        
+        # VectorDB 레이블 동기화
+        try:
+            from vector_db_models import VectorDBManager
+            vector_db = VectorDBManager()
+            
+            # 해당 티켓의 메일 ID 찾기
+            cursor.execute("SELECT original_message_id FROM tickets WHERE ticket_id = ?", (ticket_id,))
+            result = cursor.fetchone()
+            if result:
+                message_id = result[0]
+                # VectorDB에서 해당 메일의 레이블 업데이트
+                vector_db.update_mail_labels(message_id, new_labels)
+                print(f"✅ VectorDB 레이블 동기화 완료: {message_id} -> {new_labels}")
+            else:
+                print(f"⚠️ 티켓 {ticket_id}의 메일 ID를 찾을 수 없습니다.")
+                
+        except Exception as e:
+            print(f"❌ VectorDB 레이블 동기화 실패: {str(e)}")
+
     def update_ticket_priority(self, ticket_id: int, new_priority: str, old_priority: str):
         """티켓 우선순위 업데이트"""
         current_time = datetime.now().isoformat()
@@ -317,6 +362,37 @@ class SQLiteTicketManager:
                 INSERT INTO ticket_events (ticket_id, event_type, old_value, new_value, created_at)
                 VALUES (?, ?, ?, ?, ?)
             """, (ticket_id, "priority_change", old_priority, new_priority, current_time))
+            
+            conn.commit()
+    
+    def update_ticket_description(self, ticket_id: int, new_description: str):
+        """티켓 설명 업데이트"""
+        current_time = datetime.now().isoformat()
+        
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            # 기존 설명 조회
+            cursor.execute("SELECT description FROM tickets WHERE ticket_id = ?", (ticket_id,))
+            result = cursor.fetchone()
+            if not result:
+                raise ValueError(f"티켓 {ticket_id}를 찾을 수 없습니다.")
+            
+            old_description = result[0] or ""
+            
+            # 티켓 설명 업데이트
+            cursor.execute("""
+                UPDATE tickets 
+                SET description = ?, updated_at = ?
+                WHERE ticket_id = ?
+            """, (new_description, current_time, ticket_id))
+            
+            # 이벤트 기록
+            cursor.execute("""
+                INSERT INTO ticket_events (ticket_id, event_type, old_value, new_value, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (ticket_id, "description_change", old_description, new_description, current_time))
             
             conn.commit()
     

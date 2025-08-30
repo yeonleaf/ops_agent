@@ -174,9 +174,9 @@ class IntegratedMailClassifier:
             return self._should_create_ticket_fallback(email_data, user_query)
         
         try:
-            st.error(f"🧠 LM 기반 티켓 생성 판단 시작:")
-            st.error(f"   - 사용자 쿼리: '{user_query}'")
-            st.error(f"   - 메일 제목: '{email_data.get('subject', '')}'")
+            st.info(f"🧠 LM 기반 티켓 생성 판단 시작:")
+            st.info(f"   - 사용자 쿼리: '{user_query}'")
+            st.info(f"   - 메일 제목: '{email_data.get('subject', '')}'")
             
             # LM 프롬프트 구성 (개별 메일 내용 기반 판단)
             system_prompt = """당신은 메일 관리 시스템의 티켓 생성 판단 전문가입니다.
@@ -246,46 +246,39 @@ JSON 형식으로만 응답해주세요:
                 detected_intent = lm_result.get('detected_intent', 'other')
                 ticket_type = lm_result.get('ticket_type', 'general')
                 
-                st.error(f"   🧠 LM 판단 결과:")
-                st.error(f"      - 티켓 생성 필요: {should_create}")
-                st.error(f"      - 판단 근거: {reasoning}")
-                st.error(f"      - 신뢰도: {confidence}")
-                st.error(f"      - 감지된 의도: {detected_intent}")
-                st.error(f"      - 티켓 타입: {ticket_type}")
+                st.success(f"   🧠 LM 판단 결과:")
+                st.success(f"      - 티켓 생성 필요: {should_create}")
+                st.success(f"      - 판단 근거: {reasoning}")
+                st.success(f"      - 신뢰도: {confidence}")
+                st.success(f"      - 감지된 의도: {detected_intent}")
+                st.success(f"      - 티켓 타입: {ticket_type}")
                 
                 if should_create:
-                    # 티켓 생성이 필요한 경우, 메일 내용도 확인
+                    # 🎯 LLM이 "티켓 생성 필요"라고 판단한 경우, LLM 판단을 절대적으로 우선시
+                    # 키워드 검증은 보조 정보로만 사용 (판단 기준이 아님)
                     email_has_ticket_keywords = self._check_ticket_keywords_in_email(email_data)
                     
-                    if email_has_ticket_keywords:
-                        # Vector DB 확인
-                        email_id_exists = self._check_email_id_in_vector_db(email_data.get('id', ''))
-                        
-                        if email_id_exists:
-                            return TicketCreationStatus.ALREADY_EXISTS, f"LM 판단: {reasoning} (이미 Vector DB에 존재)", {
-                                'lm_reasoning': reasoning,
-                                'confidence': confidence,
-                                'detected_intent': detected_intent,
-                                'ticket_type': ticket_type,
-                                'email_keywords': email_has_ticket_keywords,
-                                'vector_db_status': 'exists'
-                            }
-                        else:
-                            return TicketCreationStatus.SHOULD_CREATE, f"LM 판단: {reasoning}", {
-                                'lm_reasoning': reasoning,
-                                'confidence': confidence,
-                                'detected_intent': detected_intent,
-                                'ticket_type': ticket_type,
-                                'email_keywords': email_has_ticket_keywords,
-                                'vector_db_status': 'not_found'
-                            }
-                    else:
-                        return TicketCreationStatus.NO_TICKET_NEEDED, f"LM 판단: {reasoning} (메일 내용에 티켓 키워드 없음)", {
+                    # Vector DB 확인 (중복 티켓 방지용)
+                    email_id_exists = self._check_email_id_in_vector_db(email_data.get('id', ''))
+                    
+                    if email_id_exists:
+                        return TicketCreationStatus.ALREADY_EXISTS, f"LM 판단: {reasoning} (이미 Vector DB에 존재)", {
                             'lm_reasoning': reasoning,
                             'confidence': confidence,
                             'detected_intent': detected_intent,
                             'ticket_type': ticket_type,
-                            'email_keywords': []
+                            'email_keywords': email_has_ticket_keywords,
+                            'vector_db_status': 'exists'
+                        }
+                    else:
+                        # ✅ LLM 판단을 신뢰하고 티켓 생성 (키워드 검증 결과와 무관)
+                        return TicketCreationStatus.SHOULD_CREATE, f"LM 판단: {reasoning}", {
+                            'lm_reasoning': reasoning,
+                            'confidence': confidence,
+                            'detected_intent': detected_intent,
+                            'ticket_type': ticket_type,
+                            'email_keywords': email_has_ticket_keywords,  # 보조 정보
+                            'vector_db_status': 'not_found'
                         }
                 else:
                     return TicketCreationStatus.NO_TICKET_NEEDED, f"LM 판단: {reasoning}", {
@@ -327,21 +320,17 @@ JSON 형식으로만 응답해주세요:
                 'query_analysis': '단순 메일 조회로 판단'
             }
         
-        # 2단계: 메일 내용에 티켓 관련 키워드가 있으면 생성
+        # 2단계: 사용자가 명시적 티켓 생성 의도를 보였다면, 키워드 검증과 무관하게 티켓 생성
+        # (LLM 우선시 원칙과 일치)
         email_has_keywords = self._check_ticket_keywords_in_email(email_data)
         
-        if email_has_keywords:
-            return TicketCreationStatus.SHOULD_CREATE, "기본 규칙: 명시적 의도 + 메일 내용에 티켓 키워드 발견", {
-                'fallback_reason': 'LM 사용 불가',
-                'explicit_intent': True,
-                'email_keywords': email_has_keywords
-            }
-        else:
-            return TicketCreationStatus.NO_TICKET_NEEDED, "기본 규칙: 명시적 의도 있지만 메일 내용에 티켓 키워드 없음", {
-                'fallback_reason': 'LM 사용 불가',
-                'explicit_intent': True,
-                'email_keywords': []
-            }
+        # 사용자가 명시적 의도를 보였다면, 키워드 검증 결과와 무관하게 티켓 생성
+        return TicketCreationStatus.SHOULD_CREATE, "기본 규칙: 명시적 티켓 생성 의도 발견 (LLM 우선시 원칙)", {
+            'fallback_reason': 'LM 사용 불가 + 명시적 의도',
+            'explicit_intent': True,
+            'email_keywords': email_has_keywords,  # 보조 정보
+            'llm_priority_principle': '사용자 의도 우선시'
+        }
     
     def _check_ticket_keywords_in_email(self, email_data: Dict[str, Any]) -> List[str]:
         """메일 내용에서 티켓 키워드 확인 (LM 판단을 위한 보조 정보)"""
@@ -353,11 +342,19 @@ JSON 형식으로만 응답해주세요:
         
         # 간단한 키워드 매칭 (LM 판단을 위한 참고용)
         simple_keywords = [
+            # 영어 키워드
             'urgent', 'important', 'deadline', 'meeting', 'project', 'task',
             'issue', 'bug', 'error', 'request', 'approve', 'review', 'feedback',
             'action', 'required', 'schedule', 'appointment', 'conference', 'call',
             'report', 'document', 'proposal', 'contract', 'invoice', 'payment',
-            'support', 'help', 'problem', 'solution', 'update', 'status'
+            'support', 'help', 'problem', 'solution', 'update', 'status',
+            
+            # 한국어 키워드 (보조 정보용)
+            '서버', '접속', '불가', '기능', '제안', '자료', '요청', '프로젝트',
+            '문제', '오류', '버그', '개발', '작업', '일정', '회의', '승인',
+            '검토', '피드백', '지원', '도움', '해결', '업데이트', '상태',
+            '시스템', '장애', '복구', '설정', '변경', '수정', '개선',
+            '테스트', '배포', '운영', '모니터링', '로그', '백업', '보안'
         ]
         
         for keyword in simple_keywords:
@@ -365,6 +362,83 @@ JSON 형식으로만 응답해주세요:
                 found_keywords.append(keyword)
         
         return found_keywords
+    
+    def _generate_labels_for_ticket(self, email_data: Dict[str, Any], classification: Dict[str, Any]) -> List[str]:
+        """티켓용 레이블 생성"""
+        try:
+            labels = []
+            
+            # 1. 메일 내용에서 키워드 기반 레이블
+            subject = email_data.get('subject', '').lower()
+            body = email_data.get('body', '').lower()
+            content = f"{subject} {body}"
+            
+            # 우선순위별 레이블 매핑
+            priority_labels = {
+                'urgent': ['긴급', '긴급사항'],
+                'high': ['높음', '중요'],
+                'medium': ['보통', '일반'],
+                'low': ['낮음', '낮은우선순위']
+            }
+            
+            # 우선순위 레이블 추가
+            priority = classification.get('priority', 'medium').lower()
+            if priority in priority_labels:
+                labels.extend(priority_labels[priority])
+            
+            # 2. 메일 타입별 레이블
+            ticket_type = classification.get('ticket_type', 'general')
+            type_labels = {
+                'bug_fix': ['버그', '오류', '수정'],
+                'feature': ['기능', '개발', '신규'],
+                'improvement': ['개선', '향상'],
+                'task': ['작업', '일반'],
+                'issue': ['이슈', '문제'],
+                'project': ['프로젝트', '계획']
+            }
+            
+            if ticket_type in type_labels:
+                labels.extend(type_labels[ticket_type])
+            
+            # 3. 콘텐츠 기반 레이블
+            content_keywords = {
+                '서버': ['서버', '시스템'],
+                '접속': ['접속', '연결', '네트워크'],
+                '불가': ['장애', '오류', '문제'],
+                '기능': ['기능', '개발', '요청'],
+                '제안': ['제안', '아이디어', '개선'],
+                '자료': ['자료', '문서', '정보'],
+                '요청': ['요청', '요구사항', '필요'],
+                '프로젝트': ['프로젝트', '계획', '일정'],
+                '회의': ['회의', '미팅', '일정'],
+                '승인': ['승인', '검토', '결재'],
+                '지원': ['지원', '도움', '문의']
+            }
+            
+            for keyword, label_list in content_keywords.items():
+                if keyword in content:
+                    labels.extend(label_list)
+                    break  # 첫 번째 매칭만 사용
+            
+            # 4. 도메인 기반 레이블
+            domain_type = classification.get('domain_type', 'external')
+            if domain_type == 'internal':
+                labels.append('내부')
+            else:
+                labels.append('외부')
+            
+            # 5. 중복 제거 및 정리
+            unique_labels = list(set(labels))
+            
+            # 6. 기본 레이블이 없으면 추가
+            if not unique_labels:
+                unique_labels = ['일반', '업무']
+            
+            return unique_labels[:5]  # 최대 5개 레이블
+            
+        except Exception as e:
+            st.warning(f"레이블 생성 중 오류: {str(e)}")
+            return ['일반', '업무']  # 기본값
     
     def _check_email_id_in_vector_db(self, email_id: str) -> bool:
         """Vector DB에서 메일 ID 존재 여부 확인"""
@@ -471,6 +545,7 @@ JSON 형식으로만 응답해주세요:
                 'priority': classification.get('priority', 'medium'),
                 'type': 'email_ticket',
                 'reporter': email_data.get('sender', '알 수 없음'),
+                'labels': self._generate_labels_for_ticket(email_data, classification),  # 레이블 생성
                 'created_at': datetime.now().isoformat(),
                 'email_data': {
                     'id': email_data.get('id'),

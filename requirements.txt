@@ -1,5 +1,7 @@
 streamlit>=1.28.0
 langchain>=0.1.0
+langchain-openai>=0.1.0
+langchain-core>=0.1.0
 openai>=1.0.0
 python-dotenv>=1.0.0
 
@@ -25,4 +27,7 @@ jira>=3.5.0
 
 # Rate limiting 및 backoff 전략을 위한 패키지들
 tenacity>=8.2.0
-ratelimit>=2.2.1 
+ratelimit>=2.2.1
+
+# Vector Database (ChromaDB)
+chromadb>=0.4.0 

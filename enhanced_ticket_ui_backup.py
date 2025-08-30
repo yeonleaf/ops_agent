@@ -9,11 +9,6 @@ import json
 import re
 from typing import Dict, List, Any, Optional, Union
 
-from memory_based_ticket_processor import create_memory_based_ticket_processor, record_user_correction
-
-# Gmail 토큰 관리 추가
-from gmail_api_client import get_gmail_client
-
 def is_ticket_response(response: str) -> bool:
     """
     응답이 티켓 데이터인지 확인합니다.
@@ -292,77 +287,6 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
             if st.button("❌ 선택 해제", key="sidebar_close_detail", use_container_width=True, type="secondary"):
                 st.session_state.selected_ticket_data = None
                 st.rerun()
-        
-        st.markdown("---")
-        
-        # 데이터베이스 초기화 옵션
-        st.header("🗄️ 데이터베이스 관리")
-        
-        # RDB 초기화 버튼
-        if st.button("🗑️ RDB 초기화", use_container_width=True, type="secondary"):
-            try:
-                import sqlite3
-                import os
-                
-                # tickets.db 파일 삭제
-                db_path = "tickets.db"
-                if os.path.exists(db_path):
-                    os.remove(db_path)
-                    st.success("✅ RDB가 초기화되었습니다!")
-                else:
-                    st.info("ℹ️ RDB 파일이 이미 존재하지 않습니다.")
-                    
-            except Exception as e:
-                st.error(f"❌ RDB 초기화 중 오류: {str(e)}")
-        
-        # Vector DB 초기화 버튼
-        if st.button("🗑️ Vector DB 초기화", use_container_width=True, type="secondary"):
-            try:
-                from vector_db_models import VectorDBManager
-                vector_db = VectorDBManager()
-                vector_db.reset_collection()
-                st.success("✅ Vector DB가 초기화되었습니다!")
-            except Exception as e:
-                st.error(f"❌ Vector DB 초기화 중 오류: {str(e)}")
-        
-        # 전체 DB 초기화 버튼
-        if st.button("🗑️ 전체 DB 초기화", use_container_width=True, type="primary"):
-            try:
-                import sqlite3
-                import os
-                
-                # RDB 초기화
-                db_path = "tickets.db"
-                if os.path.exists(db_path):
-                    os.remove(db_path)
-                    st.success("✅ RDB가 초기화되었습니다!")
-                
-                # Vector DB 초기화
-                from vector_db_models import VectorDBManager
-                vector_db = VectorDBManager()
-                vector_db.reset_collection()
-                st.success("✅ Vector DB가 초기화되었습니다!")
-                
-                st.success("🎉 전체 데이터베이스가 초기화되었습니다!")
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"❌ 전체 DB 초기화 중 오류: {str(e)}")
-        
-        st.markdown("---")
-        
-        # 도움말
-        st.header("❓ 도움말")
-        st.markdown("""
-        **데이터베이스 관리:**
-        - RDB 초기화: SQLite 데이터베이스를 초기화합니다
-        - Vector DB 초기화: 벡터 데이터베이스를 초기화합니다
-        - 전체 DB 초기화: 모든 데이터베이스를 초기화합니다
-        
-        **주의사항:**
-        - 초기화하면 모든 데이터가 삭제됩니다
-        - 복구가 불가능하므로 신중하게 사용하세요
-        """)
     
     st.subheader(f"🎫 {title}")
     
@@ -442,21 +366,6 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
                 
                 # 발신자 정보 (작은 텍스트)
                 st.markdown(f"<small>📧 {sender}</small>", unsafe_allow_html=True)
-                
-                # 레이블 표시 (새로 추가)
-                labels = ticket.get('labels', [])
-                if isinstance(labels, str):
-                    try:
-                        import json
-                        labels = json.loads(labels)
-                    except:
-                        labels = []
-                
-                if not isinstance(labels, list):
-                    labels = []
-                
-                if labels:
-                    st.markdown(f"<small>🏷️ {' '.join([f'`{label}`' for label in labels])}</small>", unsafe_allow_html=True)
                 
                 # 구분선
                 st.markdown("---")
@@ -576,158 +485,17 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
             </style>
             """, unsafe_allow_html=True)
             
-            # 티켓 헤더 정보 (전체 너비 활용)
+            # 티켓 헤더 정보
             st.markdown("#### 📌 기본 정보")
-            st.markdown(f"**제목:** {selected.get('title', 'N/A')}")
-            st.markdown(f"**티켓 ID:** {selected.get('ticket_id', 'N/A')}")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**제목:** {selected.get('title', 'N/A')}")
+                st.markdown(f"**티켓 ID:** {selected.get('ticket_id', 'N/A')}")
+            with col2:
+                st.markdown(f"**타입:** {selected.get('type', 'N/A')}")
+                st.markdown(f"**발신자:** {selected.get('sender', 'N/A')}")
             
-            # 티켓 레이블 편집 기능 (Jira Label 방식)
-            st.markdown("**🏷️ 레이블:**")
-            if 'edit_labels_mode' not in st.session_state:
-                st.session_state.edit_labels_mode = {}
-            
-            labels_ticket_key = f"labels_ticket_{selected.get('ticket_id', 'unknown')}"
-            if labels_ticket_key not in st.session_state.edit_labels_mode:
-                st.session_state.edit_labels_mode[labels_ticket_key] = False
-            
-            # 레이블 편집 모드
-            if st.session_state.edit_labels_mode.get(labels_ticket_key, False):
-                # 현재 레이블 표시
-                current_labels = selected.get('labels', [])
-                if isinstance(current_labels, str):
-                    try:
-                        import json
-                        current_labels = json.loads(current_labels)
-                    except:
-                        current_labels = []
-                
-                if not isinstance(current_labels, list):
-                    current_labels = []
-                
-                # 레이블 히스토리 로드
-                if 'label_history' not in st.session_state:
-                    st.session_state.label_history = []
-                
-                # 기존 티켓들에서 레이블 히스토리 수집
-                try:
-                    from sqlite_ticket_models import SQLiteTicketManager
-                    ticket_manager = SQLiteTicketManager()
-                    all_tickets = ticket_manager.get_all_tickets()
-                    
-                    for ticket in all_tickets:
-                        if ticket.labels:
-                            st.session_state.label_history.extend(ticket.labels)
-                    
-                    # 중복 제거 및 정렬
-                    st.session_state.label_history = sorted(list(set(st.session_state.label_history)))
-                except:
-                    pass
-                
-                # 레이블 입력 (스페이스바로 구분)
-                label_input = st.text_input(
-                    "레이블을 입력하세요 (스페이스바로 구분)",
-                    value=" ".join(current_labels),
-                    placeholder="예: 버그수정 긴급 백엔드",
-                    key=f"label_input_{labels_ticket_key}"
-                )
-                
-                # 레이블 히스토리 표시 (자동완성용)
-                if st.session_state.label_history:
-                    st.markdown("**💡 자주 사용하는 레이블:**")
-                    # 2열로 표시
-                    cols = st.columns(4)
-                    for i, label in enumerate(st.session_state.label_history[:8]):  # 최대 8개만 표시
-                        col_idx = i % 4
-                        if cols[col_idx].button(f"`{label}`", key=f"history_label_{labels_ticket_key}_{i}", use_container_width=True):
-                            # 클릭된 레이블을 입력창에 추가
-                            current_input = st.session_state.get(f"label_input_{labels_ticket_key}", "")
-                            if current_input:
-                                new_input = current_input + " " + label
-                            else:
-                                new_input = label
-                            st.session_state[f"label_input_{labels_ticket_key}"] = new_input
-                            st.rerun()
-                
-                # 입력된 레이블을 배열로 변환 (실시간)
-                if label_input:
-                    new_labels = [label.strip() for label in label_input.split() if label.strip()]
-                else:
-                    new_labels = []
-                
-                # 현재 입력된 레이블 미리보기 (실시간 업데이트)
-                if new_labels:
-                    st.markdown("**📝 입력된 레이블 (실시간):**")
-                    
-                    # 레이블을 3열로 표시
-                    for i in range(0, len(new_labels), 3):
-                        cols = st.columns(3)
-                        for j in range(3):
-                            if i + j < len(new_labels):
-                                label = new_labels[i + j]
-                                with cols[j]:
-                                    # 레이블 삭제 버튼과 함께 표시
-                                    if st.button(f"❌ {label}", key=f"remove_label_{labels_ticket_key}_{i+j}", use_container_width=True):
-                                        new_labels.pop(i + j)
-                                        # 입력창에서도 해당 레이블 제거
-                                        remaining_labels = new_labels.copy()
-                                        remaining_labels.pop(i + j)
-                                        st.session_state[f"label_input_{labels_ticket_key}"] = " ".join(remaining_labels)
-                                        st.rerun()
-                
-                # 레이블 입력 팁
-                st.info("💡 **사용법**: 스페이스바로 레이블을 구분하여 입력하세요. 예: `버그수정 긴급 백엔드`")
-                
-                # 저장 버튼
-                if st.button("💾 레이블 저장", key=f"save_labels_btn_{labels_ticket_key}", use_container_width=True):
-                    try:
-                        # SQLite DB에 레이블 업데이트
-                        from sqlite_ticket_models import SQLiteTicketManager
-                        ticket_manager = SQLiteTicketManager()
-                        
-                        ticket_id = selected.get('ticket_id', '')
-                        if isinstance(ticket_id, str) and ticket_id.startswith('T'):
-                            ticket_id = int(ticket_id[1:]) if ticket_id[1:].isdigit() else 0
-                        
-                        if ticket_id:
-                            # 티켓 레이블 업데이트
-                            old_labels = current_labels
-                            ticket_manager.update_ticket_labels(ticket_id, new_labels, old_labels)
-                            selected['labels'] = new_labels
-                            st.session_state.edit_labels_mode[labels_ticket_key] = False
-                            st.success("✅ 티켓 레이블이 업데이트되었습니다!")
-                            st.rerun()
-                        else:
-                            st.error("❌ 티켓 ID를 찾을 수 없습니다.")
-                    except Exception as e:
-                        st.error(f"❌ 티켓 레이블 업데이트 실패: {str(e)}")
-            else:
-                # 읽기 전용 모드
-                current_labels = selected.get('labels', [])
-                if isinstance(current_labels, str):
-                    try:
-                        import json
-                        current_labels = json.loads(current_labels)
-                    except:
-                        current_labels = []
-                
-                if not isinstance(current_labels, list):
-                    current_labels = []
-                
-                if current_labels:
-                    st.markdown("**레이블:**")
-                    for label in current_labels:
-                        st.markdown(f"`{label}`")
-                else:
-                    st.info("📝 레이블이 없습니다. EDIT 버튼을 눌러 레이블을 추가하세요.")
-                
-                # 레이블 편집 버튼
-                if st.button("✏️ 레이블 편집", key=f"edit_labels_btn_{labels_ticket_key}", use_container_width=True):
-                    st.session_state.edit_labels_mode[labels_ticket_key] = True
-                    st.rerun()
-            
-            st.markdown(f"**발신자:** {selected.get('sender', 'N/A')}")
-            
-            # 상태 및 우선순위 (전체 너비 활용)
+            # 상태 및 우선순위 (시각적으로 강조)
             st.markdown("#### 🏷️ 상태 및 우선순위")
             status = selected.get('status', 'pending')
             priority = selected.get('priority', 'Medium')
@@ -751,8 +519,11 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
                 'low': '🟢'
             }.get(priority, '⚪')
             
-            st.markdown(f"**상태:** {status_icon} {status}")
-            st.markdown(f"**우선순위:** {priority_icon} {priority}")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**상태:** {status_icon} {status}")
+            with col2:
+                st.markdown(f"**우선순위:** {priority_icon} {priority}")
             
             # 날짜 정보
             st.markdown("#### 📅 날짜 정보")
@@ -810,61 +581,62 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
             # 티켓 이력 정보
             st.markdown("#### 📋 티켓 이력")
             
-            # 티켓 설명 편집 기능 (전체 너비 활용)
-            st.markdown("**📝 티켓 설명**")
-            
-            if 'edit_mode' not in st.session_state:
-                st.session_state.edit_mode = {}
-            
-            ticket_key = f"ticket_{selected.get('ticket_id', 'unknown')}"
-            if ticket_key not in st.session_state.edit_mode:
-                st.session_state.edit_mode[ticket_key] = False
-            
-            # EDIT/SAVE 버튼
-            if st.button("✏️ EDIT" if not st.session_state.edit_mode[ticket_key] else "💾 SAVE", 
-                       key=f"edit_btn_{ticket_key}", use_container_width=True):
-                st.session_state.edit_mode[ticket_key] = not st.session_state.edit_mode[ticket_key]
-                st.rerun()
-            
-            # 편집 모드에 따른 표시 (EDIT 버튼 아래에 배치)
-            if st.session_state.edit_mode.get(ticket_key, False):
-                # 편집 가능한 텍스트 영역 - 더 넓게
-                edited_description = st.text_area(
-                    "티켓 설명을 편집하세요",
-                    value=selected.get('description', ''),
-                    height=250,
-                    key=f"edit_text_{ticket_key}"
-                )
+            # 티켓 설명 편집 기능
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown("**📝 티켓 설명**")
+            with col2:
+                if 'edit_mode' not in st.session_state:
+                    st.session_state.edit_mode = {}
                 
-                # 저장 버튼
-                if st.button("💾 저장", key=f"save_btn_{ticket_key}", use_container_width=True):
-                    try:
-                        # SQLite DB에 설명 업데이트
-                        from sqlite_ticket_models import SQLiteTicketManager
-                        ticket_manager = SQLiteTicketManager()
-                        
-                        ticket_id = selected.get('ticket_id', '')
-                        if isinstance(ticket_id, str) and ticket_id.startswith('T'):
-                            ticket_id = int(ticket_id[1:]) if ticket_id[1:].isdigit() else 0
-                        
-                        if ticket_id:
-                            # 티켓 설명 업데이트
-                            ticket_manager.update_ticket_description(ticket_id, edited_description)
-                            selected['description'] = edited_description
-                            st.session_state.edit_mode[ticket_key] = False
-                            st.success("✅ 티켓 설명이 업데이트되었습니다!")
-                            st.rerun()
-                        else:
-                            st.error("❌ 티켓 ID를 찾을 수 없습니다.")
-                    except Exception as e:
-                        st.error(f"❌ 티켓 설명 업데이트 실패: {str(e)}")
-            else:
-                # 읽기 전용 모드
-                current_description = selected.get('description', '')
-                if current_description:
-                    st.markdown(current_description)
+                ticket_key = f"ticket_{selected.get('ticket_id', 'unknown')}"
+                if ticket_key not in st.session_state.edit_mode:
+                    st.session_state.edit_mode[ticket_key] = False
+                
+                if st.button("✏️ EDIT" if not st.session_state.edit_mode[ticket_key] else "💾 SAVE", 
+                           key=f"edit_btn_{ticket_key}", use_container_width=True):
+                    st.session_state.edit_mode[ticket_key] = not st.session_state.edit_mode[ticket_key]
+                    st.rerun()
+            
+                # 편집 모드에 따른 표시
+                if st.session_state.edit_mode.get(ticket_key, False):
+                    # 편집 가능한 텍스트 영역 - 더 넓게
+                    edited_description = st.text_area(
+                        "티켓 설명을 편집하세요",
+                        value=selected.get('description', ''),
+                        height=250,
+                        key=f"edit_text_{ticket_key}"
+                    )
+                    
+                    # 저장 버튼
+                    if st.button("💾 저장", key=f"save_btn_{ticket_key}", use_container_width=True):
+                        try:
+                            # SQLite DB에 설명 업데이트
+                            from sqlite_ticket_models import SQLiteTicketManager
+                            ticket_manager = SQLiteTicketManager()
+                            
+                            ticket_id = selected.get('ticket_id', '')
+                            if isinstance(ticket_id, str) and ticket_id.startswith('T'):
+                                ticket_id = int(ticket_id[1:]) if ticket_id[1:].isdigit() else 0
+                            
+                            if ticket_id:
+                                # 티켓 설명 업데이트
+                                ticket_manager.update_ticket_description(ticket_id, edited_description)
+                                selected['description'] = edited_description
+                                st.session_state.edit_mode[ticket_key] = False
+                                st.success("✅ 티켓 설명이 업데이트되었습니다!")
+                                st.rerun()
+                            else:
+                                st.error("❌ 티켓 ID를 찾을 수 없습니다.")
+                        except Exception as e:
+                            st.error(f"❌ 티켓 설명 업데이트 실패: {str(e)}")
                 else:
-                    st.info("📝 티켓 설명이 없습니다. EDIT 버튼을 눌러 설명을 추가하세요.")
+                    # 읽기 전용 모드
+                    current_description = selected.get('description', '')
+                    if current_description:
+                        st.markdown(current_description)
+                    else:
+                        st.info("📝 티켓 설명이 없습니다. EDIT 버튼을 눌러 설명을 추가하세요.")
                 
                 # 티켓 이벤트 히스토리 조회
                 if selected.get('ticket_id'):
@@ -883,64 +655,30 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
                     except Exception as e:
                         st.warning(f"티켓 이력 조회 중 오류: {str(e)}")
                 
-                # AI 추천 해결방법 (전체 너비 활용)
+                # AI 추천 해결방법
                 st.markdown("#### 🤖 AI 추천 해결방법")
                 
-                # AI 추천 새로고침 및 히스토리에 추가 버튼 (전체 너비 사용)
-                if 'ai_recommendation' not in st.session_state:
-                    st.session_state.ai_recommendation = {}
+                # AI 추천 새로고침 및 히스토리에 추가 버튼
+                col1, col2, col3 = st.columns([2, 1, 1])
+                with col1:
+                    st.markdown("**🤖 AI가 분석한 해결방법**")
+                with col2:
+                    if 'ai_recommendation' not in st.session_state:
+                        st.session_state.ai_recommendation = {}
+                    
+                    ticket_key = f"ticket_{selected.get('ticket_id', 'unknown')}"
+                    if ticket_key not in st.session_state.ai_recommendation:
+                        st.session_state.ai_recommendation[ticket_key] = None
+                    
+                    if st.button("🔄 새로고침", key=f"refresh_ai_{ticket_key}", use_container_width=True):
+                        st.session_state.ai_recommendation[ticket_key] = None
+                        st.rerun()
+                with col3:
+                    # 히스토리에 추가 버튼
+                    if st.button("📝 히스토리에 추가", key=f"add_to_history_{ticket_key}", use_container_width=True):
+                        add_ai_recommendation_to_history(selected, ticket_key)
                 
-                ticket_key = f"ticket_{selected.get('ticket_id', 'unknown')}"
-                if ticket_key not in st.session_state.ai_recommendation:
-                    st.session_state.ai_recommendation[ticket_key] = None
-                
-                # 버튼들을 전체 너비로 배치 (컬럼 분할 없이)
-                st.markdown("**AI 추천 관련 액션:**")
-                
-                # AI 추천 새로고침 버튼
-                if st.button("🔄 AI 추천 새로고침", key=f"refresh_ai_{ticket_key}", use_container_width=True, type="secondary"):
-                    st.session_state.ai_recommendation[ticket_key] = None
-                    st.rerun()
-                
-                # AI 추천 생성 버튼
-                if st.button("🤖 AI 추천 생성", key=f"generate_ai_{ticket_key}", use_container_width=True, type="primary"):
-                    # AI 추천 생성 로직
-                    if mail_content:
-                        try:
-                            from vector_db_models import AIRecommendationEngine
-                            ai_engine = AIRecommendationEngine()
-                            
-                            with st.spinner("AI가 해결방법을 분석하고 있습니다..."):
-                                # 메일 원문과 티켓 설명을 결합하여 더 풍부한 컨텍스트 제공
-                                mail_original = selected.get('mail_original', '')
-                                ticket_description = selected.get('description', '')
-                                
-                                # 컨텍스트 정보 구성
-                                context_info = f"""
-메일 원문: {mail_original if mail_original else '없음'}
-
-메일 내용 (정제됨): {mail_content}
-
-티켓 설명: {ticket_description if ticket_description else '없음'}
-"""
-                                
-                                recommendation = ai_engine.generate_solution_recommendation(
-                                    context_info, 
-                                    ticket_description
-                                )
-                                st.session_state.ai_recommendation[ticket_key] = recommendation
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"AI 추천 생성 중 오류: {str(e)}")
-                    else:
-                        st.warning("메일 내용이 있어야 AI 추천을 생성할 수 있습니다.")
-                
-                # 히스토리에 추가 버튼
-                if st.button("📝 히스토리에 추가", key=f"add_to_history_{ticket_key}", use_container_width=True, type="secondary"):
-                    add_ai_recommendation_to_history(selected, ticket_key)
-                
-                # AI 추천 표시 (전체 너비 활용)
-                st.markdown("---")
+                # AI 추천 표시
                 if mail_content:
                     try:
                         from vector_db_models import AIRecommendationEngine
@@ -970,29 +708,29 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
                                 )
                                 st.session_state.ai_recommendation[ticket_key] = recommendation
                         
-                        # AI 추천 표시 (전체 너비 활용)
-                        if st.session_state.ai_recommendation.get(ticket_key):
-                            st.markdown("**🤖 AI 추천 해결방법:**")
-                            st.markdown("---")
-                            # 전체 너비로 AI 추천 내용 표시
-                            st.markdown(st.session_state.ai_recommendation[ticket_key])
-                        else:
-                            st.info("🤖 AI 추천을 생성하려면 'AI 추천 생성' 버튼을 클릭하세요.")
+                        # AI 추천 표시
+                        with st.expander("🤖 AI 추천 해결방법", expanded=True):
+                            if st.session_state.ai_recommendation.get(ticket_key):
+                                st.markdown(st.session_state.ai_recommendation[ticket_key])
+                            else:
+                                st.info("메일 내용을 분석하여 AI 추천을 생성할 수 없습니다.")
                             
                     except Exception as e:
                         st.warning(f"AI 추천 생성 중 오류: {str(e)}")
                         st.info("AI 추천 기능을 사용할 수 없습니다.")
                 else:
-                    st.info("📧 메일 내용이 있어야 AI 추천을 생성할 수 있습니다.")
+                    st.info("메일 내용이 있어야 AI 추천을 생성할 수 있습니다.")
+                
+                # 액션 정보
+                if selected.get('action'):
+                    st.markdown("#### ⚡ 액션")
+                    st.markdown(f"**최근 액션:** {selected['action']}")
                 
                 # 구분선
                 st.markdown("---")
                 
-                # 상태 관리 (전체 너비 활용)
+                # 상태 변경 기능
                 st.markdown("#### 🔄 상태 관리")
-                
-                # 상태 변경을 전체 너비로 배치 (컬럼 분할 없이)
-                st.markdown("**상태 변경 옵션:**")
                 
                 # 3개 상태 옵션만 사용
                 status_options = ['pending', 'approved', 'rejected']
@@ -1002,25 +740,14 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
                 if current_status not in status_options:
                     current_status = 'pending'
                 
-                # 상태 선택 (전체 너비)
                 new_status = st.selectbox(
-                    "**상태 선택:**",
+                    "상태 변경",
                     options=status_options,
-                    index=status_options.index(current_status),
-                    key=f"status_select_{ticket_key}"
+                    index=status_options.index(current_status)
                 )
                 
-                # 현재 상태 표시 (아이콘과 함께)
-                status_icon = {
-                    'pending': '⏳',
-                    'approved': '✅',
-                    'rejected': '❌'
-                }.get(current_status, '❓')
-                st.markdown(f"**현재 상태:** {status_icon} {current_status}")
-                
-                # 상태 변경 버튼 (전체 너비)
                 if new_status != selected.get('status'):
-                    if st.button("🔄 상태 업데이트", key=f"update_status_{ticket_key}", use_container_width=True, type="primary"):
+                    if st.button("상태 업데이트", use_container_width=True):
                         try:
                             # SQLite DB 업데이트 (VectorDB도 함께 동기화됨)
                             from sqlite_ticket_models import SQLiteTicketManager
@@ -1035,85 +762,33 @@ def display_ticket_list_with_sidebar(ticket_data: Dict[str, Any], title: str = "
                             if ticket_id:
                                 old_status = selected.get('status', 'pending')
                                 ticket_manager.update_ticket_status(ticket_id, new_status, old_status)
-                                st.success(f"✅ 상태가 {new_status}로 업데이트되었습니다!")
+                                st.success(f"✅ 상태가 {new_status}로 업데이트되었습니다! (RDB + VectorDB 동기화 완료)")
                                 selected['status'] = new_status
-                                st.rerun()
                             else:
                                 st.error("❌ 티켓 ID를 찾을 수 없습니다.")
                                 
                         except Exception as e:
                             st.error(f"❌ 상태 업데이트 실패: {str(e)}")
-                else:
-                    st.info(f"✅ 현재 상태가 **{current_status}**로 설정되어 있습니다.")
+                        st.rerun()
                 
                 # 선택 해제 버튼
                 if st.button("선택 해제", use_container_width=True, type="secondary"):
                     clear_ticket_selection()
                     st.rerun()
-        
-        # 선택된 티켓이 없을 때 안내 메시지
-        if not st.session_state.get('selected_ticket_data'):
-            st.info("👈 왼쪽에서 티켓 버튼을 클릭하여 상세정보를 확인하세요.")
-            st.markdown("---")
-            st.markdown("**💡 팁:**")
-            st.markdown("- ⏳ 대기 중인 티켓 (pending)")
-            st.markdown("- ✅ 승인된 티켓 (approved)")
-            st.markdown("- ❌ 거부된 티켓 (rejected)")
-            st.markdown("- 🔴 높은 우선순위")
-            st.markdown("- 🟡 중간 우선순위")
-            st.markdown("- 🟢 낮은 우선순위")
-            st.markdown("- 📧 업무용이 아닌 메일은 '정정' 버튼으로 티켓 변환 가능")
-
-def main():
-    """메인 티켓 UI를 실행합니다."""
-    st.set_page_config(
-        page_title="AI 티켓 관리 시스템",
-        page_icon="🎫",
-        layout="wide"
-    )
-    
-    st.title("🎫 AI 티켓 관리 시스템")
-    
-    # 사이드바에 Gmail 토큰 상태 표시
-    with st.sidebar:
-        st.header("🔐 Gmail 연결 상태")
-        
-        try:
-            gmail_client = get_gmail_client()
-            token_status = gmail_client.get_token_status()
-            
-            # 상태에 따른 아이콘과 색상
-            if token_status.get('status') == 'valid':
-                st.success("✅ Gmail 연결 정상")
-                if token_status.get('expiry'):
-                    st.info(f"만료 시간: {token_status.get('expiry', 'Unknown')}")
-            elif token_status.get('status') == 'expired':
-                st.error("❌ Gmail 토큰 만료")
-                st.warning("토큰 갱신이 필요합니다")
             else:
-                st.warning("⚠️ Gmail 인증 필요")
-            
-            # 토큰 갱신 버튼
-            if st.button("🔄 토큰 갱신", type="primary"):
-                with st.spinner("토큰 갱신 중..."):
-                    if gmail_client.force_token_refresh():
-                        st.success("✅ 토큰 갱신 성공!")
-                        st.rerun()
-                    else:
-                        st.error("❌ 토큰 갱신 실패")
-            
-            # 토큰 상태 상세 정보
-            with st.expander("🔍 토큰 상세 정보"):
-                for key, value in token_status.items():
-                    if key != 'message':  # message는 별도로 표시
-                        st.text(f"{key}: {value}")
-                
-                if token_status.get('message'):
-                    st.info(token_status.get('message'))
-                    
-        except Exception as e:
-            st.error(f"Gmail 상태 확인 실패: {str(e)}")
-    
+                st.info("👈 왼쪽에서 티켓 버튼을 클릭하여 상세정보를 확인하세요.")
+                st.markdown("---")
+                st.markdown("**💡 팁:**")
+                st.markdown("- ⏳ 대기 중인 티켓 (pending)")
+                st.markdown("- ✅ 승인된 티켓 (approved)")
+                st.markdown("- ❌ 거부된 티켓 (rejected)")
+                st.markdown("- 🔴 높은 우선순위")
+                st.markdown("- 🟡 중간 우선순위")
+                st.markdown("- 🟢 낮은 우선순위")
+                st.markdown("- 📧 업무용이 아닌 메일은 '정정' 버튼으로 티켓 변환 가능")
+
+def demo_ticket_ui():
+    """티켓 UI 데모를 실행합니다."""
     st.title("🎫 향상된 티켓 UI 데모")
     
     # 샘플 티켓 데이터
@@ -1249,4 +924,4 @@ def main():
     st.markdown("- **반응형 레이아웃**: 사이드바와 메인 컨텐츠로 효율적인 공간 활용")
 
 if __name__ == "__main__":
-    main() 
+    demo_ticket_ui() 

@@ -54,6 +54,20 @@ class TicketEvent:
     new_value: str
     created_at: str
 
+@dataclass
+class UserAction:
+    """사용자 액션 데이터 모델 (RDB용) - 장기 기억용"""
+    action_id: Optional[int]
+    ticket_id: Optional[int]  # 관련 티켓 ID (없을 수 있음)
+    message_id: Optional[str]  # 관련 메일 ID (없을 수 있음)
+    action_type: str  # 'ai_decision', 'user_correction', 'ticket_created', 'label_updated' 등
+    action_description: str  # 액션에 대한 상세 설명
+    old_value: str  # 이전 값
+    new_value: str  # 새로운 값
+    context: str  # 액션 발생 컨텍스트 (메일 내용, 티켓 정보 등)
+    created_at: str  # 생성 시각
+    user_id: Optional[str]  # 사용자 ID (AI인 경우 'ai_system')
+
 class DatabaseManager:
     """데이터베이스 관리자"""
     
@@ -104,6 +118,23 @@ class DatabaseManager:
                 )
             """)
             
+            # user_actions 테이블 생성 (장기 기억용)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_actions (
+                    action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id INTEGER,
+                    message_id TEXT,
+                    action_type TEXT NOT NULL,
+                    action_description TEXT NOT NULL,
+                    old_value TEXT,
+                    new_value TEXT,
+                    context TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    user_id TEXT,
+                    FOREIGN KEY (ticket_id) REFERENCES tickets(ticket_id)
+                )
+            """)
+            
             # 인덱스 생성
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_tickets_message_id 
@@ -113,6 +144,21 @@ class DatabaseManager:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket_id 
                 ON ticket_events(ticket_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_user_actions_ticket_id 
+                ON user_actions(ticket_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_user_actions_message_id 
+                ON user_actions(message_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_user_actions_action_type 
+                ON user_actions(action_type)
             """)
             
             conn.commit()
@@ -155,6 +201,110 @@ class DatabaseManager:
             event_id = cursor.lastrowid
             conn.commit()
             return event_id
+    
+    def insert_user_action(self, action: UserAction) -> int:
+        """사용자 액션 삽입 (장기 기억용)"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO user_actions (
+                    ticket_id, message_id, action_type, action_description, 
+                    old_value, new_value, context, created_at, user_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                action.ticket_id, action.message_id, action.action_type, action.action_description,
+                action.old_value, action.new_value, action.context, action.created_at, action.user_id
+            ))
+            
+            action_id = cursor.lastrowid
+            conn.commit()
+            return action_id
+    
+    def get_user_actions_by_ticket_id(self, ticket_id: int) -> List[UserAction]:
+        """티켓 ID로 관련 사용자 액션 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT action_id, ticket_id, message_id, action_type, action_description,
+                       old_value, new_value, context, created_at, user_id
+                FROM user_actions WHERE ticket_id = ? ORDER BY created_at DESC
+            """, (ticket_id,))
+            
+            actions = []
+            for row in cursor.fetchall():
+                actions.append(UserAction(
+                    action_id=row[0],
+                    ticket_id=row[1],
+                    message_id=row[2],
+                    action_type=row[3],
+                    action_description=row[4],
+                    old_value=row[5],
+                    new_value=row[6],
+                    context=row[7],
+                    created_at=row[8],
+                    user_id=row[9]
+                ))
+            return actions
+    
+    def get_user_actions_by_message_id(self, message_id: str) -> List[UserAction]:
+        """메일 ID로 관련 사용자 액션 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT action_id, ticket_id, message_id, action_type, action_description,
+                       old_value, new_value, context, created_at, user_id
+                FROM user_actions WHERE message_id = ? ORDER BY created_at DESC
+            """, (message_id,))
+            
+            actions = []
+            for row in cursor.fetchall():
+                actions.append(UserAction(
+                    action_id=row[0],
+                    ticket_id=row[1],
+                    message_id=row[2],
+                    action_type=row[3],
+                    action_description=row[4],
+                    old_value=row[5],
+                    new_value=row[6],
+                    context=row[7],
+                    created_at=row[8],
+                    user_id=row[9]
+                ))
+            return actions
+    
+    def get_all_user_actions(self, limit: int = 100) -> List[UserAction]:
+        """모든 사용자 액션 조회 (최근 순)"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT action_id, ticket_id, message_id, action_type, action_description,
+                       old_value, new_value, context, created_at, user_id
+                FROM user_actions ORDER BY created_at DESC LIMIT ?
+            """, (limit,))
+            
+            actions = []
+            for row in cursor.fetchall():
+                actions.append(UserAction(
+                    action_id=row[0],
+                    ticket_id=row[1],
+                    message_id=row[2],
+                    action_type=row[3],
+                    action_description=row[4],
+                    old_value=row[5],
+                    new_value=row[6],
+                    context=row[7],
+                    created_at=row[8],
+                    user_id=row[9]
+                ))
+            return actions
     
     def get_ticket_by_id(self, ticket_id: int) -> Optional[Ticket]:
         """티켓 ID로 조회"""
@@ -454,6 +604,18 @@ class MailParser:
     
     def save_mail_and_ticket(self, mail: Mail, ticket: Ticket) -> Dict[str, Any]:
         """메일과 티켓을 데이터베이스에 저장"""
+        
+        # Vector DB에 메일 저장
+        try:
+            from vector_db_models import VectorDBManager
+            vector_db = VectorDBManager()
+            vector_save_success = vector_db.save_mail(mail)
+            if vector_save_success:
+                print(f"✅ 메일이 Vector DB에 저장되었습니다: {mail.message_id}")
+            else:
+                print(f"❌ 메일을 Vector DB에 저장하는데 실패했습니다: {mail.message_id}")
+        except Exception as e:
+            print(f"⚠️ Vector DB 저장 중 오류: {str(e)}")
         
         # 티켓 저장
         ticket_id = self.db_manager.insert_ticket(ticket)

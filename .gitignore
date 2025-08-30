@@ -12,3 +12,4 @@ __pycache__
 *.json
 *.code-workspace
 /vector_db/
+/logs

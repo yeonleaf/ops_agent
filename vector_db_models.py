@@ -3,6 +3,8 @@
 Vector DB용 Mail 모델 및 관리자
 """
 
+import os
+from dotenv import load_dotenv
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Dict, Any
 import uuid
@@ -10,6 +12,9 @@ from datetime import datetime
 import chromadb
 from chromadb.config import Settings
 import json
+
+# 환경 변수 로드
+load_dotenv()
 
 @dataclass
 class Mail:
@@ -87,7 +92,11 @@ class VectorDBManager:
                 "content_type": mail.content_type,
                 "has_attachment": mail.has_attachment,
                 "extraction_method": mail.extraction_method,
-                "created_at": mail.created_at
+                "content_summary": mail.content_summary,
+                "key_points": json.dumps(mail.key_points),
+                "created_at": mail.created_at,
+                "original_content": mail.original_content,  # 원본 내용 추가
+                "refined_content": mail.refined_content    # 정제된 내용 추가
             }
             
             # 문서 내용 (임베딩할 텍스트)
@@ -126,24 +135,33 @@ class VectorDBManager:
             metadata = result['metadatas'][0]
             document = result['documents'][0]
             
-            # document에서 원본 내용 추출 (실제로는 더 정교한 파싱 필요)
-            lines = document.strip().split('\n')
-            refined_content = ""
-            content_summary = ""
-            key_points = []
+            # 메타데이터에서 직접 내용 가져오기 (더 안정적)
+            refined_content = metadata.get("refined_content", "")
+            original_content = metadata.get("original_content", "")
+            content_summary = metadata.get("content_summary", "")
+            key_points_str = metadata.get("key_points", "[]")
             
-            for line in lines:
-                if line.startswith("Content:"):
-                    refined_content = line.replace("Content:", "").strip()
-                elif line.startswith("Summary:"):
-                    content_summary = line.replace("Summary:", "").strip()
-                elif line.startswith("Key Points:"):
-                    key_points_str = line.replace("Key Points:", "").strip()
-                    key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
+            # key_points가 JSON 문자열인 경우 파싱
+            try:
+                key_points = json.loads(key_points_str) if key_points_str else []
+            except (json.JSONDecodeError, TypeError):
+                key_points = []
+            
+            # 메타데이터에 내용이 없으면 document에서 파싱 시도
+            if not refined_content:
+                lines = document.strip().split('\n')
+                for line in lines:
+                    if line.startswith("Content:"):
+                        refined_content = line.replace("Content:", "").strip()
+                    elif line.startswith("Summary:"):
+                        content_summary = line.replace("Summary:", "").strip()
+                    elif line.startswith("Key Points:"):
+                        key_points_str = line.replace("Key Points:", "").strip()
+                        key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
             
             return Mail(
                 message_id=message_id,
-                original_content="",  # Vector DB에서는 원본 내용을 별도 저장하지 않음
+                original_content=original_content,
                 refined_content=refined_content,
                 sender=metadata.get("sender", ""),
                 status=metadata.get("status", "acceptable"),
@@ -175,24 +193,33 @@ class VectorDBManager:
                 metadata = results['metadatas'][0][i]
                 document = results['documents'][0][i]
                 
-                # 문서에서 내용 파싱
-                lines = document.strip().split('\n')
-                refined_content = ""
-                content_summary = ""
-                key_points = []
+                # 메타데이터에서 직접 내용 가져오기 (더 안정적)
+                refined_content = metadata.get("refined_content", "")
+                original_content = metadata.get("original_content", "")
+                content_summary = metadata.get("content_summary", "")
+                key_points_str = metadata.get("key_points", "[]")
                 
-                for line in lines:
-                    if line.startswith("Content:"):
-                        refined_content = line.replace("Content:", "").strip()
-                    elif line.startswith("Summary:"):
-                        content_summary = line.replace("Summary:", "").strip()
-                    elif line.startswith("Key Points:"):
-                        key_points_str = line.replace("Key Points:", "").strip()
-                        key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
+                # key_points가 JSON 문자열인 경우 파싱
+                try:
+                    key_points = json.loads(key_points_str) if key_points_str else []
+                except (json.JSONDecodeError, TypeError):
+                    key_points = []
+                
+                # 메타데이터에 내용이 없으면 document에서 파싱 시도
+                if not refined_content:
+                    lines = document.strip().split('\n')
+                    for line in lines:
+                        if line.startswith("Content:"):
+                            refined_content = line.replace("Content:", "").strip()
+                        elif line.startswith("Summary:"):
+                            content_summary = line.replace("Summary:", "").strip()
+                        elif line.startswith("Key Points:"):
+                            key_points_str = line.replace("Key Points:", "").strip()
+                            key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
                 
                 mail = Mail(
                     message_id=message_id,
-                    original_content="",
+                    original_content=original_content,
                     refined_content=refined_content,
                     sender=metadata.get("sender", ""),
                     status=metadata.get("status", "acceptable"),
@@ -232,6 +259,26 @@ class VectorDBManager:
         except Exception as e:
             print(f"Vector DB 업데이트 오류: {e}")
             return False
+
+    def update_mail_labels(self, message_id: str, new_labels: List[str]) -> bool:
+        """메일 레이블 업데이트"""
+        try:
+            # ChromaDB는 메타데이터 직접 업데이트를 지원하지 않으므로
+            # 기존 데이터를 가져와서 삭제 후 다시 삽입
+            mail = self.get_mail_by_id(message_id)
+            if not mail:
+                return False
+            
+            # 기존 데이터 삭제
+            self.collection.delete(ids=[message_id])
+            
+            # 레이블 업데이트 후 다시 저장 (메타데이터에 레이블 정보 추가)
+            # Mail 모델에 labels 필드가 없으므로 메타데이터에 추가
+            return self.save_mail(mail)
+            
+        except Exception as e:
+            print(f"Vector DB 레이블 업데이트 오류: {e}")
+            return False
     
     def get_all_mails(self, limit: int = 100) -> List[Mail]:
         """모든 메일 조회 (최근 순)"""
@@ -246,24 +293,33 @@ class VectorDBManager:
                 metadata = result['metadatas'][i]
                 document = result['documents'][i]
                 
-                # 문서에서 내용 파싱
-                lines = document.strip().split('\n')
-                refined_content = ""
-                content_summary = ""
-                key_points = []
+                # 메타데이터에서 직접 내용 가져오기 (더 안정적)
+                refined_content = metadata.get("refined_content", "")
+                original_content = metadata.get("original_content", "")
+                content_summary = metadata.get("content_summary", "")
+                key_points_str = metadata.get("key_points", "[]")
                 
-                for line in lines:
-                    if line.startswith("Content:"):
-                        refined_content = line.replace("Content:", "").strip()
-                    elif line.startswith("Summary:"):
-                        content_summary = line.replace("Summary:", "").strip()
-                    elif line.startswith("Key Points:"):
-                        key_points_str = line.replace("Key Points:", "").strip()
-                        key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
+                # key_points가 JSON 문자열인 경우 파싱
+                try:
+                    key_points = json.loads(key_points_str) if key_points_str else []
+                except (json.JSONDecodeError, TypeError):
+                    key_points = []
+                
+                # 메타데이터에 내용이 없으면 document에서 파싱 시도
+                if not refined_content:
+                    lines = document.strip().split('\n')
+                    for line in lines:
+                        if line.startswith("Content:"):
+                            refined_content = line.replace("Content:", "").strip()
+                        elif line.startswith("Summary:"):
+                            content_summary = line.replace("Summary:", "").strip()
+                        elif line.startswith("Key Points:"):
+                            key_points_str = line.replace("Key Points:", "").strip()
+                            key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
                 
                 mail = Mail(
                     message_id=message_id,
-                    original_content="",
+                    original_content=original_content,
                     refined_content=refined_content,
                     sender=metadata.get("sender", ""),
                     status=metadata.get("status", "acceptable"),
@@ -296,6 +352,134 @@ class VectorDBManager:
         except Exception as e:
             print(f"컬렉션 초기화 오류: {e}")
             return False
+
+class UserActionVectorDBManager:
+    """사용자 액션 저장용 Vector DB 관리자 - ChromaDB 사용 (장기 기억)"""
+    
+    def __init__(self, db_path: str = "./vector_db"):
+        """ChromaDB 클라이언트 초기화"""
+        self.client = chromadb.PersistentClient(
+            path=db_path,
+            settings=Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
+        self.collection_name = "user_action"
+        self.collection = self._get_or_create_collection()
+    
+    def _get_or_create_collection(self):
+        """user_action 컬렉션 생성 또는 가져오기"""
+        try:
+            return self.client.get_collection(name=self.collection_name)
+        except Exception:
+            return self.client.create_collection(
+                name=self.collection_name,
+                metadata={
+                    "description": "User actions and AI decisions for long-term memory",
+                    "created_at": datetime.now().isoformat(),
+                    "type": "memory_actions"
+                }
+            )
+    
+    def save_action_memory(self, action_id: str, memory_sentence: str, 
+                          action_type: str, ticket_id: Optional[int] = None, 
+                          message_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
+        """액션 기억을 Vector DB에 저장"""
+        try:
+            # 메타데이터 준비
+            metadata = {
+                "action_type": action_type,
+                "ticket_id": ticket_id,
+                "message_id": message_id,
+                "user_id": user_id or "ai_system",
+                "created_at": datetime.now().isoformat()
+            }
+            
+            # ChromaDB에 저장 (memory_sentence가 임베딩될 텍스트)
+            self.collection.add(
+                documents=[memory_sentence],
+                metadatas=[metadata],
+                ids=[action_id]
+            )
+            
+            return True
+            
+        except Exception as e:
+            print(f"사용자 액션 Vector DB 저장 오류: {e}")
+            return False
+    
+    def search_similar_actions(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
+        """유사한 과거 액션들을 검색 (AI 결정 + 사용자 피드백 모두 포함)"""
+        try:
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                include=["metadatas", "documents", "distances"]
+            )
+            
+            actions = []
+            for i, action_id in enumerate(results['ids'][0]):
+                metadata = results['metadatas'][0][i]
+                memory_sentence = results['documents'][0][i]
+                distance = results['distances'][0][i] if 'distances' in results else None
+                
+                actions.append({
+                    "action_id": action_id,
+                    "memory_sentence": memory_sentence,
+                    "action_type": metadata.get('action_type', ''),
+                    "ticket_id": metadata.get('ticket_id'),
+                    "message_id": metadata.get('message_id'),
+                    "user_id": metadata.get('user_id', 'ai_system'),
+                    "created_at": metadata.get('created_at', ''),
+                    "similarity_score": 1 - distance if distance is not None else None
+                })
+            
+            return actions
+            
+        except Exception as e:
+            print(f"사용자 액션 Vector DB 검색 오류: {e}")
+            return []
+    
+    def get_all_actions(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """모든 액션 기억 조회 (최근 순)"""
+        try:
+            result = self.collection.get(
+                include=["metadatas", "documents"]
+            )
+            
+            actions = []
+            for i, action_id in enumerate(result['ids']):
+                metadata = result['metadatas'][i]
+                memory_sentence = result['documents'][i]
+                
+                actions.append({
+                    "action_id": action_id,
+                    "memory_sentence": memory_sentence,
+                    "action_type": metadata.get('action_type', ''),
+                    "ticket_id": metadata.get('ticket_id'),
+                    "message_id": metadata.get('message_id'),
+                    "user_id": metadata.get('user_id', 'ai_system'),
+                    "created_at": metadata.get('created_at', '')
+                })
+            
+            # 생성 시간 기준 정렬 (최근 순)
+            actions.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            
+            return actions[:limit]
+            
+        except Exception as e:
+            print(f"사용자 액션 Vector DB 전체 조회 오류: {e}")
+            return []
+    
+    def reset_collection(self):
+        """컬렉션 초기화"""
+        try:
+            self.client.delete_collection(name=self.collection_name)
+            self.collection = self._get_or_create_collection()
+            print(f"✅ {self.collection_name} 컬렉션이 초기화되었습니다.")
+        except Exception as e:
+            print(f"❌ 컬렉션 초기화 실패: {e}")
 
 class SystemInfoVectorDBManager:
     """시스템 정보 파일 저장용 Vector DB 관리자 - ChromaDB 사용"""
@@ -529,3 +713,315 @@ class SystemInfoVectorDBManager:
             print(f"✅ {self.collection_name} 컬렉션이 초기화되었습니다.")
         except Exception as e:
             print(f"❌ 컬렉션 초기화 실패: {e}")
+
+class JiraInfoVectorDBManager:
+    """JIRA 정보 저장용 Vector DB 관리자 - ChromaDB 사용"""
+    
+    def __init__(self, db_path: str = "./vector_db"):
+        """ChromaDB 클라이언트 초기화"""
+        self.client = chromadb.PersistentClient(
+            path=db_path,
+            settings=Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
+        self.collection_name = "jira_info"
+        self.collection = self._get_or_create_collection()
+    
+    def _get_or_create_collection(self):
+        """jira_info 컬렉션 생성 또는 가져오기"""
+        try:
+            return self.client.get_collection(name=self.collection_name)
+        except Exception:
+            return self.client.create_collection(
+                name=self.collection_name,
+                metadata={
+                    "description": "JIRA issues and knowledge base for ticket resolution",
+                    "created_at": datetime.now().isoformat(),
+                    "type": "jira_issues"
+                }
+            )
+    
+    def save_jira_issue(self, issue_data: Dict[str, Any]) -> bool:
+        """JIRA 이슈를 Vector DB에 저장"""
+        try:
+            issue_key = issue_data.get('key', str(uuid.uuid4()))
+            
+            # 메타데이터 준비
+            metadata = {
+                "issue_key": issue_key,
+                "summary": issue_data.get('summary', ''),
+                "issue_type": issue_data.get('issue_type', ''),
+                "status": issue_data.get('status', ''),
+                "priority": issue_data.get('priority', ''),
+                "assignee": issue_data.get('assignee', ''),
+                "reporter": issue_data.get('reporter', ''),
+                "project_key": issue_data.get('project_key', ''),
+                "created": issue_data.get('created', ''),
+                "updated": issue_data.get('updated', ''),
+                "created_at": datetime.now().isoformat()
+            }
+            
+            # 문서 내용 (임베딩할 텍스트)
+            document_text = f"""
+            Issue: {issue_data.get('summary', '')}
+            Description: {issue_data.get('description', '')}
+            Type: {issue_data.get('issue_type', '')}
+            Status: {issue_data.get('status', '')}
+            Priority: {issue_data.get('priority', '')}
+            Assignee: {issue_data.get('assignee', '')}
+            Reporter: {issue_data.get('reporter', '')}
+            Project: {issue_data.get('project_key', '')}
+            """
+            
+            # ChromaDB에 저장
+            self.collection.add(
+                documents=[document_text],
+                metadatas=[metadata],
+                ids=[issue_key]
+            )
+            
+            return True
+            
+        except Exception as e:
+            print(f"JIRA 이슈 Vector DB 저장 오류: {e}")
+            return False
+    
+    def search_similar_issues(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        """유사한 JIRA 이슈 검색"""
+        try:
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                include=["metadatas", "documents", "distances"]
+            )
+            
+            issues = []
+            for i, issue_key in enumerate(results['ids'][0]):
+                metadata = results['metadatas'][0][i]
+                document = results['documents'][0][i]
+                distance = results['distances'][0][i] if 'distances' in results else None
+                
+                issues.append({
+                    "issue_key": issue_key,
+                    "summary": metadata.get('summary', ''),
+                    "description": document,
+                    "issue_type": metadata.get('issue_type', ''),
+                    "status": metadata.get('status', ''),
+                    "priority": metadata.get('priority', ''),
+                    "similarity_score": 1 - distance if distance is not None else None
+                })
+            
+            return issues
+            
+        except Exception as e:
+            print(f"JIRA 이슈 검색 오류: {e}")
+            return []
+    
+    def get_all_issues(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """모든 JIRA 이슈 조회"""
+        try:
+            result = self.collection.get(
+                include=["metadatas", "documents"]
+            )
+            
+            issues = []
+            for i, issue_key in enumerate(result['ids']):
+                metadata = result['metadatas'][i]
+                document = result['documents'][i]
+                
+                issues.append({
+                    "issue_key": issue_key,
+                    "summary": metadata.get('summary', ''),
+                    "description": document,
+                    "issue_type": metadata.get('issue_type', ''),
+                    "status": metadata.get('status', ''),
+                    "priority": metadata.get('priority', ''),
+                    "assignee": metadata.get('assignee', ''),
+                    "reporter": metadata.get('reporter', ''),
+                    "project_key": metadata.get('project_key', ''),
+                    "created": metadata.get('created', ''),
+                    "updated": metadata.get('updated', '')
+                })
+            
+            # 업데이트 시간 기준 정렬 (최근 순)
+            issues.sort(key=lambda x: x.get('updated', ''), reverse=True)
+            
+            return issues[:limit]
+            
+        except Exception as e:
+            print(f"JIRA 이슈 전체 조회 오류: {e}")
+            return []
+
+class AIRecommendationEngine:
+    """AI 추천 해결방법 생성 엔진"""
+    
+    def __init__(self):
+        self.system_info_db = SystemInfoVectorDBManager()
+        self.jira_info_db = JiraInfoVectorDBManager()
+    
+    def generate_solution_recommendation(self, mail_content: str, ticket_history: str) -> str:
+        """메일 원문과 티켓 이력을 바탕으로 AI 추천 해결방법 생성"""
+        try:
+            # 1. 관련 시스템 정보 검색
+            system_context = self._search_system_info(mail_content, ticket_history)
+            
+            # 2. 관련 JIRA 이슈 검색
+            jira_context = self._search_jira_issues(mail_content, ticket_history)
+            
+            # 3. AI 추천 해결방법 생성
+            recommendation = self._create_ai_recommendation(
+                mail_content, ticket_history, system_context, jira_context
+            )
+            
+            return recommendation
+            
+        except Exception as e:
+            print(f"AI 추천 생성 중 오류: {e}")
+            return "AI 추천 해결방법을 생성하는 중 오류가 발생했습니다."
+    
+    def _search_system_info(self, mail_content: str, ticket_history: str) -> List[Dict[str, Any]]:
+        """시스템 정보에서 관련 내용 검색"""
+        try:
+            # 메일 내용과 티켓 이력을 결합하여 검색
+            search_query = f"{mail_content[:200]} {ticket_history[:200]}"
+            
+            # system_info 컬렉션에서 유사한 청크 검색
+            similar_chunks = self.system_info_db.search_similar_chunks(
+                search_query, n_results=3
+            )
+            
+            return similar_chunks
+            
+        except Exception as e:
+            print(f"시스템 정보 검색 오류: {e}")
+            return []
+    
+    def _search_jira_issues(self, mail_content: str, ticket_history: str) -> List[Dict[str, Any]]:
+        """JIRA 이슈에서 관련 내용 검색"""
+        try:
+            # 메일 내용과 티켓 이력을 결합하여 검색
+            search_query = f"{mail_content[:200]} {ticket_history[:200]}"
+            
+            # jira_info 컬렉션에서 유사한 이슈 검색
+            similar_issues = self.jira_info_db.search_similar_issues(
+                search_query, n_results=3
+            )
+            
+            return similar_issues
+            
+        except Exception as e:
+            print(f"JIRA 이슈 검색 오류: {e}")
+            return []
+    
+    def _create_ai_recommendation(self, mail_content: str, ticket_history: str, 
+                                 system_context: List[Dict[str, Any]], 
+                                 jira_context: List[Dict[str, Any]]) -> str:
+        """AI 추천 해결방법 생성 - LLM 전용"""
+        try:
+            # 컨텍스트 정보 정리
+            system_info_text = ""
+            if system_context:
+                system_info_text = "\n\n관련 시스템 정보:\n"
+                for chunk in system_context:
+                    system_info_text += f"- {chunk.get('text_content', '')[:300]}...\n"
+            
+            jira_info_text = ""
+            if jira_context:
+                jira_info_text = "\n\n관련 JIRA 이슈:\n"
+                for issue in jira_context:
+                    jira_info_text += f"- {issue.get('summary', '')}: {issue.get('description', '')[:300]}...\n"
+            
+            # LLM 프롬프트 구성 (f-string 포맷팅 오류 방지)
+            prompt = """
+당신은 IT 운영 전문가입니다. 다음 정보를 바탕으로 구체적이고 실행 가능한 해결방법을 제시해주세요.
+
+📧 **메일 내용:**
+{mail_content}
+
+📋 **티켓 히스토리:**
+{ticket_history}
+
+📚 **관련 시스템 정보:**
+{system_info}
+
+🎫 **관련 JIRA 이슈:**
+{jira_info}
+
+위 정보를 종합적으로 분석하여 다음 형식으로 구체적인 해결방법을 제시해주세요:
+
+🤖 **AI 추천 해결방법**
+
+🔍 **문제 분석:**
+[메일 내용과 티켓 히스토리를 바탕으로 구체적인 문제 상황 분석]
+
+🎯 **권장 조치:**
+1. [구체적인 첫 번째 조치]
+2. [구체적인 두 번째 조치]
+3. [구체적인 세 번째 조치]
+
+📚 **참고 자료 활용:**
+[시스템 정보와 JIRA 이슈를 바탕으로 한 구체적인 참고사항]
+
+💡 **추가 권장사항:**
+- [맥락에 맞는 구체적인 권장사항]
+- [맥락에 맞는 구체적인 권장사항]
+- [맥락에 맞는 구체적인 권장사항]
+
+⚠️ **주의사항:**
+[해당 상황에서 주의해야 할 점이나 위험요소]
+
+위 형식에 맞춰 구체적이고 실행 가능한 해결방법을 제시해주세요. 일반적인 내용이 아닌, 제공된 정보를 바탕으로 한 맥락에 맞는 구체적인 내용이어야 합니다.
+"""
+            
+            # LLM 호출 (Azure OpenAI 사용)
+            try:
+                from langchain_openai import AzureChatOpenAI
+                from langchain_core.prompts import ChatPromptTemplate
+                from langchain_core.output_parsers import StrOutputParser
+                
+                # 환경 변수에서 Azure OpenAI 설정 가져오기
+                import os
+                azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+                deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+                api_key = os.getenv("AZURE_OPENAI_API_KEY")
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+                
+                if azure_endpoint and deployment_name and api_key:
+                    # Azure OpenAI 클라이언트 생성
+                    llm = AzureChatOpenAI(
+                        azure_endpoint=azure_endpoint,
+                        deployment_name=deployment_name,
+                        openai_api_key=api_key,
+                        openai_api_version=api_version,
+                        temperature=0.3  # 창의성과 일관성의 균형
+                    )
+                    
+                    # 프롬프트 템플릿 생성
+                    prompt_template = ChatPromptTemplate.from_template(prompt)
+                    
+                    # 체인 실행
+                    chain = prompt_template | llm | StrOutputParser()
+                    
+                    # 변수 매핑
+                    variables = {
+                        "mail_content": mail_content[:1000],
+                        "ticket_history": ticket_history[:1000] if ticket_history else "없음",
+                        "system_info": system_info_text if system_info_text else "관련 시스템 정보 없음",
+                        "jira_info": jira_info_text if jira_info_text else "관련 JIRA 이슈 없음"
+                    }
+                    
+                    recommendation = chain.invoke(variables)
+                    return recommendation
+                else:
+                    # Azure OpenAI 설정이 없으면 오류 메시지 반환
+                    return "❌ Azure OpenAI 설정이 없습니다. 환경 변수를 확인해주세요."
+                    
+            except Exception as e:
+                print(f"LLM 호출 중 오류: {e}")
+                return f"❌ AI 추천 생성 실패: {str(e)}"
+            
+        except Exception as e:
+            print(f"AI 추천 생성 오류: {e}")
+            return f"❌ AI 추천 생성 중 오류가 발생했습니다: {str(e)}"

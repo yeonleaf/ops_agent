@@ -22,8 +22,35 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 # 환경 변수 로딩 (가장 먼저 실행)
 load_dotenv()
 
+# Gmail OAuth 토큰 갱신 시스템 초기화
+def initialize_gmail_oauth():
+    """Gmail OAuth 토큰 갱신 시스템 초기화"""
+    try:
+        from gmail_api_client import GmailAPIClient
+        
+        print("🔐 Gmail OAuth 시스템 초기화 중...")
+        
+        # Gmail API 클라이언트 생성 및 인증 상태 확인
+        client = GmailAPIClient()
+        
+        # 토큰 유효성 확인 (만료된 경우 자동 OAuth 시작)
+        if client.authenticate():
+            print("✅ Gmail OAuth 시스템 초기화 완료")
+            return True
+        else:
+            print("⚠️  Gmail OAuth 시스템 초기화 실패 - 수동 인증이 필요할 수 있습니다.")
+            return False
+            
+    except Exception as e:
+        print(f"⚠️  Gmail OAuth 시스템 초기화 중 오류: {e}")
+        return False
+
+# Gmail OAuth 시스템 초기화 실행
+print("🚀 Gmail OAuth 토큰 갱신 시스템 초기화 시작...")
+gmail_oauth_ready = initialize_gmail_oauth()
+
 # 로컬 모듈 import
-from enhanced_ticket_ui import display_ticket_list_with_sidebar, clear_ticket_selection
+from enhanced_ticket_ui import display_ticket_list_with_sidebar, clear_ticket_selection, add_ai_recommendation_to_history
 from mail_list_ui import create_mail_list_ui, create_mail_list_with_sidebar
 from unified_email_service import (
     get_email_provider_status, 
@@ -34,6 +61,9 @@ from unified_email_service import (
     get_raw_emails
 )
 
+# Memory-Based Ticket Processor Tool import
+from memory_based_ticket_processor import create_memory_based_ticket_processor
+
 # 파일 처리 및 임베딩 관련 import
 from module.file_processor_refactored import FileProcessor
 from pathlib import Path
@@ -41,6 +71,22 @@ import tempfile
 import shutil
 
 # --- 1. 로그 및 파서 함수 (기존과 동일, 안정성 강화) ---
+
+def safe_format_string(template: str, **kwargs) -> str:
+    """안전한 문자열 포맷팅을 위한 헬퍼 함수"""
+    try:
+        # 중괄호를 이스케이프하여 안전하게 처리
+        escaped_kwargs = {}
+        for key, value in kwargs.items():
+            if isinstance(value, str):
+                escaped_kwargs[key] = value.replace('{', '{{').replace('}', '}}')
+            else:
+                escaped_kwargs[key] = value
+        return template.format(**escaped_kwargs)
+    except Exception as e:
+        logging.error(f"문자열 포맷팅 오류: {e}")
+        # 오류 발생 시 원본 템플릿 반환
+        return template
 
 # logging 설정
 import logging
@@ -251,29 +297,29 @@ def determine_ui_mode(query: str, response_data: Dict[str, Any]) -> str:
 
 def parse_query_to_parameters(query: str) -> Dict[str, Any]:
     """LLM을 사용하여 사용자 쿼리를 분석하여 실행 파라미터 딕셔너리를 생성합니다."""
-    logging.info(f"LLM 쿼리 파싱 시작: '{query}'")
+    logging.info(safe_format_string("LLM 쿼리 파싱 시작: '{query}'", query=query))
     
     # session_state 상태 확인
-    logging.info(f"session_state.llm 존재 여부: {'llm' in st.session_state}")
+    logging.info(safe_format_string("session_state.llm 존재 여부: {llm_exists}", llm_exists='llm' in st.session_state))
     if 'llm' in st.session_state:
-        logging.info(f"session_state.llm 값: {st.session_state.llm}")
+        logging.info(safe_format_string("session_state.llm 값: {llm_value}", llm_value=st.session_state.llm))
     
     try:
         # LLM이 사용 가능한 경우 LLM 기반 파싱 사용
         if 'llm' in st.session_state and st.session_state.llm:
             logging.info("LLM 기반 파싱 시도 중...")
             result = _parse_query_with_llm(query)
-            logging.info(f"LLM 파싱 성공: {result}")
+            logging.info(safe_format_string("LLM 파싱 성공: {result}", result=result))
             return result
         else:
             logging.warning("LLM이 사용 불가능하여 규칙 기반 파싱으로 대체")
             result = _parse_query_with_rules(query)
-            logging.info(f"규칙 기반 파싱 결과: {result}")
+            logging.info(safe_format_string("규칙 기반 파싱 결과: {result}", result=result))
             return result
     except Exception as e:
-        logging.error(f"LLM 쿼리 파싱 실패, 규칙 기반으로 대체: {str(e)}")
+        logging.error(safe_format_string("LLM 쿼리 파싱 실패, 규칙 기반으로 대체: {error}", error=str(e)))
         result = _parse_query_with_rules(query)
-        logging.info(f"Fallback 규칙 기반 파싱 결과: {result}")
+        logging.info(safe_format_string("Fallback 규칙 기반 파싱 결과: {result}", result=result))
         return result
 
 def _parse_query_with_llm(query: str) -> Dict[str, Any]:
@@ -309,7 +355,7 @@ def _parse_query_with_llm(query: str) -> Dict[str, Any]:
 }"""
 
         # 사용자 쿼리
-        user_message = f"다음 요청을 Gmail API 파라미터로 변환해주세요: {query}"
+        user_message = safe_format_string("다음 요청을 Gmail API 파라미터로 변환해주세요: {query}", query=query)
         
         # LLM 호출
         messages = [
@@ -320,7 +366,7 @@ def _parse_query_with_llm(query: str) -> Dict[str, Any]:
         response = llm.invoke(messages)
         response_content = response.content
         
-        logging.info(f"LLM 응답: {response_content}")
+        logging.info(safe_format_string("LLM 응답: {response_content}", response_content=response_content))
         
         # JSON 파싱 시도
         try:
@@ -340,21 +386,21 @@ def _parse_query_with_llm(query: str) -> Dict[str, Any]:
             if 'filters' not in params:
                 params['filters'] = {}
                 
-            logging.info(f"LLM 파싱 결과: {params}")
+            logging.info(safe_format_string("LLM 파싱 결과: {params}", params=params))
             return params
             
         except json.JSONDecodeError as e:
-            logging.error(f"LLM 응답 JSON 파싱 실패: {str(e)}")
-            logging.error(f"응답 내용: {response_content}")
+            logging.error(safe_format_string("LLM 응답 JSON 파싱 실패: {error}", error=str(e)))
+            logging.error(safe_format_string("응답 내용: {response_content}", response_content=response_content))
             raise e
             
     except Exception as e:
-        logging.error(f"LLM 쿼리 파싱 오류: {str(e)}")
+        logging.error(safe_format_string("LLM 쿼리 파싱 오류: {error}", error=str(e)))
         raise e
 
 def _parse_query_with_rules(query: str) -> Dict[str, Any]:
     """규칙 기반 쿼리 파싱 (LLM 실패 시 대체용)"""
-    logging.info(f"규칙 기반 쿼리 파싱 시작: '{query}'")
+    logging.info(safe_format_string("규칙 기반 쿼리 파싱 시작: '{query}'", query=query))
     query_lower = query.lower()
     params = {'action': 'view', 'filters': {}}
 
@@ -381,25 +427,25 @@ def _parse_query_with_rules(query: str) -> Dict[str, Any]:
     matched_unread = [kw for kw in unread_keywords if kw in query_lower]
     matched_read = [kw for kw in read_keywords if kw in query_lower]
     
-    logging.info(f"쿼리: '{query}' -> 소문자: '{query_lower}'")
-    logging.info(f"안 읽은 키워드 매칭 시도: {unread_keywords}")
-    logging.info(f"읽은 키워드 매칭 시도: {read_keywords}")
-    logging.info(f"매칭된 안 읽은 키워드: {matched_unread}")
-    logging.info(f"매칭된 읽은 키워드: {matched_read}")
+    logging.info(safe_format_string("쿼리: '{query}' -> 소문자: '{query_lower}'", query=query, query_lower=query_lower))
+    logging.info(safe_format_string("안 읽은 키워드 매칭 시도: {unread_keywords}", unread_keywords=unread_keywords))
+    logging.info(safe_format_string("읽은 키워드 매칭 시도: {read_keywords}", read_keywords=read_keywords))
+    logging.info(safe_format_string("매칭된 안 읽은 키워드: {matched_unread}", matched_unread=matched_unread))
+    logging.info(safe_format_string("매칭된 읽은 키워드: {matched_read}", matched_read=matched_read))
     
     if matched_unread:
         params['filters']['is_read'] = False
-        logging.info(f"✅ 안 읽은 메일로 설정: is_read=False")
+        logging.info("✅ 안 읽은 메일로 설정: is_read=False")
     elif matched_read:
         params['filters']['is_read'] = True
-        logging.info(f"✅ 읽은 메일로 설정: is_read=True")
+        logging.info("✅ 읽은 메일로 설정: is_read=True")
     else:
         logging.info("⚠️ 읽음 상태 관련 키워드가 없음 - 기본값 사용")
     
     if match := re.search(r'(\d+)개', query):
         params['filters']['limit'] = int(match.group(1))
 
-    logging.info(f"규칙 기반 파싱 결과: {params}")
+    logging.info(safe_format_string("규칙 기반 파싱 결과: {params}", params=params))
     return params
 
 def handle_mail_query(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -410,12 +456,12 @@ def handle_mail_query(params: Dict[str, Any]) -> Dict[str, Any]:
     filters = params.get('filters', {})
     provider = st.session_state.get('email_provider', get_default_provider())
     
-    logging.info(f"메일 쿼리 핸들러 실행: action='{action}', filters={filters}")
+    logging.info(safe_format_string("메일 쿼리 핸들러 실행: action='{action}', filters={filters}", action=action, filters=filters))
 
     try:
         if action == 'view_mails':
             # 단순 메일 조회는 get_raw_emails 함수를 호출합니다.
-            logging.info(f"view_mails 액션: get_raw_emails 호출 - provider={provider}, filters={filters}")
+            logging.info(safe_format_string("view_mails 액션: get_raw_emails 호출 - provider={provider}, filters={filters}", provider=provider, filters=filters))
             emails = get_raw_emails(provider, filters)
             if emails:
                 # EmailMessage 객체를 JSON 직렬화 가능한 딕셔너리로 변환
@@ -451,11 +497,13 @@ def handle_mail_query(params: Dict[str, Any]) -> Dict[str, Any]:
                     for ticket in existing_tickets:
                         ticket_dict = {
                             'ticket_id': ticket.ticket_id,
+                            'message_id': ticket.original_message_id,  # message_id 추가
                             'title': ticket.title,
                             'status': ticket.status,
                             'priority': ticket.priority,
-                            'ticket_type': ticket.ticket_type,
+                            'labels': ticket.labels,  # ticket_type 대신 labels 사용
                             'reporter': ticket.reporter,
+                            'description': ticket.description,  # description 추가
                             'created_at': ticket.created_at,
                             'updated_at': ticket.updated_at
                         }
@@ -536,30 +584,30 @@ def handle_mail_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 if work_related_emails:
                     # 티켓 처리 로직 실행 (이미 import됨)
                     try:
-                        logging.info(f"티켓 처리 시작: 업무 관련 메일 {len(work_related_emails)}개")
+                        logging.info(safe_format_string("티켓 처리 시작: 업무 관련 메일 {count}개", count=len(work_related_emails)))
                         
                         ticket_result = process_emails_with_ticket_logic(provider, user_query=str(params))
-                        logging.info(f"티켓 처리 결과: {ticket_result}")
+                        logging.info(safe_format_string("티켓 처리 결과: {result}", result=ticket_result))
                         
                         # 티켓 결과 검증
                         if not ticket_result.get('tickets'):
-                            logging.warning(f"경고: 티켓 결과에 tickets 배열이 없음: {ticket_result}")
+                            logging.warning(safe_format_string("경고: 티켓 결과에 tickets 배열이 없음: {result}", result=ticket_result))
                         
                         # 티켓 결과에 분류 정보 추가
-                        ticket_result['classification_info'] = f'업무 관련 메일 {len(work_related_emails)}개를 티켓으로 처리했습니다.'
+                        ticket_result['classification_info'] = safe_format_string('업무 관련 메일 {count}개를 티켓으로 처리했습니다.', count=len(work_related_emails))
                         ticket_result['work_related_count'] = len(work_related_emails)
                         ticket_result['total_emails'] = len(mail_list)
                         
-                        logging.info(f"최종 반환 결과: {ticket_result}")
+                        logging.info(safe_format_string("최종 반환 결과: {result}", result=ticket_result))
                         return ticket_result
                     except Exception as e:
-                        logging.error(f"티켓 처리 중 오류: {e}")
+                        logging.error(safe_format_string("티켓 처리 중 오류: {error}", error=e))
                         import traceback
-                        logging.error(f"오류 상세: {traceback.format_exc()}")
+                        logging.error(safe_format_string("오류 상세: {traceback}", traceback=traceback.format_exc()))
                         return {
                             'display_mode': 'classified_mail_list',
                             'mail_list': work_related_emails,
-                            'classification_info': f'업무 관련 메일 {len(work_related_emails)}개를 찾았지만 티켓 처리 중 오류가 발생했습니다.',
+                            'classification_info': safe_format_string('업무 관련 메일 {count}개를 찾았지만 티켓 처리 중 오류가 발생했습니다.', count=len(work_related_emails)),
                             'error': str(e)
                         }
                 else:
@@ -576,24 +624,24 @@ def handle_mail_query(params: Dict[str, Any]) -> Dict[str, Any]:
         
         elif action == 'process_tickets':
             # 티켓 처리는 process_emails_with_ticket_logic 함수를 호출합니다.
-            logging.info(f"process_tickets 액션 시작: provider={provider}, params={params}")
+            logging.info(safe_format_string("process_tickets 액션 시작: provider={provider}, params={params}", provider=provider, params=params))
             
             try:
                 response_data = process_emails_with_ticket_logic(provider, user_query=str(params))
-                logging.info(f"process_emails_with_ticket_logic 결과: {response_data}")
+                logging.info(safe_format_string("process_emails_with_ticket_logic 결과: {response_data}", response_data=response_data))
                 
                 # 티켓 결과 검증
                 if response_data.get('display_mode') == 'tickets':
                     tickets_count = len(response_data.get('tickets', []))
-                    logging.info(f"process_tickets - 티켓 개수: {tickets_count}")
+                    logging.info(safe_format_string("process_tickets - 티켓 개수: {count}", count=tickets_count))
                     if tickets_count == 0:
-                        logging.warning(f"process_tickets - 경고: 티켓이 0개입니다. 전체 결과: {response_data}")
+                        logging.warning(safe_format_string("process_tickets - 경고: 티켓이 0개입니다. 전체 결과: {response_data}", response_data=response_data))
                 
                 return response_data
             except Exception as e:
-                logging.error(f"process_tickets 액션 오류: {e}")
+                logging.error(safe_format_string("process_tickets 액션 오류: {error}", error=e))
                 import traceback
-                logging.error(f"오류 상세: {traceback.format_exc()}")
+                logging.error(safe_format_string("오류 상세: {traceback}", traceback=traceback.format_exc()))
                 raise
             
     except Exception as e:
@@ -621,16 +669,16 @@ class ViewEmailsTool(BaseTool):
     def _run(self, query: str) -> str:
         """메일 조회만 수행하고 결과를 JSON 문자열로 반환합니다."""
         try:
-            logging.info(f"ViewEmailsTool 실행: {query}")
+            logging.info(safe_format_string("ViewEmailsTool 실행: {query}", query=query))
             params = parse_query_to_parameters(query)
-            logging.info(f"파싱된 파라미터: {params}")
+            logging.info(safe_format_string("파싱된 파라미터: {params}", params=params))
             
             # view 액션만 처리
             if params.get('action') != 'view':
                 return json.dumps({"error": "이 도구는 메일 조회만 가능합니다."}, ensure_ascii=False)
             
             result_data = handle_mail_query(params)
-            logging.info(f"핸들러 실행 결과: {result_data}")
+            logging.info(safe_format_string("핸들러 실행 결과: {result_data}", result_data=result_data))
             
             # UI 모드 결정 및 세션에 저장
             ui_mode = determine_ui_mode(query, result_data)
@@ -639,13 +687,13 @@ class ViewEmailsTool(BaseTool):
             if 'streamlit' in sys.modules:
                 import streamlit as st
                 st.session_state.latest_response = result_data
-                logging.info(f"세션에 직접 저장 완료: {st.session_state.get('latest_response') is not None}")
+                logging.info(safe_format_string("세션에 직접 저장 완료: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
             
             json_result = json.dumps(result_data, ensure_ascii=False, indent=2)
-            logging.info(f"반환할 JSON: {json_result}")
+            logging.info(safe_format_string("반환할 JSON: {json_result}", json_result=json_result))
             return json_result
         except Exception as e:
-            error_msg = f"ViewEmailsTool 실행 오류: {e}"
+            error_msg = safe_format_string("ViewEmailsTool 실행 오류: {error}", error=e)
             logging.error(error_msg)
             return json.dumps({"error": error_msg}, ensure_ascii=False)
 
@@ -666,44 +714,44 @@ class ClassifyEmailsTool(BaseTool):
     def _run(self, query: str) -> str:
         """메일 조회 및 분류를 수행하고 결과를 JSON 문자열로 반환합니다."""
         try:
-            logging.info(f"ClassifyEmailsTool 실행 시작: {query}")
+            logging.info(safe_format_string("ClassifyEmailsTool 실행 시작: {query}", query=query))
             params = parse_query_to_parameters(query)
-            logging.info(f"파싱된 파라미터: {params}")
+            logging.info(safe_format_string("파싱된 파라미터: {params}", params=params))
             
             # classify 액션으로 변경
             params['action'] = 'classify'
-            logging.info(f"액션 강제 설정: {params['action']}")
+            logging.info(safe_format_string("액션 강제 설정: {action}", action=params['action']))
             
             logging.info("handle_mail_query 호출 시작")
             result_data = handle_mail_query(params)
-            logging.info(f"핸들러 실행 결과: {result_data}")
+            logging.info(safe_format_string("핸들러 실행 결과: {result_data}", result_data=result_data))
             
             # 티켓 결과 검증
             if result_data.get('display_mode') == 'tickets':
                 tickets_count = len(result_data.get('tickets', []))
-                logging.info(f"티켓 개수 확인: {tickets_count}")
+                logging.info(safe_format_string("티켓 개수 확인: {count}", count=tickets_count))
                 if tickets_count == 0:
-                    logging.warning(f"경고: 티켓이 0개입니다. 전체 결과: {result_data}")
+                    logging.warning(safe_format_string("경고: 티켓이 0개입니다. 전체 결과: {result_data}", result_data=result_data))
             
             # UI 모드 결정 및 세션에 저장
             ui_mode = determine_ui_mode(query, result_data)
             result_data['ui_mode'] = ui_mode
-            logging.info(f"UI 모드 결정: {ui_mode}")
+            logging.info(safe_format_string("UI 모드 결정: {ui_mode}", ui_mode=ui_mode))
             
             if 'streamlit' in sys.modules:
                 import streamlit as st
                 st.session_state.latest_response = result_data
-                logging.info(f"세션에 직접 저장 완료: {st.session_state.get('latest_response') is not None}")
-                logging.info(f"세션에 저장된 데이터: {st.session_state.get('latest_response')}")
+                logging.info(safe_format_string("세션에 직접 저장 완료: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
+                logging.info(safe_format_string("세션에 저장된 데이터: {latest_response}", latest_response=st.session_state.get('latest_response')))
             
             json_result = json.dumps(result_data, ensure_ascii=False, indent=2)
-            logging.info(f"ClassifyEmailsTool 최종 반환: {json_result}")
+            logging.info(safe_format_string("ClassifyEmailsTool 최종 반환: {json_result}", json_result=json_result))
             return json_result
         except Exception as e:
-            error_msg = f"ClassifyEmailsTool 실행 오류: {e}"
+            error_msg = safe_format_string("ClassifyEmailsTool 실행 오류: {error}", error=e)
             logging.error(error_msg)
             import traceback
-            logging.error(f"오류 상세: {traceback.format_exc()}")
+            logging.error(safe_format_string("오류 상세: {traceback}", traceback=traceback.format_exc()))
             return json.dumps({"error": error_msg}, ensure_ascii=False)
 
 class ProcessTicketsTool(BaseTool):
@@ -731,7 +779,7 @@ class ProcessTicketsTool(BaseTool):
                 logging.warning("LLM이 사용 불가능하여 기본 규칙 기반 판단으로 대체")
                 return self._determine_action_with_rules(query)
         except Exception as e:
-            logging.error(f"LLM 액션 결정 실패, 규칙 기반으로 대체: {str(e)}")
+            logging.error(safe_format_string("LLM 액션 결정 실패, 규칙 기반으로 대체: {error}", error=str(e)))
             return self._determine_action_with_rules(query)
     
     def _determine_action_with_llm_internal(self, query: str) -> str:
@@ -760,7 +808,7 @@ JSON 형식으로만 응답:
     "query_type": "mail_query|ticket_query|ticket_creation"
 }"""
 
-            user_message = f"다음 요청을 분석하여 적절한 액션을 결정해주세요: {query}"
+            user_message = safe_format_string("다음 요청을 분석하여 적절한 액션을 결정해주세요: {query}", query=query)
             
             messages = [
                 SystemMessage(content=system_prompt),
@@ -770,7 +818,7 @@ JSON 형식으로만 응답:
             response = llm.invoke(messages)
             response_content = response.content
             
-            logging.info(f"LLM 액션 결정 응답: {response_content}")
+            logging.info(safe_format_string("LLM 액션 결정 응답: {response_content}", response_content=response_content))
             
             # JSON 파싱
             try:
@@ -784,15 +832,15 @@ JSON 형식으로만 응답:
                 action = result.get('action', 'view_mails')
                 reasoning = result.get('reasoning', '')
                 
-                logging.info(f"LLM 액션 결정 결과: {action}, 이유: {reasoning}")
+                logging.info(safe_format_string("LLM 액션 결정 결과: {action}, 이유: {reasoning}", action=action, reasoning=reasoning))
                 return action
                 
             except json.JSONDecodeError as e:
-                logging.error(f"LLM 응답 JSON 파싱 실패: {str(e)}")
+                logging.error(safe_format_string("LLM 응답 JSON 파싱 실패: {error}", error=str(e)))
                 raise e
                 
         except Exception as e:
-            logging.error(f"LLM 액션 결정 오류: {str(e)}")
+            logging.error(safe_format_string("LLM 액션 결정 오류: {error}", error=str(e)))
             raise e
     
     def _determine_action_with_rules(self, query: str) -> str:
@@ -815,22 +863,22 @@ JSON 형식으로만 응답:
     def _run(self, query: str) -> str:
         """전체 티켓 워크플로우를 처리하고 결과를 JSON 문자열로 반환합니다."""
         try:
-            logging.info(f"ProcessTicketsTool 실행: {query}")
+            logging.info(safe_format_string("ProcessTicketsTool 실행: {query}", query=query))
             params = parse_query_to_parameters(query)
-            logging.info(f"파싱된 파라미터: {params}")
+            logging.info(safe_format_string("파싱된 파라미터: {params}", params=params))
             
             # LLM을 사용하여 액션 결정
             params['action'] = self._determine_action_with_llm(query)
-            logging.info(f"ProcessTicketsTool에서 LLM 기반 액션 결정: {params['action']}")
+            logging.info(safe_format_string("ProcessTicketsTool에서 LLM 기반 액션 결정: {action}", action=params['action']))
             result_data = handle_mail_query(params)
-            logging.info(f"핸들러 실행 결과: {result_data}")
+            logging.info(safe_format_string("핸들러 실행 결과: {result_data}", result_data=result_data))
             
             # 티켓 결과 검증
             if result_data.get('display_mode') == 'tickets':
                 tickets_count = len(result_data.get('tickets', []))
-                logging.info(f"ProcessTicketsTool - 티켓 개수 확인: {tickets_count}")
+                logging.info(safe_format_string("ProcessTicketsTool - 티켓 개수 확인: {count}", count=tickets_count))
                 if tickets_count == 0:
-                    logging.warning(f"ProcessTicketsTool - 경고: 티켓이 0개입니다. 전체 결과: {result_data}")
+                    logging.warning(safe_format_string("ProcessTicketsTool - 경고: 티켓이 0개입니다. 전체 결과: {result_data}", result_data=result_data))
             
             # UI 모드 결정 및 세션에 저장
             ui_mode = determine_ui_mode(query, result_data)
@@ -839,13 +887,13 @@ JSON 형식으로만 응답:
             if 'streamlit' in sys.modules:
                 import streamlit as st
                 st.session_state.latest_response = result_data
-                logging.info(f"세션에 직접 저장 완료: {st.session_state.get('latest_response') is not None}")
+                logging.info(safe_format_string("세션에 직접 저장 완료: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
             
             json_result = json.dumps(result_data, ensure_ascii=False, indent=2)
-            logging.info(f"반환할 JSON: {json_result}")
+            logging.info(safe_format_string("반환할 JSON: {json_result}", json_result=json_result))
             return json_result
         except Exception as e:
-            error_msg = f"ProcessTicketsTool 실행 오류: {e}"
+            error_msg = safe_format_string("ProcessTicketsTool 실행 오류: {error}", error=e)
             logging.error(error_msg)
             return json.dumps({"error": error_msg}, ensure_ascii=False)
 
@@ -876,7 +924,7 @@ def create_main_agent():
         # 필수 변수들이 모두 로드되었는지 확인
         if not all([api_key, api_version, azure_endpoint, deployment_name]):
             missing_vars = [var for var, val in locals().items() if not val]
-            st.error(f"필수 환경변수가 누락되었습니다: {', '.join(missing_vars)}. .env 파일을 확인해주세요.")
+            st.error(safe_format_string("필수 환경변수가 누락되었습니다: {missing_vars}. .env 파일을 확인해주세요.", missing_vars=', '.join(missing_vars)))
             return None
             
         # .env 파일에 불필요한 공백이나 '/'가 들어가는 것을 방지
@@ -884,9 +932,9 @@ def create_main_agent():
 
         # --- 2. Streamlit UI에 현재 설정값 출력 (디버깅용) ---
         st.info("🔧 현재 적용된 Azure OpenAI 설정:")
-        st.text(f"   - ENDPOINT: {clean_endpoint}")
-        st.text(f"   - DEPLOYMENT_NAME: {deployment_name}")
-        st.text(f"   - API_VERSION: {api_version}")
+        st.text(safe_format_string("   - ENDPOINT: {endpoint}", endpoint=clean_endpoint))
+        st.text(safe_format_string("   - DEPLOYMENT_NAME: {deployment_name}", deployment_name=deployment_name))
+        st.text(safe_format_string("   - API_VERSION: {api_version}", api_version=api_version))
         
         # --- 3. AzureChatOpenAI 초기화 (표준 방식) ---
         # 라이브러리가 clean_endpoint를 기반으로 전체 URL을 만들도록 위임합니다.
@@ -906,14 +954,15 @@ def create_main_agent():
         tools = [
             ViewEmailsTool(),
             ClassifyEmailsTool(),
-            ProcessTicketsTool()
+            ProcessTicketsTool(),
+            create_memory_based_ticket_processor()
         ]
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """당신은 사용자의 요청을 분석하여 가장 적절한 전문 도구를 선택하는 유능한 AI 어시스턴트입니다.
 
 🚨 **도구 선택 규칙:**
-사용자의 요청에 따라 다음 세 가지 도구 중 하나를 선택해야 합니다:
+사용자의 요청에 따라 다음 네 가지 도구 중 하나를 선택해야 합니다:
 
 1. **view_emails_tool**: 단순 메일 조회 및 필터링
    - "안 읽은 메일 보여줘", "메일 목록", "특정 발신자 메일" 등
@@ -924,10 +973,15 @@ def create_main_agent():
 3. **process_tickets_tool**: 전체 티켓 워크플로우
    - "티켓 생성", "기존 티켓 조회", "업무 메일을 티켓으로 변환" 등
 
+4. **memory_based_ticket_processor**: 장기 기억을 활용한 지능형 티켓 처리
+   - "이메일을 분석해서 티켓 생성이 필요한지 판단해줘", "과거 기억을 활용한 티켓 처리" 등
+   - 이 도구는 과거 사용자 피드백과 AI 결정을 기억하여 더 정확한 판단을 제공합니다
+
 📋 **도구 사용이 필수인 경우들:**
 - 메일/이메일 관련 모든 요청
 - 티켓 관련 모든 요청
 - 업무 처리 관련 모든 요청
+- 장기 기억을 활용한 지능형 처리 요청
 
 ✅ **도구 사용 후 응답 예시:**
 "[선택된 도구명] 도구를 사용하여 요청하신 정보를 처리했습니다. 결과는 화면에 표시됩니다."
@@ -946,10 +1000,10 @@ def create_main_agent():
         return AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
     except Exception as e:
-        st.error(f"에이전트 생성 실패: {e}")
-        logging.error(f"에이전트 생성 실패: {e}")
+        st.error(safe_format_string("에이전트 생성 실패: {error}", error=e))
+        logging.error(safe_format_string("에이전트 생성 실패: {error}", error=e))
         import traceback
-        logging.error(f"오류 상세: {traceback.format_exc()}")
+        logging.error(safe_format_string("오류 상세: {traceback}", traceback=traceback.format_exc()))
         return None
         
 def handle_query(query: str):
@@ -972,23 +1026,23 @@ def handle_query(query: str):
             
             # 도구 결과를 안정적으로 추출 (핵심 개선)
             tool_output_str = None
-            logging.info(f"전체 응답 구조: {list(response.keys())}")
-            logging.info(f"응답 내용: {response}")
+            logging.info(safe_format_string("전체 응답 구조: {keys}", keys=list(response.keys())))
+            logging.info(safe_format_string("응답 내용: {response}", response=response))
             
             # 1. intermediate_steps에서 도구 결과 추출 시도
             if "intermediate_steps" in response and response["intermediate_steps"]:
-                logging.info(f"intermediate_steps 발견: {len(response['intermediate_steps'])}개")
+                logging.info(safe_format_string("intermediate_steps 발견: {count}개", count=len(response['intermediate_steps'])))
                 for i, step in enumerate(response["intermediate_steps"]):
-                    logging.info(f"Step {i}: {step}")
+                    logging.info(safe_format_string("Step {i}: {step}", i=i, step=step))
                     if len(step) >= 2:
                         tool_output_str = step[1]
-                        logging.info(f"도구 출력 추출: {tool_output_str}")
+                        logging.info(safe_format_string("도구 출력 추출: {tool_output_str}", tool_output_str=tool_output_str))
                         break
             
             # 2. output에서 도구 결과 추출 시도 (LangChain 버전에 따라 다를 수 있음)
             elif "output" in response:
                 output = response["output"]
-                logging.info(f"output 내용: {output}")
+                logging.info(safe_format_string("output 내용: {output}", output=output))
                 
                 # output이 문자열이고 JSON이 포함되어 있는지 확인
                 if isinstance(output, str) and "{" in output and "}" in output:
@@ -998,11 +1052,11 @@ def handle_query(query: str):
                         end = output.rfind("}") + 1
                         if start != -1 and end != -1:
                             json_str = output[start:end]
-                            logging.info(f"JSON 추출 시도: {json_str}")
+                            logging.info(safe_format_string("JSON 추출 시도: {json_str}", json_str=json_str))
                             # 유효한 JSON인지 확인
                             json.loads(json_str)
                             tool_output_str = json_str
-                            logging.info(f"output에서 JSON 추출 성공")
+                            logging.info("output에서 JSON 추출 성공")
                     except:
                         logging.info("output에서 JSON 추출 실패")
             
@@ -1010,7 +1064,7 @@ def handle_query(query: str):
                 logging.info("도구 결과를 찾을 수 없습니다.")
 
             if tool_output_str:
-                logging.info(f"도구 실행 결과: {tool_output_str}")
+                logging.info(safe_format_string("도구 실행 결과: {tool_output_str}", tool_output_str=tool_output_str))
                 try:
                     response_data = json.loads(tool_output_str)
                     
@@ -1019,25 +1073,25 @@ def handle_query(query: str):
                     response_data['ui_mode'] = ui_mode
                     st.session_state.latest_response = response_data
                     
-                    logging.info(f"UI 모드 결정: {ui_mode}, display_mode: {response_data.get('display_mode')}")
-                    logging.info(f"latest_response 설정 완료: {st.session_state.get('latest_response') is not None}")
+                    logging.info(safe_format_string("UI 모드 결정: {ui_mode}, display_mode: {display_mode}", ui_mode=ui_mode, display_mode=response_data.get('display_mode')))
+                    logging.info(safe_format_string("latest_response 설정 완료: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
                     
                     # 화면에 표시될 최종 AI 답변 생성
                     final_message = response.get("output", "결과를 확인해주세요.")
                     st.session_state.messages.append(AIMessage(content=final_message))
                 except json.JSONDecodeError as e:
-                    logging.error(f"JSON 파싱 오류: {e}, tool_output_str: {tool_output_str}")
-                    st.error(f"응답 데이터 파싱 오류: {e}")
+                    logging.error(safe_format_string("JSON 파싱 오류: {error}, tool_output_str: {tool_output_str}", error=e, tool_output_str=tool_output_str))
+                    st.error(safe_format_string("응답 데이터 파싱 오류: {error}", error=e))
                 except Exception as e:
-                    logging.error(f"응답 처리 오류: {e}")
-                    st.error(f"응답 처리 중 오류 발생: {e}")
+                    logging.error(safe_format_string("응답 처리 오류: {error}", error=e))
+                    st.error(safe_format_string("응답 처리 중 오류 발생: {error}", error=e))
             else:
-                logging.info(f"도구가 사용되지 않음. LLM 직접 응답: {response.get('output')}")
+                logging.info(safe_format_string("도구가 사용되지 않음. LLM 직접 응답: {output}", output=response.get('output')))
                 # 도구를 사용하지 않은 일반 답변
                 st.session_state.messages.append(AIMessage(content=response.get("output")))
 
         except Exception as e:
-            error_msg = f"처리 중 오류 발생: {e}"
+            error_msg = safe_format_string("처리 중 오류 발생: {error}", error=e)
             st.error(error_msg)
             logging.error(error_msg)
             st.session_state.messages.append(AIMessage(content=error_msg))
@@ -1060,7 +1114,7 @@ def main():
             missing_vars.append(var)
     
     if missing_vars:
-        st.error(f"필수 환경변수가 설정되지 않았습니다: {', '.join(missing_vars)}")
+        st.error(safe_format_string("필수 환경변수가 설정되지 않았습니다: {missing_vars}", missing_vars=', '.join(missing_vars)))
         st.info("프로젝트 루트의 .env 파일을 확인해주세요.")
         return
     
@@ -1072,9 +1126,9 @@ def main():
         st.header("🔗 연결 설정")
         provider = st.session_state.email_provider
         if st.session_state.email_connected:
-            st.success(f"✅ {provider.upper()} 연결됨")
+            st.success(safe_format_string("✅ {provider} 연결됨", provider=provider.upper()))
         else:
-            st.error(f"❌ {provider.upper()} 미연결")
+            st.error(safe_format_string("❌ {provider} 미연결", provider=provider.upper()))
             if st.button("이메일 연결"):
                 status = get_email_provider_status(provider)
                 st.session_state.email_connected = status.get('is_connected', False)
@@ -1117,14 +1171,14 @@ def main():
         
         # 세션 상태 확인
         st.write("**세션 상태:**")
-        st.write(f"- latest_response 존재: {st.session_state.get('latest_response') is not None}")
-        st.write(f"- messages 개수: {len(st.session_state.get('messages', []))}")
+        st.write(safe_format_string("- latest_response 존재: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
+        st.write(safe_format_string("- messages 개수: {count}", count=len(st.session_state.get('messages', []))))
         
         if response_data := st.session_state.get('latest_response'):
             display_mode = response_data.get('display_mode')
             ui_mode = response_data.get('ui_mode', 'text_only')
             
-            st.success(f"✅ 응답 데이터 발견: display_mode={display_mode}, ui_mode={ui_mode}")
+            st.success(safe_format_string("✅ 응답 데이터 발견: display_mode={display_mode}, ui_mode={ui_mode}", display_mode=display_mode, ui_mode=ui_mode))
             st.json(response_data)
             
             if display_mode == 'tickets':
@@ -1136,7 +1190,7 @@ def main():
                     if tickets:
                         st.subheader("📋 티켓 요약")
                         for i, ticket in enumerate(tickets, 1):
-                            st.write(f"{i}. {ticket.get('title', '제목 없음')} - {ticket.get('status', '상태 불명')}")
+                            st.write(safe_format_string("{i}. {title} - {status}", i=i, title=ticket.get('title', '제목 없음'), status=ticket.get('status', '상태 불명')))
                     else:
                         st.info("표시할 티켓이 없습니다.")
                         
@@ -1219,11 +1273,11 @@ def main():
                         if file_types:
                             st.subheader("📁 파일 타입별 통계")
                             for file_type, count in file_types.items():
-                                st.info(f"• {file_type}: {count}개 청크")
+                                st.info(safe_format_string("• {file_type}: {count}개 청크", file_type=file_type, count=count))
                     else:
-                        st.error(f"❌ 벡터DB 통계 조회 실패: {stats['error']}")
+                        st.error(safe_format_string("❌ 벡터DB 통계 조회 실패: {error}", error=stats['error']))
                 except Exception as e:
-                    st.error(f"❌ 벡터DB 통계 조회 중 오류: {str(e)}")
+                    st.error(safe_format_string("❌ 벡터DB 통계 조회 중 오류: {error}", error=str(e)))
         
         with col2:
             if st.button("🗑️ 벡터DB 초기화", use_container_width=True, type="secondary"):
@@ -1234,7 +1288,7 @@ def main():
                     else:
                         st.warning("⚠️ 벡터DB가 초기화되지 않았습니다.")
                 except Exception as e:
-                    st.error(f"❌ 벡터DB 초기화 중 오류: {str(e)}")
+                    st.error(safe_format_string("❌ 벡터DB 초기화 중 오류: {error}", error=str(e)))
         
         # 벡터DB 검색 기능
         st.markdown("---")
@@ -1262,46 +1316,46 @@ def main():
                 )
                 
                 if search_results:
-                    st.success(f"✅ 검색 완료! {len(search_results)}개 결과를 찾았습니다.")
+                    st.success(safe_format_string("✅ 검색 완료! {count}개 결과를 찾았습니다.", count=len(search_results)))
                     
                     # 검색 결과 표시
                     for i, result in enumerate(search_results, 1):
-                        with st.expander(f"🔍 검색 결과 {i}"):
+                        with st.expander(safe_format_string("🔍 검색 결과 {i}", i=i)):
                             metadata = result['metadata']
-                            st.write(f"**파일명:** {metadata.get('file_name', '알 수 없음')}")
-                            st.write(f"**섹션:** {metadata.get('section_title', '제목 없음')}")
-                            st.write(f"**파일 타입:** {metadata.get('file_type', '알 수 없음')}")
-                            st.write(f"**아키텍처:** {metadata.get('architecture', 'unknown')}")
+                            st.write(safe_format_string("**파일명:** {file_name}", file_name=metadata.get('file_name', '알 수 없음')))
+                            st.write(safe_format_string("**섹션:** {section_title}", section_title=metadata.get('section_title', '제목 없음')))
+                            st.write(safe_format_string("**파일 타입:** {file_type}", file_type=metadata.get('file_type', '알 수 없음')))
+                            st.write(safe_format_string("**아키텍처:** {architecture}", architecture=metadata.get('architecture', 'unknown')))
                             
                             # 유사도 점수
                             similarity = result.get('similarity_score', 0)
                             if similarity is not None:
                                 st.progress(similarity)
-                                st.write(f"**유사도:** {similarity:.3f}")
+                                st.write(safe_format_string("**유사도:** {similarity:.3f}", similarity=similarity))
                             
                             # 텍스트 내용
                             text_content = result['text_content']
                             if text_content:
-                                st.text_area(f"📝 내용", text_content, height=100, disabled=True)
+                                st.text_area("📝 내용", text_content, height=100, disabled=True)
                 else:
                     st.info("🔍 검색 결과가 없습니다.")
                     
             except Exception as e:
-                st.error(f"❌ 검색 중 오류 발생: {str(e)}")
+                st.error(safe_format_string("❌ 검색 중 오류 발생: {error}", error=str(e)))
         
         if uploaded_files:
-            st.success(f"✅ {len(uploaded_files)}개 파일이 업로드되었습니다.")
+            st.success(safe_format_string("✅ {count}개 파일이 업로드되었습니다.", count=len(uploaded_files)))
             
             # 파일 목록 표시
             st.subheader("📋 업로드된 파일 목록")
             for i, file in enumerate(uploaded_files, 1):
                 col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
                 with col1:
-                    st.write(f"**{i}. {file.name}**")
+                    st.write(safe_format_string("**{i}. {name}**", i=i, name=file.name))
                 with col2:
-                    st.write(f"크기: {file.size / 1024:.1f} KB")
+                    st.write(safe_format_string("크기: {size:.1f} KB", size=file.size / 1024))
                 with col3:
-                    st.write(f"타입: {file.type}")
+                    st.write(safe_format_string("타입: {type}", type=file.type))
                 with col4:
                     # 파일 상태 표시
                     if file.size > 0:
@@ -1312,7 +1366,7 @@ def main():
             # 파일 검증 요약
             valid_files = [f for f in uploaded_files if f.size > 0]
             if len(valid_files) != len(uploaded_files):
-                st.warning(f"⚠️ {len(uploaded_files) - len(valid_files)}개 파일이 비어있습니다.")
+                st.warning(safe_format_string("⚠️ {count}개 파일이 비어있습니다.", count=len(uploaded_files) - len(valid_files)))
                 st.info("빈 파일은 처리에서 제외됩니다.")
             
             # 분석 및 임베딩 시작 버튼
@@ -1329,7 +1383,7 @@ def main():
                     st.error("❌ 처리할 수 있는 파일이 없습니다. 모든 파일이 비어있습니다.")
                     return
                 
-                st.info(f"📊 {len(valid_files)}개 유효한 파일을 처리합니다.")
+                st.info(safe_format_string("📊 {count}개 유효한 파일을 처리합니다.", count=len(valid_files)))
                 
                 # 각 파일 처리
                 for file in valid_files:
@@ -1338,7 +1392,7 @@ def main():
                     try:
                         # 원본 파일 확장자 유지
                         file_ext = Path(file.name).suffix.lower()
-                        temp_file_path = os.path.join(temp_dir, f"uploaded_file{file_ext}")
+                        temp_file_path = os.path.join(temp_dir, safe_format_string("uploaded_file{ext}", ext=file_ext))
                         
                         # 파일 내용을 임시 파일에 저장
                         with open(temp_file_path, 'wb') as f:
@@ -1346,23 +1400,23 @@ def main():
                         
                         # 파일 존재 확인
                         if not os.path.exists(temp_file_path):
-                            raise Exception(f"임시 파일 생성 실패: {temp_file_path}")
+                            raise Exception(safe_format_string("임시 파일 생성 실패: {path}", path=temp_file_path))
                         
                         # 파일 크기 확인
                         file_size = os.path.getsize(temp_file_path)
                         if file_size == 0:
                             raise Exception("업로드된 파일이 비어있습니다")
                         
-                        st.info(f"📁 임시 파일 생성: {temp_file_path} (크기: {file_size} bytes)")
+                        st.info(safe_format_string("📁 임시 파일 생성: {path} (크기: {size} bytes)", path=temp_file_path, size=file_size))
                         
                         # 실제 파일 형식 감지
                         detected_type = detect_file_type_by_content(temp_file_path)
-                        st.info(f"🔍 감지된 실제 파일 형식: {detected_type}")
+                        st.info(safe_format_string("🔍 감지된 실제 파일 형식: {type}", type=detected_type))
                         
                         # 확장자와 실제 형식이 다른 경우 경고
                         if detected_type != file_ext:
-                            st.warning(f"⚠️  파일 확장자({file_ext})와 실제 형식({detected_type})이 다릅니다!")
-                            st.info(f"💡 파일을 {detected_type} 확장자로 다시 업로드하거나, 원본 파일을 확인해주세요.")
+                            st.warning(safe_format_string("⚠️  파일 확장자({ext})와 실제 형식({type})이 다릅니다!", ext=file_ext, type=detected_type))
+                            st.info(safe_format_string("💡 파일을 {type} 확장자로 다시 업로드하거나, 원본 파일을 확인해주세요.", type=detected_type))
                         
                         # 파일 타입별 추가 검증
                         if file_ext == '.pptx':
@@ -1371,13 +1425,13 @@ def main():
                                 header = f.read(4)
                                 if header != b'PK\x03\x04':
                                     # 더 자세한 오류 정보 제공
-                                    st.error(f"❌ PPTX 파일 헤더 검증 실패")
-                                    st.error(f"예상: PK 03 04, 실제: {' '.join(f'{b:02x}' for b in header)}")
+                                    st.error("❌ PPTX 파일 헤더 검증 실패")
+                                    st.error(safe_format_string("예상: PK 03 04, 실제: {header}", header=' '.join(safe_format_string('{b:02x}', b=b) for b in header)))
                                     
                                     # 파일 내용 일부 확인
                                     f.seek(0)
                                     first_32_bytes = f.read(32)
-                                    st.error(f"파일 시작 부분: {' '.join(f'{b:02x}' for b in first_32_bytes)}")
+                                    st.error(safe_format_string("파일 시작 부분: {bytes}", bytes=' '.join(safe_format_string('{b:02x}', b=b) for b in first_32_bytes)))
                                     
                                     # 파일 형식 추측 시도
                                     st.info("🔍 파일 형식 추측 중...")
@@ -1398,9 +1452,9 @@ def main():
                                     
                                     # 파일 크기 정보
                                     file_size = os.path.getsize(temp_file_path)
-                                    st.info(f"📏 파일 크기: {file_size:,} bytes ({file_size/1024:.1f} KB)")
+                                    st.info(safe_format_string("📏 파일 크기: {size:,} bytes ({size_kb:.1f} KB)", size=file_size, size_kb=file_size/1024))
                                     
-                                    raise Exception(f"올바른 PPTX 파일이 아닙니다 (ZIP 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
+                                    raise Exception("올바른 PPTX 파일이 아닙니다 (ZIP 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
                             st.info("✅ PPTX 파일 헤더 검증 완료")
                         
                         elif file_ext == '.docx':
@@ -1408,8 +1462,8 @@ def main():
                             with open(temp_file_path, 'rb') as f:
                                 header = f.read(4)
                                 if header != b'PK\x03\x04':
-                                    st.error(f"❌ DOCX 파일 헤더 검증 실패")
-                                    st.error(f"예상: PK 03 04, 실제: {' '.join(f'{b:02x}' for b in header)}")
+                                    st.error("❌ DOCX 파일 헤더 검증 실패")
+                                    st.error(safe_format_string("예상: PK 03 04, 실제: {header}", header=' '.join(safe_format_string('{b:02x}', b=b) for b in header)))
                                     
                                     # 파일 형식 추측
                                     f.seek(0)
@@ -1419,7 +1473,7 @@ def main():
                                     elif full_header.startswith(b'\x50\x4b\x03\x04'):
                                         st.warning("💡 이 파일은 PPTX 파일로 보입니다. 확장자를 .pptx로 변경해주세요.")
                                     
-                                    raise Exception(f"올바른 DOCX 파일이 아닙니다 (ZIP 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
+                                    raise Exception("올바른 DOCX 파일이 아닙니다 (ZIP 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
                             st.info("✅ DOCX 파일 헤더 검증 완료")
                         
                         elif file_ext == '.pdf':
@@ -1427,8 +1481,8 @@ def main():
                             with open(temp_file_path, 'rb') as f:
                                 header = f.read(4)
                                 if header != b'%PDF':
-                                    st.error(f"❌ PDF 파일 헤더 검증 실패")
-                                    st.error(f"예상: %PDF, 실제: {' '.join(f'{b:02x}' for b in header)}")
+                                    st.error("❌ PDF 파일 헤더 검증 실패")
+                                    st.error(safe_format_string("예상: %PDF, 실제: {header}", header=' '.join(safe_format_string('{b:02x}', b=b) for b in header)))
                                     
                                     # 파일 형식 추측
                                     f.seek(0)
@@ -1436,45 +1490,45 @@ def main():
                                     if full_header.startswith(b'PK\x03\x04'):
                                         st.warning("💡 이 파일은 Office 문서(PPTX/DOCX/XLSX)로 보입니다. 확장자를 확인해주세요.")
                                     
-                                    raise Exception(f"올바른 PDF 파일이 아닙니다 (PDF 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
+                                    raise Exception("올바른 PDF 파일이 아닙니다 (PDF 헤더 없음). 파일이 손상되었거나 다른 형식일 수 있습니다.")
                             st.info("✅ PDF 파일 헤더 검증 완료")
                         
                         # 파일 처리
                         import time
                         start_time = time.time()
                         
-                        with st.spinner(f"📄 {file.name} 처리 중..."):
-                            st.info(f"🔍 FileProcessor 시작: {temp_file_path}")
+                        with st.spinner(safe_format_string("📄 {name} 처리 중...", name=file.name)):
+                            st.info(safe_format_string("🔍 FileProcessor 시작: {path}", path=temp_file_path))
                             
                             # 실제 형식에 따라 처리 방식 결정
                             if detected_type != file_ext:
-                                st.info(f"🔄 실제 형식({detected_type})에 맞춰 처리 방식을 조정합니다.")
+                                st.info(safe_format_string("🔄 실제 형식({type})에 맞춰 처리 방식을 조정합니다.", type=detected_type))
                                 
                                 # 임시로 올바른 확장자로 파일 복사
                                 corrected_file_path = temp_file_path.replace(file_ext, detected_type)
                                 import shutil
                                 shutil.copy2(temp_file_path, corrected_file_path)
-                                st.info(f"📝 수정된 파일 경로: {corrected_file_path}")
+                                st.info(safe_format_string("📝 수정된 파일 경로: {path}", path=corrected_file_path))
                                 
                                 # 수정된 파일로 처리
                                 try:
                                     result = st.session_state.file_processor.process_file(corrected_file_path)
-                                    st.info(f"✅ FileProcessor 완료 (수정된 형식): {len(result.get('chunks', [])) if result else 0}개 청크")
+                                    st.info(safe_format_string("✅ FileProcessor 완료 (수정된 형식): {count}개 청크", count=len(result.get('chunks', [])) if result else 0))
                                 except Exception as proc_error:
-                                    st.error(f"❌ FileProcessor 오류 (수정된 형식): {str(proc_error)}")
+                                    st.error(safe_format_string("❌ FileProcessor 오류 (수정된 형식): {error}", error=str(proc_error)))
                                     raise proc_error
                             else:
                                 # 원래 확장자로 처리
                                 try:
                                     result = st.session_state.file_processor.process_file(temp_file_path)
-                                    st.info(f"✅ FileProcessor 완료: {len(result.get('chunks', [])) if result else 0}개 청크")
+                                    st.info(safe_format_string("✅ FileProcessor 완료: {count}개 청크", count=len(result.get('chunks', [])) if result else 0))
                                 except Exception as proc_error:
-                                    st.error(f"❌ FileProcessor 오류: {str(proc_error)}")
+                                    st.error(safe_format_string("❌ FileProcessor 오류: {error}", error=str(proc_error)))
                                     raise proc_error
                         
                         # 처리 시간 계산
                         processing_duration = time.time() - start_time
-                        st.info(f"⏱️ 파일 처리 소요 시간: {processing_duration:.2f}초")
+                        st.info(safe_format_string("⏱️ 파일 처리 소요 시간: {duration:.2f}초", duration=processing_duration))
                         
                         # 결과 처리 로직
                         if result and not result.get("error"):
@@ -1486,12 +1540,12 @@ def main():
                                 # 중복 파일인 경우
                                 if embed_result.get("duplicate", False):
                                     st.success(embed_result["message"])
-                                    st.info(f"🔍 파일 해시: {embed_result.get('file_hash', '')[:16]}...")
+                                    st.info(safe_format_string("🔍 파일 해시: {hash}", hash=embed_result.get('file_hash', '')[:16]))
                                 else:
                                     st.success(embed_result["message"])
                                 
                                 # 결과 상세 정보를 expander로 표시
-                                with st.expander(f"📊 {file.name} 처리 결과 상세보기"):
+                                with st.expander(safe_format_string("📊 {name} 처리 결과 상세보기", name=file.name)):
                                     st.json(result)
                                     
                                     # 요약 정보
@@ -1506,36 +1560,36 @@ def main():
                                     # 아키텍처 정보
                                     st.subheader("🏗️ 처리 아키텍처")
                                     for arch in embed_result["architectures"]:
-                                        st.info(f"• {arch}")
+                                        st.info(safe_format_string("• {arch}", arch=arch))
                                     
                                     if embed_result["vision_analysis_count"] > 0:
-                                        st.success(f"👁️ Vision 분석 적용: {embed_result['vision_analysis_count']}개 청크")
+                                        st.success(safe_format_string("👁️ Vision 분석 적용: {count}개 청크", count=embed_result['vision_analysis_count']))
                                     
                                     # 청크별 상세 정보
                                     st.subheader("📝 청크별 상세 정보")
                                     for i, chunk in enumerate(chunks, 1):
-                                        with st.expander(f"청크 {i}"):
+                                        with st.expander(safe_format_string("청크 {i}", i=i)):
                                             metadata = chunk.get('metadata', {})
-                                            st.write(f"**아키텍처:** {metadata.get('architecture', 'unknown')}")
-                                            st.write(f"**처리 방법:** {metadata.get('processing_method', 'unknown')}")
-                                            st.write(f"**Vision 분석:** {metadata.get('vision_analysis', False)}")
-                                            st.write(f"**요소 개수:** {metadata.get('element_count', 0)}")
+                                            st.write(safe_format_string("**아키텍처:** {architecture}", architecture=metadata.get('architecture', 'unknown')))
+                                            st.write(safe_format_string("**처리 방법:** {method}", method=metadata.get('processing_method', 'unknown')))
+                                            st.write(safe_format_string("**Vision 분석:** {vision}", vision=metadata.get('vision_analysis', False)))
+                                            st.write(safe_format_string("**요소 개수:** {count}", count=metadata.get('element_count', 0)))
                                             
                                             # text_chunk_to_embed 미리보기
                                             text_content = chunk.get('text_chunk_to_embed', '')
                                             if text_content:
-                                                st.text_area(f"📝 청크 {i} 내용", text_content, height=100, disabled=True)
+                                                st.text_area(safe_format_string("📝 청크 {i} 내용", i=i), text_content, height=100, disabled=True)
                                             else:
                                                 st.info("텍스트 내용이 없습니다 (단순 변환 방식)")
                                             
                                             # 요소 정보
                                             elements = metadata.get('elements', [])
                                             if elements:
-                                                st.write(f"**요소 정보:**")
+                                                st.write("**요소 정보:**")
                                                 for j, element in enumerate(elements[:5], 1):  # 처음 5개만 표시
-                                                    st.write(f"  {j}. {element.get('element_type', 'unknown')}: {str(element.get('content', ''))[:100]}...")
+                                                    st.write(safe_format_string("  {j}. {type}: {content}...", j=j, type=element.get('element_type', 'unknown'), content=str(element.get('content', ''))[:100]))
                                                 if len(elements) > 5:
-                                                    st.write(f"  ... 외 {len(elements) - 5}개")
+                                                    st.write(safe_format_string("  ... 외 {count}개", count=len(elements) - 5))
                                 
                                 processing_results.append({
                                     "file_name": file.name,
@@ -1553,7 +1607,7 @@ def main():
                         
                         else:
                             error_msg = result.get('message', '알 수 없는 오류') if result else '파일 처리 실패'
-                            st.error(f"❌ {file.name} 처리 실패: {error_msg}")
+                            st.error(safe_format_string("❌ {name} 처리 실패: {error}", name=file.name, error=error_msg))
                             processing_results.append({
                                 "file_name": file.name,
                                 "success": False,
@@ -1561,7 +1615,7 @@ def main():
                             })
                     
                     except Exception as e:
-                        st.error(f"❌ {file.name} 처리 중 오류 발생: {str(e)}")
+                        st.error(safe_format_string("❌ {name} 처리 중 오류 발생: {error}", name=file.name, error=str(e)))
                         processing_results.append({
                             "file_name": file.name,
                             "success": False,
@@ -1573,9 +1627,9 @@ def main():
                         try:
                             import shutil
                             shutil.rmtree(temp_dir)
-                            st.success(f"✅ {file.name} 임시 파일 정리 완료")
+                            st.success(safe_format_string("✅ {name} 임시 파일 정리 완료", name=file.name))
                         except Exception as cleanup_error:
-                            st.warning(f"⚠️  임시 파일 정리 실패: {cleanup_error}")
+                            st.warning(safe_format_string("⚠️  임시 파일 정리 실패: {error}", error=cleanup_error))
                 
                 # 전체 처리 결과 요약
                 if processing_results:
@@ -1594,7 +1648,7 @@ def main():
                     if successful == total:
                         st.success("🎉 모든 파일이 성공적으로 처리되었습니다!")
                     elif successful > 0:
-                        st.warning(f"⚠️ {successful}/{total}개 파일이 성공적으로 처리되었습니다.")
+                        st.warning(safe_format_string("⚠️ {successful}/{total}개 파일이 성공적으로 처리되었습니다.", successful=successful, total=total))
                     else:
                         st.error("❌ 모든 파일 처리에 실패했습니다.")
                     
@@ -1603,7 +1657,7 @@ def main():
                     if failed_files:
                         st.subheader("❌ 실패한 파일들")
                         for failed in failed_files:
-                            st.error(f"• {failed['file_name']}: {failed['error']}")
+                            st.error(safe_format_string("• {name}: {error}", name=failed['file_name'], error=failed['error']))
                     
                     # 벡터DB 통계 표시
                     if successful > 0:
@@ -1758,6 +1812,52 @@ def main():
         except ImportError:
             st.error("❌ Jira 라이브러리가 설치되지 않았습니다. `pip install jira` 명령으로 설치해주세요.")
             return
+        
+        # Gmail OAuth 상태 표시
+        st.subheader("🔐 Gmail OAuth 상태")
+        
+        if gmail_oauth_ready:
+            st.success("✅ Gmail OAuth 시스템이 정상적으로 초기화되었습니다.")
+            st.info("💡 토큰이 만료되면 자동으로 OAuth 인증이 시작됩니다.")
+            
+            # Gmail 토큰 강제 갱신 버튼
+            if st.button("🔄 Gmail 토큰 강제 갱신", type="secondary"):
+                try:
+                    with st.spinner("🔄 Gmail OAuth 토큰 갱신 중..."):
+                        from gmail_api_client import GmailAPIClient
+                        client = GmailAPIClient()
+                        
+                        if client.authenticate(force_refresh=True):
+                            st.success("✅ Gmail 토큰 갱신 성공!")
+                            st.info("💡 새로운 토큰으로 Gmail API를 사용할 수 있습니다.")
+                            st.rerun()  # 페이지 새로고침
+                        else:
+                            st.error("❌ Gmail 토큰 갱신 실패")
+                            
+                except Exception as e:
+                    st.error(f"❌ Gmail 토큰 갱신 중 오류: {e}")
+        else:
+            st.warning("⚠️  Gmail OAuth 시스템 초기화에 실패했습니다.")
+            st.info("💡 Gmail API를 사용하려면 수동으로 인증을 진행해주세요.")
+            
+            # 수동 Gmail 인증 버튼
+            if st.button("🔐 수동 Gmail 인증", type="secondary"):
+                try:
+                    with st.spinner("🔄 수동 Gmail 인증 진행 중..."):
+                        from gmail_api_client import GmailAPIClient
+                        client = GmailAPIClient()
+                        
+                        if client.authenticate(force_refresh=True):
+                            st.success("✅ 수동 Gmail 인증 성공!")
+                            st.info("💡 새로운 토큰으로 Gmail API를 사용할 수 있습니다.")
+                            st.rerun()  # 페이지 새로고침
+                        else:
+                            st.error("❌ 수동 Gmail 인증 실패")
+                            
+                except Exception as e:
+                    st.error(f"❌ 수동 Gmail 인증 중 오류: {e}")
+        
+        st.divider()
         
         # 수동 Jira 연동 정보 입력 폼
         with st.form("jira_connection_form"):

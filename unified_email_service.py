@@ -16,9 +16,19 @@ import streamlit as st
 
 from email_provider import create_provider, get_available_providers, get_default_provider
 from email_models import EmailMessage, EmailSearchResult, EmailPriority
-from integrated_mail_classifier import IntegratedMailClassifier, TicketCreationStatus
+from memory_based_ticket_processor import MemoryBasedTicketProcessorTool
+
+# TicketCreationStatus enum 정의 (memory_based_ticket_processor에서 가져옴)
+class TicketCreationStatus(str):
+    """티켓 생성 상태"""
+    SHOULD_CREATE = "should_create"      # 티켓 생성해야 함
+    ALREADY_EXISTS = "already_exists"    # 이미 티켓이 존재함
+    NO_TICKET_NEEDED = "no_ticket_needed"  # 티켓 생성 불필요
 from gmail_api_client import get_gmail_client
 from vector_db_models import VectorDBManager
+
+# Memory-Based Ticket Processor Tool import
+from memory_based_ticket_processor import create_memory_based_ticket_processor
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -193,13 +203,13 @@ class UnifiedEmailService:
         return final_query
 
     def _init_classifier(self):
-        """필요 시점에 분류기를 초기화합니다."""
+        """필요 시점에 Memory-Based 학습 분류기를 초기화합니다."""
         if not self.classifier:
             try:
-                self.classifier = IntegratedMailClassifier(use_lm=True)
-                logging.info("통합 메일 분류기 초기화 완료")
+                self.classifier = MemoryBasedTicketProcessorTool()
+                logging.info("Memory-Based 학습 분류기 초기화 완료")
             except Exception as e:
-                logging.warning(f"메일 분류기 초기화 실패: {e}")
+                logging.warning(f"Memory-Based 학습 분류기 초기화 실패: {e}")
                 raise e
 
     def fetch_emails(self, filters: Optional[Dict[str, Any]] = None) -> List[EmailMessage]:
@@ -385,7 +395,7 @@ class UnifiedEmailService:
                             ticket_type=ticket.get('type', 'Task'),
                             reporter=ticket.get('reporter', ''),
                             reporter_email='',
-                            labels=[],
+                            labels=ticket.get('labels', []),  # 생성된 레이블 사용
                             created_at=ticket.get('created_at', ''),
                             updated_at=ticket.get('created_at', '')
                         )
@@ -478,12 +488,108 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
             email_dict = email.model_dump()
             logging.info(f"메일 {i+1} 딕셔너리 변환 완료: {email_dict.get('subject')}")
             
-            ticket_status, reason, details = service.classifier.should_create_ticket(email_dict, actual_query)
-            logging.info(f"메일 {i+1} 티켓 상태: {ticket_status}, 이유: {reason}")
+            # EmailMessage를 Mail 객체로 변환하여 Vector DB에 저장
+            try:
+                from vector_db_models import Mail
+                from datetime import datetime
+                
+                mail = Mail(
+                    message_id=email_dict.get('id', f'email_{i}_{datetime.now().timestamp()}'),
+                    original_content=email_dict.get('body', ''),
+                    refined_content=email_dict.get('body', '')[:500] + '...' if len(email_dict.get('body', '')) > 500 else email_dict.get('body', ''),
+                    sender=email_dict.get('sender', ''),
+                    status='acceptable',
+                    subject=email_dict.get('subject', ''),
+                    received_datetime=email_dict.get('received_date', datetime.now().isoformat()),
+                    content_type='text',
+                    has_attachment=email_dict.get('has_attachments', False),
+                    extraction_method='email_provider',
+                    content_summary=email_dict.get('body', '')[:200] + '...' if len(email_dict.get('body', '')) > 200 else email_dict.get('body', ''),
+                    key_points=[],
+                    created_at=datetime.now().isoformat()
+                )
+                
+                # Vector DB에 메일 저장
+                from vector_db_models import VectorDBManager
+                vector_db = VectorDBManager()
+                vector_save_success = vector_db.save_mail(mail)
+                if vector_save_success:
+                    logging.info(f"✅ 메일 {i+1} Vector DB 저장 성공: {mail.message_id}")
+                else:
+                    logging.warning(f"⚠️ 메일 {i+1} Vector DB 저장 실패: {mail.message_id}")
+                    
+            except Exception as e:
+                logging.error(f"메일 {i+1} Vector DB 저장 중 오류: {str(e)}")
+            
+            # Memory-Based 학습 시스템으로 메일 처리
+            logging.info(f"메일 {i+1} Memory-Based 학습 시스템으로 처리 시작")
+            
+            try:
+                # MemoryBasedTicketProcessorTool 실행
+                result_json = service.classifier._run(
+                    email_content=email_dict.get('body', ''),
+                    email_subject=email_dict.get('subject', ''),
+                    email_sender=email_dict.get('sender', ''),
+                    message_id=email_dict.get('id', '')
+                )
+                
+                # 결과 파싱
+                import json
+                result = json.loads(result_json)
+                
+                if result.get('success'):
+                    decision = result.get('decision', {})
+                    ticket_creation_decision = decision.get('ticket_creation_decision', {})
+                    
+                    decision_type = ticket_creation_decision.get('decision', 'create_ticket')
+                    reason = ticket_creation_decision.get('reason', 'AI 판단')
+                    
+                    if decision_type == 'create_ticket':
+                        ticket_status = TicketCreationStatus.SHOULD_CREATE
+                        # 티켓 데이터 생성
+                        ticket = {
+                            'title': email_dict.get('subject', '제목 없음'),
+                            'description': email_dict.get('body', '내용 없음'),
+                            'status': 'pending',
+                            'priority': ticket_creation_decision.get('priority', 'Medium'),
+                            'type': ticket_creation_decision.get('ticket_type', 'Task'),
+                            'reporter': email_dict.get('sender', '알 수 없음'),
+                            'labels': ticket_creation_decision.get('labels', ['일반', '업무']),
+                            'created_at': datetime.now().isoformat(),
+                            'message_id': email_dict.get('id', ''),
+                            'memory_based_decision': True,
+                            'ai_reasoning': reason
+                        }
+                    else:
+                        ticket_status = TicketCreationStatus.NO_TICKET_NEEDED
+                        ticket = None
+                else:
+                    logging.error(f"Memory-Based 시스템 실행 실패: {result.get('error')}")
+                    ticket_status = TicketCreationStatus.NO_TICKET_NEEDED
+                    ticket = None
+                    
+            except Exception as e:
+                logging.error(f"Memory-Based 시스템 실행 중 오류: {str(e)}")
+                # 폴백: 기본 분류 로직 사용
+                ticket_status = TicketCreationStatus.SHOULD_CREATE
+                ticket = {
+                    'title': email_dict.get('subject', '제목 없음'),
+                    'description': email_dict.get('body', '내용 없음'),
+                    'status': 'pending',
+                    'priority': 'Medium',
+                    'type': 'Task',
+                    'reporter': email_dict.get('sender', '알 수 없음'),
+                    'labels': ['일반', '업무'],
+                    'created_at': datetime.now().isoformat(),
+                    'message_id': email_dict.get('id', ''),
+                    'memory_based_decision': False,
+                    'fallback_reason': 'Memory-Based 시스템 오류'
+                }
+            
+            logging.info(f"메일 {i+1} 처리 결과: {ticket_status}, 이유: {reason}")
 
             if ticket_status == TicketCreationStatus.SHOULD_CREATE:
                 logging.info(f"메일 {i+1} 티켓 생성 시작")
-                ticket = service.classifier.create_ticket_from_email(email_dict, actual_query)
                 if ticket:
                     # SQLite에 티켓 저장
                     try:
@@ -493,15 +599,15 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                         # Ticket 객체 생성
                         db_ticket = Ticket(
                             ticket_id=None,  # SQLite에서 자동 생성
-                            original_message_id=ticket.get('original_message_id', ''),
+                            original_message_id=mail.message_id,  # Vector DB에 저장된 메일 ID 사용
                             status=ticket.get('status', 'pending'),
                             title=ticket.get('title', ''),
-                            description=ticket.get('description', ''),
+                            description='',  # 티켓 설명은 빈 문자열로 초기화
                             priority=ticket.get('priority', 'Medium'),
                             ticket_type=ticket.get('type', 'Task'),
                             reporter=ticket.get('reporter', ''),
                             reporter_email='',
-                            labels=[],
+                            labels=ticket.get('labels', []),  # 생성된 레이블 사용
                             created_at=ticket.get('created_at', ''),
                             updated_at=ticket.get('created_at', '')
                         )
@@ -514,6 +620,9 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                     except Exception as e:
                         logging.error(f"메일 {i+1} SQLite 저장 실패: {str(e)}")
                     
+                    # 티켓에 message_id 추가 (description은 빈 문자열로 초기화)
+                    ticket['message_id'] = mail.message_id
+                    ticket['description'] = ''
                     tickets.append(ticket)
                     new_tickets += 1
                     logging.info(f"메일 {i+1} 티켓 생성 성공: {ticket}")
@@ -522,7 +631,13 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
             elif ticket_status == TicketCreationStatus.ALREADY_EXISTS:
                 logging.info(f"메일 {i+1} 기존 티켓 발견")
                 # 간단한 기존 티켓 정보 생성
-                tickets.append({'ticket_id': details.get('ticket_id', 'N/A'), 'title': email.subject, 'status': 'existing'})
+                tickets.append({
+                    'ticket_id': details.get('ticket_id', 'N/A'), 
+                    'message_id': mail.message_id,
+                    'title': email.subject, 
+                    'status': 'existing',
+                    'description': ''  # 기존 티켓도 description은 빈 문자열
+                })
                 existing_tickets += 1
             else:
                 logging.info(f"메일 {i+1} 티켓 생성 불필요: {reason}")
@@ -588,8 +703,61 @@ def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
             logging.error("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
             raise RuntimeError("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
         
-        # 티켓 생성
-        ticket = service.classifier.create_ticket_from_email(email_data, "사용자 요청으로 티켓 생성")
+        # Memory-Based 학습 시스템으로 티켓 생성
+        try:
+            result_json = service.classifier._run(
+                email_content=email_data.get('body', ''),
+                email_subject=email_data.get('subject', ''),
+                email_sender=email_data.get('sender', ''),
+                message_id=email_data.get('id', '')
+            )
+            
+            # 결과 파싱
+            import json
+            result = json.loads(result_json)
+            
+            if result.get('success'):
+                decision = result.get('decision', {})
+                ticket_creation_decision = decision.get('ticket_creation_decision', {})
+                
+                if ticket_creation_decision.get('decision') == 'create_ticket':
+                    # 티켓 데이터 생성
+                    ticket = {
+                        'title': email_data.get('subject', '제목 없음'),
+                        'description': email_data.get('body', '내용 없음'),
+                        'status': 'pending',
+                        'priority': ticket_creation_decision.get('priority', 'Medium'),
+                        'type': ticket_creation_decision.get('ticket_type', 'Task'),
+                        'reporter': email_data.get('sender', '알 수 없음'),
+                        'labels': ticket_creation_decision.get('labels', ['일반', '업무']),
+                        'created_at': datetime.now().isoformat(),
+                        'message_id': email_data.get('id', ''),
+                        'memory_based_decision': True,
+                        'ai_reasoning': ticket_creation_decision.get('reason', 'AI 판단')
+                    }
+                else:
+                    logging.error("AI가 티켓 생성이 불필요하다고 판단했습니다.")
+                    raise RuntimeError("AI 판단: 티켓 생성 불필요")
+            else:
+                logging.error(f"Memory-Based 시스템 실행 실패: {result.get('error')}")
+                raise RuntimeError(f"Memory-Based 시스템 오류: {result.get('error')}")
+                
+        except Exception as e:
+            logging.error(f"Memory-Based 시스템 실행 중 오류: {str(e)}")
+            # 폴백: 기본 티켓 생성
+            ticket = {
+                'title': email_data.get('subject', '제목 없음'),
+                'description': email_data.get('body', '내용 없음'),
+                'status': 'pending',
+                'priority': 'Medium',
+                'type': 'Task',
+                'reporter': email_data.get('sender', '알 수 없음'),
+                'labels': ['일반', '업무'],
+                'created_at': datetime.now().isoformat(),
+                'message_id': email_data.get('id', ''),
+                'memory_based_decision': False,
+                'fallback_reason': 'Memory-Based 시스템 오류'
+            }
         
         if not ticket:
             logging.error("티켓 생성에 실패했습니다.")
@@ -611,7 +779,7 @@ def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
                 ticket_type=ticket.get('type', 'Task'),
                 reporter=ticket.get('reporter', ''),
                 reporter_email='',
-                labels=[],
+                labels=ticket.get('labels', []),  # 생성된 레이블 사용
                 created_at=ticket.get('created_at', ''),
                 updated_at=ticket.get('created_at', '')
             )
