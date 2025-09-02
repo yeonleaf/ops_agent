@@ -31,6 +31,7 @@ Azure OpenAI와 LangChain을 사용한 지능형 메일 관리 시스템으로, 
 - **사용자 정정 기능**: AI 분류 결과를 사용자가 직접 수정 가능
 - **실시간 티켓 변환**: '정정' 버튼 클릭 한 번으로 즉시 티켓 생성
 - **스마트 분류**: 메일 내용과 사용자 요청을 종합하여 정확한 분류 수행
+- **중복 티켓 생성 방지**: 메일의 고유 ID로 중복 티켓 생성을 자동으로 방지
 
 ## 🏗️ 아키텍처
 
@@ -55,11 +56,16 @@ API Response → EmailMessage (통일된 모델) → AI 분류 → Tickets + Non
 ```
 메일 수신 → AI 분류기 → 분류 결과
     ↓
-├── 업무용 메일 → 티켓 생성 → SQLite + VectorDB 저장
+├── 업무용 메일 → 중복 체크 → 티켓 생성 → SQLite + VectorDB 저장
 └── 업무용이 아닌 메일 → non_work_emails 목록 → 사용자 정정 대기
     ↓
-사용자 정정 → create_ticket_from_single_email() → 즉시 티켓 생성
+사용자 정정 → 중복 체크 → create_ticket_from_single_email() → 즉시 티켓 생성
 ```
+
+**중복 방지 메커니즘:**
+- 메일의 `message_id`를 기준으로 기존 티켓 존재 여부 확인
+- 데이터베이스 레벨에서 UNIQUE 제약조건으로 이중 보호
+- 중복 시도 시 기존 티켓 정보 반환하여 일관성 유지
 
 ## 🚀 설치 및 설정
 
@@ -181,6 +187,27 @@ python3 -c "from gmail_provider import GmailProvider; print('Gmail Provider OK')
 
 # Graph API 제공자 테스트
 python3 -c "from graph_provider import GraphApiProvider; print('Graph Provider OK')"
+```
+
+### **중복 티켓 생성 방지 테스트**
+```python
+from database_models import MailParser, Mail
+
+# 메일 파서 생성
+mail_parser = MailParser()
+
+# 첫 번째 티켓 생성
+mail1 = Mail(message_id="msg_001", ...)
+ticket1 = mail_parser.create_ticket_from_mail(mail1)
+result1 = mail_parser.save_mail_and_ticket(mail1, ticket1)
+
+# 같은 메일 ID로 두 번째 티켓 생성 시도
+mail2 = Mail(message_id="msg_001", ...)  # 같은 message_id
+ticket2 = mail_parser.create_ticket_from_mail(mail2)
+result2 = mail_parser.save_mail_and_ticket(mail2, ticket2)
+
+# result2['duplicate_prevented']가 True로 반환됨
+# result2['ticket_id']는 첫 번째 티켓의 ID와 동일
 ```
 
 ### **통합 서비스 테스트**

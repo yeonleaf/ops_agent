@@ -57,6 +57,12 @@ class VectorDBManager:
     
     def __init__(self, db_path: str = "./vector_db"):
         """ChromaDB 클라이언트 초기화"""
+        # Vector DB 폴더가 없으면 생성하고 권한 설정
+        import os
+        if not os.path.exists(db_path):
+            os.makedirs(db_path, mode=0o755, exist_ok=True)
+            print(f"✅ Vector DB 폴더 생성 및 권한 설정: {db_path}")
+        
         self.client = chromadb.PersistentClient(
             path=db_path,
             settings=Settings(
@@ -66,6 +72,48 @@ class VectorDBManager:
         )
         self.collection_name = "mail_collection"
         self.collection = self._get_or_create_collection()
+        
+        # ChromaDB 파일 권한 자동 설정
+        try:
+            chroma_file = os.path.join(db_path, "chroma.sqlite3")
+            if os.path.exists(chroma_file):
+                os.chmod(chroma_file, 0o666)
+                print(f"✅ ChromaDB 파일 권한 자동 설정: {chroma_file}")
+        except Exception as e:
+            print(f"⚠️ ChromaDB 파일 권한 설정 실패: {e}")
+    
+    def _ensure_vector_db_permissions(self):
+        """Vector DB 폴더 및 파일 권한을 확실히 설정"""
+        try:
+            import os
+            
+            # Vector DB 폴더 권한 설정 (초기화 시 설정한 경로 사용)
+            vector_db_path = "./vector_db"
+            if os.path.exists(vector_db_path):
+                os.chmod(vector_db_path, 0o755)
+            
+            # ChromaDB 관련 모든 파일 권한 설정
+            for root, dirs, files in os.walk(vector_db_path):
+                # 폴더 권한 설정
+                for dir_name in dirs:
+                    dir_path = os.path.join(root, dir_name)
+                    try:
+                        os.chmod(dir_path, 0o755)
+                    except Exception:
+                        pass
+                
+                # 파일 권한 설정
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    try:
+                        os.chmod(file_path, 0o666)
+                    except Exception:
+                        pass
+            
+            print(f"✅ Vector DB 권한 재설정 완료: {vector_db_path}")
+            
+        except Exception as e:
+            print(f"⚠️ Vector DB 권한 재설정 실패: {e}")
     
     def _get_or_create_collection(self):
         """컬렉션 생성 또는 가져오기"""
@@ -83,18 +131,39 @@ class VectorDBManager:
     def save_mail(self, mail: Mail) -> bool:
         """메일을 Vector DB에 저장"""
         try:
-            # 메타데이터 준비
+            # 저장 전 Vector DB 폴더 및 파일 권한 재설정
+            self._ensure_vector_db_permissions()
+            
+            # ChromaDB 파일 권한 특별 확인
+            import os
+            import stat
+            chroma_file = os.path.join("./vector_db", "chroma.sqlite3")
+            if os.path.exists(chroma_file):
+                # 현재 권한 확인
+                current_perms = os.stat(chroma_file).st_mode
+                if not (current_perms & stat.S_IWUSR):
+                    print(f"⚠️ ChromaDB 파일이 읽기 전용입니다. 권한을 강제로 설정합니다.")
+                    # 강제로 쓰기 권한 부여
+                    os.chmod(chroma_file, 0o666)
+                    # 소유자 권한도 확인
+                    current_perms = os.stat(chroma_file).st_mode
+                    if not (current_perms & stat.S_IWUSR):
+                        os.chmod(chroma_file, current_perms | stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+                    print(f"✅ ChromaDB 파일 권한 강제 설정 완료")
+            
+            # 메타데이터 준비 (datetime 객체를 문자열로 변환)
             metadata = {
                 "sender": mail.sender,
                 "status": mail.status,
                 "subject": mail.subject,
-                "received_datetime": mail.received_datetime,
+                "received_datetime": mail.received_datetime.isoformat() if hasattr(mail.received_datetime, 'isoformat') else str(mail.received_datetime),
                 "content_type": mail.content_type,
                 "has_attachment": mail.has_attachment,
                 "extraction_method": mail.extraction_method,
                 "content_summary": mail.content_summary,
                 "key_points": json.dumps(mail.key_points),
-                "created_at": mail.created_at,
+                "labels": json.dumps(mail.key_points),  # labels 필드 추가
+                "created_at": mail.created_at.isoformat() if hasattr(mail.created_at, 'isoformat') else str(mail.created_at),
                 "original_content": mail.original_content,  # 원본 내용 추가
                 "refined_content": mail.refined_content    # 정제된 내용 추가
             }
@@ -106,6 +175,7 @@ class VectorDBManager:
             Content: {mail.refined_content}
             Summary: {mail.content_summary}
             Key Points: {', '.join(mail.key_points)}
+            Labels: {', '.join(mail.key_points)}
             """
             
             # ChromaDB에 저장
@@ -115,10 +185,18 @@ class VectorDBManager:
                 ids=[mail.message_id]
             )
             
+            # 저장 후 권한 재확인
+            self._ensure_vector_db_permissions()
+            
             return True
             
         except Exception as e:
             print(f"Vector DB 저장 오류: {e}")
+            # 오류 발생 시 권한 재설정 시도
+            try:
+                self._ensure_vector_db_permissions()
+            except:
+                pass
             return False
     
     def get_mail_by_id(self, message_id: str) -> Optional[Mail]:
@@ -140,12 +218,21 @@ class VectorDBManager:
             original_content = metadata.get("original_content", "")
             content_summary = metadata.get("content_summary", "")
             key_points_str = metadata.get("key_points", "[]")
+            labels_str = metadata.get("labels", "[]")  # labels 필드 추가
             
-            # key_points가 JSON 문자열인 경우 파싱
+            # key_points와 labels가 JSON 문자열인 경우 파싱
             try:
                 key_points = json.loads(key_points_str) if key_points_str else []
             except (json.JSONDecodeError, TypeError):
                 key_points = []
+                
+            try:
+                labels = json.loads(labels_str) if labels_str else []
+                # labels가 있으면 key_points에 병합 (레이블 우선)
+                if labels:
+                    key_points = labels
+            except (json.JSONDecodeError, TypeError):
+                labels = []
             
             # 메타데이터에 내용이 없으면 document에서 파싱 시도
             if not refined_content:
@@ -267,14 +354,23 @@ class VectorDBManager:
             # 기존 데이터를 가져와서 삭제 후 다시 삽입
             mail = self.get_mail_by_id(message_id)
             if not mail:
+                print(f"⚠️ 메일을 찾을 수 없습니다: {message_id}")
                 return False
             
             # 기존 데이터 삭제
             self.collection.delete(ids=[message_id])
             
-            # 레이블 업데이트 후 다시 저장 (메타데이터에 레이블 정보 추가)
-            # Mail 모델에 labels 필드가 없으므로 메타데이터에 추가
-            return self.save_mail(mail)
+            # 레이블을 key_points에 저장 (기존 구조 유지)
+            mail.key_points = new_labels
+            
+            # 저장 성공 여부 확인
+            success = self.save_mail(mail)
+            if success:
+                print(f"✅ VectorDB 레이블 업데이트 성공: {message_id} -> {new_labels}")
+            else:
+                print(f"❌ VectorDB 레이블 업데이트 실패: {message_id}")
+            
+            return success
             
         except Exception as e:
             print(f"Vector DB 레이블 업데이트 오류: {e}")
@@ -861,8 +957,8 @@ class AIRecommendationEngine:
         self.system_info_db = SystemInfoVectorDBManager()
         self.jira_info_db = JiraInfoVectorDBManager()
     
-    def generate_solution_recommendation(self, mail_content: str, ticket_history: str) -> str:
-        """메일 원문과 티켓 이력을 바탕으로 AI 추천 해결방법 생성"""
+    def generate_solution_recommendation(self, mail_content: str, ticket_history: str, output_placeholder=None) -> str:
+        """메일 원문과 티켓 이력을 바탕으로 AI 추천 해결방법 생성 (스트리밍 버전)"""
         try:
             # 1. 관련 시스템 정보 검색
             system_context = self._search_system_info(mail_content, ticket_history)
@@ -872,7 +968,7 @@ class AIRecommendationEngine:
             
             # 3. AI 추천 해결방법 생성
             recommendation = self._create_ai_recommendation(
-                mail_content, ticket_history, system_context, jira_context
+                mail_content, ticket_history, system_context, jira_context, output_placeholder
             )
             
             return recommendation
@@ -917,8 +1013,9 @@ class AIRecommendationEngine:
     
     def _create_ai_recommendation(self, mail_content: str, ticket_history: str, 
                                  system_context: List[Dict[str, Any]], 
-                                 jira_context: List[Dict[str, Any]]) -> str:
-        """AI 추천 해결방법 생성 - LLM 전용"""
+                                 jira_context: List[Dict[str, Any]], 
+                                 output_placeholder=None) -> str:
+        """AI 추천 해결방법 생성 - LLM 전용 (스트리밍 버전)"""
         try:
             # 컨텍스트 정보 정리
             system_info_text = ""
@@ -1012,8 +1109,30 @@ class AIRecommendationEngine:
                         "jira_info": jira_info_text if jira_info_text else "관련 JIRA 이슈 없음"
                     }
                     
-                    recommendation = chain.invoke(variables)
-                    return recommendation
+                    # 스트리밍 처리
+                    if output_placeholder:
+                        current_output = ""
+                        final_recommendation = ""
+                        
+                        for chunk in chain.stream(variables):
+                            current_output += chunk
+                            final_recommendation = current_output
+                            
+                            # 실시간 출력 업데이트
+                            with output_placeholder.container():
+                                st.markdown("### 🤖 AI 추천 생성 중...")
+                                st.markdown(current_output)
+                                st.info("🔄 AI 추천을 생성하고 있습니다...")
+                        
+                        # 최종 완료 표시
+                        with output_placeholder.container():
+                            st.success("✅ AI 추천 생성 완료!")
+                        
+                        return final_recommendation
+                    else:
+                        # 일반 처리 (스트리밍 없음)
+                        recommendation = chain.invoke(variables)
+                        return recommendation
                 else:
                     # Azure OpenAI 설정이 없으면 오류 메시지 반환
                     return "❌ Azure OpenAI 설정이 없습니다. 환경 변수를 확인해주세요."

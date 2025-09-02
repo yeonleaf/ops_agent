@@ -14,7 +14,7 @@ class Ticket:
     """티켓 모델 - SQLite 테이블용"""
     ticket_id: Optional[int]  # PK - 티켓 기본 키
     original_message_id: str  # FK - mail.message_id와 연결
-    status: str  # new, open, closed 등
+    status: str  # pending(초기상태), approved(승인된 상태), rejected(반려된 상태)
     title: str  # 티켓 제목
     description: str  # 티켓 상세 내용 (TEXT)
     priority: str  # 우선순위 (Highest, High, Medium, Low)
@@ -40,6 +40,12 @@ class SQLiteTicketManager:
     
     def __init__(self, db_path: str = "tickets.db"):
         self.db_path = db_path
+        # 데이터베이스 파일이 있는 디렉토리 권한 확인 및 설정
+        import os
+        db_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
+        if not os.path.exists(db_dir):
+            os.makedirs(db_dir, mode=0o755, exist_ok=True)
+            print(f"✅ SQLite RDB 디렉토리 생성 및 권한 설정: {db_dir}")
         self.init_database()
     
     def init_database(self):
@@ -57,8 +63,8 @@ class SQLiteTicketManager:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tickets (
                     ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    original_message_id TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'new',
+                    original_message_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'pending',
                     title TEXT NOT NULL,
                     description TEXT,
                     priority TEXT DEFAULT 'Medium',
@@ -99,20 +105,60 @@ class SQLiteTicketManager:
             conn.execute("PRAGMA journal_mode=WAL")
             cursor = conn.cursor()
             
-            cursor.execute("""
-                INSERT INTO tickets (original_message_id, status, title, description,
-                                   priority, ticket_type, reporter, reporter_email, labels,
-                                   created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                ticket.original_message_id, ticket.status, ticket.title, ticket.description,
-                ticket.priority, ticket.ticket_type, ticket.reporter, ticket.reporter_email,
-                json.dumps(ticket.labels), ticket.created_at, ticket.updated_at
-            ))
-            
-            ticket_id = cursor.lastrowid
-            conn.commit()
-            return ticket_id
+            try:
+                cursor.execute("""
+                    INSERT INTO tickets (original_message_id, status, title, description,
+                                       priority, ticket_type, reporter, reporter_email, labels,
+                                       created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    ticket.original_message_id, ticket.status, ticket.title, ticket.description,
+                    ticket.priority, ticket.ticket_type, ticket.reporter, ticket.reporter_email,
+                    json.dumps(ticket.labels), ticket.created_at, ticket.updated_at
+                ))
+                
+                ticket_id = cursor.lastrowid
+                conn.commit()
+                
+                # Vector DB에 메일 저장 시도
+                try:
+                    from vector_db_models import VectorDBManager, Mail
+                    vector_db = VectorDBManager()
+                    
+                    # Mail 객체 생성 (기본 정보로)
+                    mail = Mail(
+                        message_id=ticket.original_message_id,
+                        original_content=ticket.description or "",
+                        refined_content=ticket.description or "",
+                        sender=ticket.reporter,
+                        status="acceptable",
+                        subject=ticket.title,
+                        received_datetime=ticket.created_at,
+                        content_type="text",
+                        has_attachment=False,
+                        extraction_method="sqlite_ticket_manager",
+                        content_summary=ticket.description[:200] + "..." if ticket.description and len(ticket.description) > 200 else (ticket.description or ""),
+                        key_points=[],
+                        created_at=ticket.created_at
+                    )
+                    
+                    vector_save_success = vector_db.save_mail(mail)
+                    if vector_save_success:
+                        print(f"✅ 메일이 Vector DB에 저장되었습니다: {mail.message_id}")
+                    else:
+                        print(f"❌ 메일을 Vector DB에 저장하는데 실패했습니다: {mail.message_id}")
+                        
+                except Exception as e:
+                    print(f"⚠️ Vector DB 저장 중 오류: {str(e)}")
+                    print(f"⚠️ Vector DB 저장을 건너뛰고 티켓만 저장합니다.")
+                
+                return ticket_id
+                
+            except sqlite3.IntegrityError as e:
+                if "UNIQUE constraint failed" in str(e):
+                    raise ValueError(f"메일 ID {ticket.original_message_id}로 이미 티켓이 존재합니다. 중복 생성을 방지합니다.")
+                else:
+                    raise e
     
     def insert_ticket_event(self, event: TicketEvent) -> int:
         """티켓 이벤트 삽입"""
@@ -297,50 +343,40 @@ class SQLiteTicketManager:
         except Exception as e:
             print(f"❌ VectorDB 상태 동기화 실패: {str(e)}")
     
-    def update_ticket_labels(self, ticket_id: int, new_labels: List[str], old_labels: List[str]):
-        """티켓 레이블 업데이트 (RDB + VectorDB 동기화)"""
-        current_time = datetime.now().isoformat()
-        
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            cursor = conn.cursor()
-            
-            # 티켓 레이블 업데이트 (JSON 형태로 저장)
-            labels_json = json.dumps(new_labels)
-            cursor.execute("""
-                UPDATE tickets 
-                SET labels = ?, updated_at = ?
-                WHERE ticket_id = ?
-            """, (labels_json, current_time, ticket_id))
-            
-            # 이벤트 기록
-            old_labels_str = ', '.join(old_labels) if old_labels else '없음'
-            new_labels_str = ', '.join(new_labels) if new_labels else '없음'
-            cursor.execute("""
-                INSERT INTO ticket_events (ticket_id, event_type, old_value, new_value, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (ticket_id, "labels_change", old_labels_str, new_labels_str, current_time))
-            
-            conn.commit()
-        
-        # VectorDB 레이블 동기화
+    def update_ticket_labels(self, ticket_id: int, new_labels: List[str], old_labels: List[str]) -> bool:
+        """티켓 레이블 업데이트 (RDB만)"""
         try:
-            from vector_db_models import VectorDBManager
-            vector_db = VectorDBManager()
+            current_time = datetime.now().isoformat()
             
-            # 해당 티켓의 메일 ID 찾기
-            cursor.execute("SELECT original_message_id FROM tickets WHERE ticket_id = ?", (ticket_id,))
-            result = cursor.fetchone()
-            if result:
-                message_id = result[0]
-                # VectorDB에서 해당 메일의 레이블 업데이트
-                vector_db.update_mail_labels(message_id, new_labels)
-                print(f"✅ VectorDB 레이블 동기화 완료: {message_id} -> {new_labels}")
-            else:
-                print(f"⚠️ 티켓 {ticket_id}의 메일 ID를 찾을 수 없습니다.")
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                cursor = conn.cursor()
+                
+                # 티켓 레이블 업데이트 (JSON 형태로 저장)
+                labels_json = json.dumps(new_labels)
+                cursor.execute("""
+                    UPDATE tickets 
+                    SET labels = ?, updated_at = ?
+                    WHERE ticket_id = ?
+                """, (labels_json, current_time, ticket_id))
+                
+                # 이벤트 기록
+                old_labels_str = ', '.join(old_labels) if old_labels else '없음'
+                new_labels_str = ', '.join(new_labels) if new_labels else '없음'
+                cursor.execute("""
+                    INSERT INTO ticket_events (ticket_id, event_type, old_value, new_value, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (ticket_id, "labels_change", old_labels_str, new_labels_str, current_time))
+                
+                conn.commit()
+                print(f"✅ RDB 레이블 업데이트 완료: ticket_id={ticket_id}, new_labels={new_labels}")
+                return True
                 
         except Exception as e:
-            print(f"❌ VectorDB 레이블 동기화 실패: {str(e)}")
+            print(f"❌ RDB 레이블 업데이트 실패: {str(e)}")
+            import traceback
+            print(f"❌ 오류 상세: {traceback.format_exc()}")
+            return False
 
     def update_ticket_priority(self, ticket_id: int, new_priority: str, old_priority: str):
         """티켓 우선순위 업데이트"""

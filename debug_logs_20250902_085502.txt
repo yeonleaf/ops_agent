@@ -1,0 +1,267 @@
+2025-09-02 08:55:03,190 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:55:03,290 - INFO - ProcessTicketsTool 실행: 안 읽은 메일 가져와서 티켓 생성
+2025-09-02 08:55:03,290 - INFO - LLM 쿼리 파싱 시작: '안 읽은 메일 가져와서 티켓 생성'
+2025-09-02 08:55:03,290 - INFO - session_state.llm 존재 여부: True
+2025-09-02 08:55:03,290 - INFO - session_state.llm 값: client=<openai.resources.chat.completions.completions.Completions object at 0x13ba57050> async_client=<openai.resources.chat.completions.completions.AsyncCompletions object at 0x13ba57150> root_client=<openai.lib.azure.AzureOpenAI object at 0x13b9a6be0> root_async_client=<openai.lib.azure.AsyncAzureOpenAI object at 0x13b9a7ac0> temperature=0.0 model_kwargs={} openai_api_key=SecretStr('**********') disabled_params={'parallel_tool_calls': None} azure_endpoint='https://skcc-atl-master-openai-01.openai.azure.com' deployment_name='gpt-4.1' openai_api_version='2024-10-21' openai_api_type='azure'
+2025-09-02 08:55:03,290 - INFO - LLM 기반 파싱 시도 중...
+2025-09-02 08:55:03,802 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:55:03,804 - INFO - LLM 응답: {{
+    "action": "classify",
+    "filters": {{
+        "is_read": false
+    }}
+}}
+2025-09-02 08:55:03,804 - INFO - LLM 파싱 결과: {'action': 'classify', 'filters': {'is_read': False}}
+2025-09-02 08:55:03,804 - INFO - LLM 파싱 성공: {'action': 'classify', 'filters': {'is_read': False}}
+2025-09-02 08:55:03,805 - INFO - 파싱된 파라미터: {'action': 'classify', 'filters': {'is_read': False}}
+2025-09-02 08:55:04,793 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:55:04,796 - INFO - LLM 액션 결정 응답: {{
+    "action": "process_tickets",
+    "reasoning": "사용자가 '안 읽은 메일'을 가져와서 티켓을 생성해달라고 요청했으므로, 메일을 티켓으로 변환하는 업무 처리 액션이 필요합니다.",
+    "query_type": "ticket_creation"
+}}
+2025-09-02 08:55:04,796 - INFO - LLM 액션 결정 결과: process_tickets, 이유: 사용자가 '안 읽은 메일'을 가져와서 티켓을 생성해달라고 요청했으므로, 메일을 티켓으로 변환하는 업무 처리 액션이 필요합니다.
+2025-09-02 08:55:04,796 - INFO - ProcessTicketsTool에서 LLM 기반 액션 결정: process_tickets
+2025-09-02 08:55:04,796 - INFO - 메일 쿼리 핸들러 실행: action='process_tickets', filters={'is_read': False}
+2025-09-02 08:55:04,797 - INFO - process_tickets 액션 시작: provider=gmail, params={'action': 'process_tickets', 'filters': {'is_read': False}}
+2025-09-02 08:55:04,797 - INFO - 🔍 process_emails_with_ticket_logic 함수 호출 시작...
+2025-09-02 08:55:04,797 - INFO - 🔍 호출 파라미터: provider=gmail, user_query={'action': 'process_tickets', 'filters': {'is_read': False}}
+2025-09-02 08:55:04,797 - INFO - 🔍 process_emails_with_ticket_logic 함수 객체: <function process_emails_with_ticket_logic at 0x148329760>
+2025-09-02 08:55:04,797 - INFO - 🔍 함수 타입: <class 'function'>
+2025-09-02 08:55:04,798 - INFO - 🔍 process_emails_with_ticket_logic 시작: provider=gmail, query={'action': 'process_tickets', 'filters': {'is_read': False}}
+2025-09-02 08:55:04,798 - INFO - 🔍 1단계: 안 읽은 메일 가져오기 시작...
+2025-09-02 08:55:04,798 - INFO - 🔍 UnifiedEmailService(gmail) 생성 시도...
+2025-09-02 08:55:04,798 - INFO - 🔍 서비스 생성 완료: <unified_email_service.UnifiedEmailService object at 0x13b929be0>
+2025-09-02 08:55:04,798 - INFO - 🔍 안 읽은 메일 필터: {'is_read': False, 'limit': 50}
+2025-09-02 08:55:04,799 - INFO - 🔍 fetch_emails(unread_filters) 호출 시도...
+2025-09-02 08:55:04,799 - INFO - Gmail 쿼리 구성: is:unread
+2025-09-02 08:55:04,799 - INFO - Gmail API 쿼리 구성: is:unread
+2025-09-02 08:55:04,805 - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-09-02 08:55:05,122 - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-09-02 08:55:05,125 - INFO - Gmail API maxResults 설정: 50
+2025-09-02 08:55:29,808 - INFO - Gmail API에서 50개 메일 가져옴
+2025-09-02 08:55:29,808 - INFO - 메일 199078e8776ead39: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,809 - INFO - 메일 199078e8776ead39 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,810 - INFO - 메일 1990789cd1ce6a88: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,810 - INFO - 메일 1990789cd1ce6a88 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,813 - INFO - 메일 1990774c5de1a529: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,813 - INFO - 메일 1990774c5de1a529 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,814 - INFO - 메일 19907507dc39ac66: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,814 - INFO - 메일 19907507dc39ac66 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,816 - INFO - 메일 19907003bd69ea16: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,816 - INFO - 메일 19907003bd69ea16 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,816 - INFO - 메일 19906ea1d5cf827a: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,816 - INFO - 메일 19906ea1d5cf827a VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,817 - INFO - 메일 1990602c195c2c1d: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,817 - INFO - 메일 1990602c195c2c1d VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,817 - INFO - 메일 199057eca30471de: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,817 - INFO - 메일 199057eca30471de VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,818 - INFO - 메일 1990544d8cb4dcae: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,818 - INFO - 메일 1990544d8cb4dcae VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,818 - INFO - 메일 199050feb914c645: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,819 - INFO - 메일 199050feb914c645 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,819 - INFO - 메일 19903fa406837d0f: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,820 - INFO - 메일 19903fa406837d0f VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,820 - INFO - 메일 19902c6bc0141bad: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,820 - INFO - 메일 19902c6bc0141bad VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,820 - INFO - 메일 1990297b57c8a682: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,820 - INFO - 메일 1990297b57c8a682 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,821 - INFO - 메일 199029359119396b: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,821 - INFO - 메일 199029359119396b VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,821 - INFO - 메일 199022be8625ed1a: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,821 - INFO - 메일 199022be8625ed1a VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,823 - INFO - 메일 19901f1ed177d7c4: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,823 - INFO - 메일 19901f1ed177d7c4 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,824 - INFO - 메일 199001e6f10c64e3: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,824 - INFO - 메일 199001e6f10c64e3 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,824 - INFO - 메일 198ff17f55b68052: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,824 - INFO - 메일 198ff17f55b68052 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,824 - INFO - 메일 198fe6de5233d1f1: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,824 - INFO - 메일 198fe6de5233d1f1 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,824 - INFO - 메일 198fe67462dbf92b: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,824 - INFO - 메일 198fe67462dbf92b VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,825 - INFO - 메일 198fda075d150fdd: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,825 - INFO - 메일 198fda075d150fdd VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,825 - INFO - 메일 198fd6d146df7a6e: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,825 - INFO - 메일 198fd6d146df7a6e VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,825 - INFO - 메일 198fc7b8c14b124a: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,825 - INFO - 메일 198fc7b8c14b124a VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,826 - INFO - 메일 198faf86eeb3ad0c: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,826 - INFO - 메일 198faf86eeb3ad0c VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,826 - INFO - 메일 198fa74641e3cb27: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,826 - INFO - 메일 198fa74641e3cb27 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,826 - INFO - 메일 198f979acb93f6e5: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,826 - INFO - 메일 198f979acb93f6e5 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,826 - INFO - 메일 198f9635ee865f38: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,826 - INFO - 메일 198f9635ee865f38 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,826 - INFO - 메일 198f9627e58318a8: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,826 - INFO - 메일 198f9627e58318a8 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,827 - INFO - 메일 198f89ddf6975728: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,827 - INFO - 메일 198f89ddf6975728 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,827 - INFO - 메일 198f880080fe268c: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,827 - INFO - 메일 198f880080fe268c VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,827 - INFO - 메일 198f87ec4c30acb6: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,827 - INFO - 메일 198f87ec4c30acb6 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,828 - INFO - 메일 198f87ebe1d3660c: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,828 - INFO - 메일 198f87ebe1d3660c VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,828 - INFO - 메일 198f846e0e47b4e7: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,828 - INFO - 메일 198f846e0e47b4e7 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,828 - INFO - 메일 198f82ffe050da33: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,828 - INFO - 메일 198f82ffe050da33 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,828 - INFO - 메일 198f6f980cc9575f: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,828 - INFO - 메일 198f6f980cc9575f VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,828 - INFO - 메일 198f60b6c2dd5986: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,828 - INFO - 메일 198f60b6c2dd5986 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,829 - INFO - 메일 198f5da3712acd33: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,829 - INFO - 메일 198f5da3712acd33 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,829 - INFO - 메일 198f5a8c160a3c2a: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,829 - INFO - 메일 198f5a8c160a3c2a VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,829 - INFO - 메일 198f59da4206a7f4: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,829 - INFO - 메일 198f59da4206a7f4 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,830 - INFO - 메일 198f5334fe7c8851: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,830 - INFO - 메일 198f5334fe7c8851 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,830 - INFO - 메일 198f4c11cdb610d2: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,830 - INFO - 메일 198f4c11cdb610d2 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,830 - INFO - 메일 198f4873352b1e5d: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,830 - INFO - 메일 198f4873352b1e5d VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,830 - INFO - 메일 198f40be430ac9f6: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,830 - INFO - 메일 198f40be430ac9f6 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,830 - INFO - 메일 198f35822bf09bb2: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,830 - INFO - 메일 198f35822bf09bb2 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,831 - INFO - 메일 198f35215f11ca03: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,831 - INFO - 메일 198f35215f11ca03 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,831 - INFO - 메일 198f2b74455d6e45: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,831 - INFO - 메일 198f2b74455d6e45 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,832 - INFO - 메일 198f25860615a0b6: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,832 - INFO - 메일 198f25860615a0b6 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,833 - INFO - 메일 198f250bc72cdd4d: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,833 - INFO - 메일 198f250bc72cdd4d VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,833 - INFO - 메일 198f1978ee01be42: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,833 - INFO - 메일 198f1978ee01be42 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,833 - INFO - 메일 198f0ab85a52c0c4: Gmail unread=True, 계산된 is_read=False
+2025-09-02 08:55:29,834 - INFO - 메일 198f0ab85a52c0c4 VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)
+2025-09-02 08:55:29,834 - INFO - 최종 반환 메일 수: 50개
+2025-09-02 08:55:29,834 - INFO - 🔍 안 읽은 메일 50개 발견
+2025-09-02 08:55:29,834 - INFO - 🔍 첫 번째 메일: id=199078e8776ead39, subject=PrePRD 9/2 NCMS-EUXP Full 공지, sender="조주연" <juyeonjo633@gmail.com>
+2025-09-02 08:55:29,834 - INFO - 🔍 2단계: 업무용 메일만 필터링 시작...
+2025-09-02 08:55:29,834 - INFO - 🔍 Memory-Based Ticket Processor 생성 완료: 
+2025-09-02 08:55:29,834 - ERROR - ⚠️ 메일 'PrePRD 9/2 NCMS-EUXP Full 공지' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,834 - ERROR - ⚠️ 메일 '삼성 공채 시작, 하반기 스타트?! 잇다가 함께 갑니다🏁🏎️' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,834 - ERROR - ⚠️ 메일 '(광고) 생성형 AI 애플리케이션 개발을 시작하세요' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,834 - ERROR - ⚠️ 메일 '[매일메일] 디스크 접근 시간에 대해서 설명해주세요.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '💰연애할 때 돈 얘기 꺼내본 적 있나요?' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'Discord 정책 개정' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'Labor Day treat: Up to 20% off your period faves 🎉' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '💬 Taehui Hong' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '"Labeling documents for Copilot"' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '최근 Al Yousuf Enterprises LLP에서 게시함 - 댓글 6개' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '‘쿠폰 하나’에도 전략이 있다: 플랫폼 온사이트 프로모션 분석기 : 09월 01일 ‘출근길’ 루틴' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '[광고]💡 월 19,900원부터 = 올 하반기를 위한 최고의 투자' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '(광고) 🪑인프런x허먼밀러, 드디어 만났습니다' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '운동에 진심인 너를 위한 혜택🎊' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '[매일메일] 해시 충돌에 대해서 설명해주세요.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '(광고)💰국민연금 투자 수익률 반토막난 이유는?' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '"Custom connectors are 🔥"' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'PRD NCMSAPI-BATCH 서버 다운 문의' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'STG NCMSAPI-BATCH 서버 오류 문의' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'PrePRD NCMSAPI-BATCH 서버 이상 확인' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '[광고]💰 월 19,900원부터. 영어 회화 연습을 시작할 시간입니다.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'UP TO 75% OFF🏃‍♂️임팩트 위크 특가주간' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '[Hugging Face] You've been upgraded to Xet!' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '"Non-searchable .pdf's"' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'MEGA는 당신을 기다립니다!' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 'Juyeon님, 인프랩의 CTO - 이동욱님을 팔로우하는 게 어떠세요?' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '서버 접속 불가 및 기능 제안' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,835 - ERROR - ⚠️ 메일 '자료 요청 건' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 'SOCAR(쏘카)에서 [쏘카일레클] Backend developer (퍼스널모빌리티) 채용공고 : 가장 빨리 지원하세요9 applicants' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '새로운 기기에서 로그인되었습니다.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '신라리워즈 회원으로 가입해주셔서 감사합니다.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '신라리워즈 마케팅 동의여부 변경안내 메일입니다.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '여름 트레이닝 에센셜🌞 클리어 웨이 프로틴' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 'Juyeon님, 서울 인천 지역 백 엔드 개발자에 대한 채용공고 알림을 계속 받으시겠어요?' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 'We’re Updating our Consumer Terms and Privacy Policy' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '💬 Kyoungmin Kim' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '"Copilot Trial and Developer Environment"' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '[컬리] 고객님의 주문이 정상적으로 접수되었습니다.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '최근 Job Vacancies For Today에서 게시함 - 댓글 1,259개' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '기간 한정⏰ 최대 75% 할인 + 추가 37% 할인' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '백 엔드 개발자: 회원님 근처 지역에서 카카오모빌리티(Kakaomobility) 및 NAVER WEBTOON의 채용이 확인됨' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '프롬프트 엔지니어링의 진화, 컨텍스트 엔지니어링이란? : 08월 29일 ‘출근길’ 루틴' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 'mochalatte_act님, 피드에서 may._.jung_17님, look_atmin님 외 여러 사람들을 확인해보세요' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 'Google Play 게임즈 프로필 변경사항' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '👛1만 원 좌석부터 무료공연까지! 가성비 끝판왕 문화생활 ‘발레’' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '[매일메일] 방어적 복사에 대해서 설명해주세요.' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '(광고) 비전을 실현하는 클라우드 및 AI 기술 구축' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '💰이러다 전국민이 '나 혼자 산다'?(어피티에서 영상 PD를 찾고 있어요😊) ' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 'Langfuse August Update: Agent Observation Types, New end-to-end Video Walkthrough, new Integrations' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - ERROR - ⚠️ 메일 '"Graph Connector Partners"' 업무 관련성 판단 실패: 'MemoryBasedTicketProcessorTool' object has no attribute 'is_work_related'
+2025-09-02 08:55:29,836 - INFO - 🔍 업무 관련 메일 50개 필터링 완료
+2025-09-02 08:55:29,836 - INFO - 🔍 3단계: 유사 메일 검색 및 레이블 생성 시작...
+2025-09-02 08:55:29,843 - ERROR - ⚠️ 메일 'PrePRD 9/2 NCMS-EUXP Full 공지' 유사 메일 검색 실패: VectorDBManager.search_similar_mails() got an unexpected keyword argument 'limit'
+2025-09-02 08:55:29,843 - ERROR - ❌ 유사 메일 검색 및 레이블 생성 실패: "EmailMessage" object has no field "suggested_labels"
+2025-09-02 08:55:29,846 - ERROR - ❌ 오류 상세: Traceback (most recent call last):
+  File "/Users/a11479/Desktop/code/ops_agent/unified_email_service.py", line 549, in process_emails_with_ticket_logic
+    similar_mails = vector_db.search_similar_mails(email_content, limit=5)
+TypeError: VectorDBManager.search_similar_mails() got an unexpected keyword argument 'limit'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/a11479/Desktop/code/ops_agent/unified_email_service.py", line 575, in process_emails_with_ticket_logic
+    email.suggested_labels = []
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a11479/Desktop/code/ops_agent/venv/lib/python3.13/site-packages/pydantic/main.py", line 997, in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/a11479/Desktop/code/ops_agent/venv/lib/python3.13/site-packages/pydantic/main.py", line 1044, in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+ValueError: "EmailMessage" object has no field "suggested_labels"
+
+2025-09-02 08:55:29,846 - ERROR - process_emails_with_ticket_logic 오류: "EmailMessage" object has no field "suggested_labels"
+2025-09-02 08:55:29,847 - ERROR - 오류 상세: Traceback (most recent call last):
+  File "/Users/a11479/Desktop/code/ops_agent/unified_email_service.py", line 549, in process_emails_with_ticket_logic
+    similar_mails = vector_db.search_similar_mails(email_content, limit=5)
+TypeError: VectorDBManager.search_similar_mails() got an unexpected keyword argument 'limit'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/a11479/Desktop/code/ops_agent/unified_email_service.py", line 575, in process_emails_with_ticket_logic
+    email.suggested_labels = []
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a11479/Desktop/code/ops_agent/venv/lib/python3.13/site-packages/pydantic/main.py", line 997, in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/a11479/Desktop/code/ops_agent/venv/lib/python3.13/site-packages/pydantic/main.py", line 1044, in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+ValueError: "EmailMessage" object has no field "suggested_labels"
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/a11479/Desktop/code/ops_agent/unified_email_service.py", line 586, in process_emails_with_ticket_logic
+    email.suggested_labels = []
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a11479/Desktop/code/ops_agent/venv/lib/python3.13/site-packages/pydantic/main.py", line 997, in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/a11479/Desktop/code/ops_agent/venv/lib/python3.13/site-packages/pydantic/main.py", line 1044, in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+ValueError: "EmailMessage" object has no field "suggested_labels"
+
+2025-09-02 08:55:29,847 - INFO - process_emails_with_ticket_logic 결과: {'display_mode': 'error', 'message': '티켓 처리 중 오류가 발생했습니다: "EmailMessage" object has no field "suggested_labels"', 'error': '"EmailMessage" object has no field "suggested_labels"', 'tickets': [], 'non_work_emails': []}
+2025-09-02 08:55:29,847 - INFO - 핸들러 실행 결과: {'display_mode': 'error', 'message': '티켓 처리 중 오류가 발생했습니다: "EmailMessage" object has no field "suggested_labels"', 'error': '"EmailMessage" object has no field "suggested_labels"', 'tickets': [], 'non_work_emails': []}
+2025-09-02 08:55:29,847 - INFO - 세션에 직접 저장 완료: True
+2025-09-02 08:55:29,847 - INFO - 반환할 JSON: {{
+  "display_mode": "error",
+  "message": "티켓 처리 중 오류가 발생했습니다: \"EmailMessage\" object has no field \"suggested_labels\"",
+  "error": "\"EmailMessage\" object has no field \"suggested_labels\"",
+  "tickets": [],
+  "non_work_emails": [],
+  "ui_mode": "button_list"
+}}
+2025-09-02 08:55:30,818 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:55:31,393 - INFO - 도구가 사용되지 않음. LLM 직접 응답: [process_tickets_tool] 도구를 사용하여 요청하신 정보를 처리했습니다. 결과는 화면에 표시됩니다. 티켓 처리 중 오류가 발생했습니다: "EmailMessage" object has no field "suggested_labels"
+2025-09-02 09:47:35,818 - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-09-02 09:47:36,148 - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-09-02 09:47:36,192 - INFO - 📝 Jira 로깅 시작: logs/jira_sync_20250902_094736.log

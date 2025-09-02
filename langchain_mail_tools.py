@@ -155,27 +155,42 @@ def get_tools_description() -> str:
 
 # 테스트 함수
 def test_tools():
-    """툴들이 제대로 작동하는지 테스트"""
+    """툴들이 제대로 작동하는지 테스트 (스트리밍 버전)"""
     print("=== LangChain 툴 테스트 ===\n")
     
     print("1. 안읽은 메일 테스트:")
-    print(get_unread_emails.invoke({"limit": 3}))
+    current_result = ""
+    for chunk in get_unread_emails.stream({"limit": 3}):
+        current_result += chunk
+    print(current_result)
     print("\n" + "="*50 + "\n")
     
     print("2. 전체 메일 테스트:")
-    print(get_all_emails.invoke({"limit": 5}))
+    current_result = ""
+    for chunk in get_all_emails.stream({"limit": 5}):
+        current_result += chunk
+    print(current_result)
     print("\n" + "="*50 + "\n")
     
     print("3. 메일 검색 테스트:")
-    print(search_emails.invoke({"query": "tasks", "limit": 3}))
+    current_result = ""
+    for chunk in search_emails.stream({"query": "tasks", "limit": 3}):
+        current_result += chunk
+    print(current_result)
     print("\n" + "="*50 + "\n")
     
     print("4. 발신자별 메일 테스트:")
-    print(get_emails_by_sender.invoke({"sender": "Microsoft", "limit": 3}))
+    current_result = ""
+    for chunk in get_emails_by_sender.stream({"sender": "Microsoft", "limit": 3}):
+        current_result += chunk
+    print(current_result)
     print("\n" + "="*50 + "\n")
     
     print("5. 메일 통계 테스트:")
-    print(get_mail_statistics.invoke({}))
+    current_result = ""
+    for chunk in get_mail_statistics.stream({}):
+        current_result += chunk
+    print(current_result)
 
 if __name__ == "__main__":
     test_tools()

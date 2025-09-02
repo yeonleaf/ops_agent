@@ -232,8 +232,16 @@ JSON 형식으로만 응답해주세요:
                 HumanMessage(content=user_prompt)
             ]
             
-            response = self.llm.invoke(messages)
-            response_content = response.content
+            # 스트리밍 처리
+            current_response = ""
+            final_response = None
+            
+            for chunk in self.llm.stream(messages):
+                if hasattr(chunk, 'content'):
+                    current_response += chunk.content
+                    final_response = chunk
+            
+            response_content = final_response.content if final_response else ""
             
             # JSON 파싱
             import json
@@ -830,8 +838,16 @@ JSON 형식으로만 응답해주세요:
                 HumanMessage(content=user_prompt)
             ]
             
-            response = self.llm.invoke(messages)
-            response_content = response.content
+            # 스트리밍 처리
+            current_response = ""
+            final_response = None
+            
+            for chunk in self.llm.stream(messages):
+                if hasattr(chunk, 'content'):
+                    current_response += chunk.content
+                    final_response = chunk
+            
+            response_content = final_response.content if final_response else ""
             
             # JSON 파싱
             import json

@@ -1,0 +1,132 @@
+2025-09-02 08:24:50,715 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:24:50,815 - INFO - ProcessTicketsTool 실행: 안 읽은 메일 가져와서 티켓 생성
+2025-09-02 08:24:50,815 - INFO - LLM 쿼리 파싱 시작: '안 읽은 메일 가져와서 티켓 생성'
+2025-09-02 08:24:50,815 - INFO - session_state.llm 존재 여부: True
+2025-09-02 08:24:50,816 - INFO - session_state.llm 값: client=<openai.resources.chat.completions.completions.Completions object at 0x14d62ad50> async_client=<openai.resources.chat.completions.completions.AsyncCompletions object at 0x14d628250> root_client=<openai.lib.azure.AzureOpenAI object at 0x12f8b5bf0> root_async_client=<openai.lib.azure.AsyncAzureOpenAI object at 0x12f8b6030> temperature=0.0 model_kwargs={} openai_api_key=SecretStr('**********') disabled_params={'parallel_tool_calls': None} azure_endpoint='https://skcc-atl-master-openai-01.openai.azure.com' deployment_name='gpt-4.1' openai_api_version='2024-10-21' openai_api_type='azure'
+2025-09-02 08:24:50,816 - INFO - LLM 기반 파싱 시도 중...
+2025-09-02 08:24:51,342 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:24:51,344 - INFO - LLM 응답: {{
+    "action": "classify",
+    "filters": {{
+        "is_read": false
+    }}
+}}
+2025-09-02 08:24:51,344 - INFO - LLM 파싱 결과: {'action': 'classify', 'filters': {'is_read': False}}
+2025-09-02 08:24:51,344 - INFO - LLM 파싱 성공: {'action': 'classify', 'filters': {'is_read': False}}
+2025-09-02 08:24:51,344 - INFO - 파싱된 파라미터: {'action': 'classify', 'filters': {'is_read': False}}
+2025-09-02 08:24:52,202 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:24:52,204 - INFO - LLM 액션 결정 응답: {{
+    "action": "process_tickets",
+    "reasoning": "사용자가 '안 읽은 메일'을 가져와서 티켓을 생성해달라고 요청했으므로, 메일을 티켓으로 변환하는 업무 처리 액션이 필요합니다.",
+    "query_type": "ticket_creation"
+}}
+2025-09-02 08:24:52,205 - INFO - LLM 액션 결정 결과: process_tickets, 이유: 사용자가 '안 읽은 메일'을 가져와서 티켓을 생성해달라고 요청했으므로, 메일을 티켓으로 변환하는 업무 처리 액션이 필요합니다.
+2025-09-02 08:24:52,205 - INFO - ProcessTicketsTool에서 LLM 기반 액션 결정: process_tickets
+2025-09-02 08:24:52,205 - INFO - 메일 쿼리 핸들러 실행: action='process_tickets', filters={'is_read': False}
+2025-09-02 08:24:52,205 - INFO - process_tickets 액션 시작: provider=gmail, params={'action': 'process_tickets', 'filters': {'is_read': False}}
+2025-09-02 08:24:52,206 - INFO - 🔍 process_emails_with_ticket_logic 함수 호출 시작...
+2025-09-02 08:24:52,206 - INFO - 🔍 호출 파라미터: provider=gmail, user_query={'action': 'process_tickets', 'filters': {'is_read': False}}
+2025-09-02 08:24:52,206 - INFO - 🔍 process_emails_with_ticket_logic 함수 객체: <function process_emails_with_ticket_logic at 0x148188d60>
+2025-09-02 08:24:52,206 - INFO - 🔍 함수 타입: <class 'function'>
+2025-09-02 08:24:52,206 - INFO - process_emails_with_ticket_logic 시작: provider=gmail, query={'action': 'process_tickets', 'filters': {'is_read': False}}
+2025-09-02 08:24:52,206 - INFO - 🔍 1단계: 안 읽은 메일 가져오기 시작...
+2025-09-02 08:24:52,206 - INFO - 🔍 UnifiedEmailService(gmail) 생성 시도...
+2025-09-02 08:24:52,207 - INFO - 🔍 서비스 생성 완료: <unified_email_service.UnifiedEmailService object at 0x106f52e40>
+2025-09-02 08:24:52,207 - INFO - 🔍 get_unread_emails(max_results=50) 호출 시도...
+2025-09-02 08:24:52,207 - ERROR - ❌ 안 읽은 메일 가져오기 실패: 'UnifiedEmailService' object has no attribute 'get_unread_emails'
+2025-09-02 08:24:52,209 - ERROR - ❌ 오류 상세: Traceback (most recent call last):
+  File "/Users/a11479/Desktop/code/ops_agent/unified_email_service.py", line 458, in process_emails_with_ticket_logic
+    unread_emails = service.get_unread_emails(max_results=50)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'UnifiedEmailService' object has no attribute 'get_unread_emails'
+
+2025-09-02 08:24:52,209 - INFO - 2단계: 새로운 티켓 생성 시작...
+2025-09-02 08:24:52,222 - INFO - 기존 티켓의 메일 ID 4개 발견
+2025-09-02 08:24:52,222 - INFO - 새로운 티켓 0개 생성 완료
+2025-09-02 08:24:52,222 - INFO - 3단계: 기존 티켓과 새로운 티켓 합치기 시작...
+2025-09-02 08:24:52,224 - INFO - 오늘 생성된 총 티켓 4개 발견
+2025-09-02 08:24:52,224 - INFO - 티켓 생성 및 통합 완료: 새로운 0개, 기존 4개, 총 4개
+2025-09-02 08:24:52,225 - INFO - process_emails_with_ticket_logic 결과: {'display_mode': 'tickets', 'tickets': [{'id': 4, 'ticket_id': 4, 'title': '서버 접속 불가 및 기능 제안', 'description': '', 'status': 'pending', 'priority': 'Highest (서버 접속 불가), Medium (버튼 색상 변경)', 'type': 'Bug (서버 접속 불가), Improvement (버튼 색상 변경)', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': [], 'created_at': '2025-09-02T06:25:17.401180', 'updated_at': '2025-09-02T08:07:51.944756', 'original_message_id': '198f9635ee865f38'}, {'id': 3, 'ticket_id': 3, 'title': 'PrePRD NCMSAPI-BATCH 서버 이상 확인', 'description': '', 'status': 'pending', 'priority': 'High', 'type': 'Bug', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': ['서버점검', '에러409', 'NCMS_운영지원'], 'created_at': '2025-09-02T06:25:04.408232', 'updated_at': '2025-09-02T08:08:44.168016', 'original_message_id': '198fe67462dbf92b'}, {'id': 2, 'ticket_id': 2, 'title': 'STG NCMSAPI-BATCH 서버 오류 문의', 'description': '', 'status': 'pending', 'priority': 'High', 'type': 'Bug', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': [], 'created_at': '2025-09-02T06:25:02.128991', 'updated_at': '2025-09-02T07:21:44.562831', 'original_message_id': '198fe6de5233d1f1'}, {'id': 1, 'ticket_id': 1, 'title': 'PRD NCMSAPI-BATCH 서버 다운 문의', 'description': '', 'status': 'pending', 'priority': 'Highest', 'type': 'Bug', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': ['NCMS_운영지원'], 'created_at': '2025-09-02T06:24:59.624235', 'updated_at': '2025-09-02T08:02:35.635800', 'original_message_id': '198ff17f55b68052'}], 'new_tickets_created': 0, 'existing_tickets_found': 4, 'summary': {'total_tasks': 4}, 'message': '새로운 티켓 0개 생성, 총 4개 티켓 제공'}
+2025-09-02 08:24:52,225 - INFO - process_tickets - 티켓 개수: 4
+2025-09-02 08:24:52,225 - INFO - 핸들러 실행 결과: {'display_mode': 'tickets', 'tickets': [{'id': 4, 'ticket_id': 4, 'title': '서버 접속 불가 및 기능 제안', 'description': '', 'status': 'pending', 'priority': 'Highest (서버 접속 불가), Medium (버튼 색상 변경)', 'type': 'Bug (서버 접속 불가), Improvement (버튼 색상 변경)', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': [], 'created_at': '2025-09-02T06:25:17.401180', 'updated_at': '2025-09-02T08:07:51.944756', 'original_message_id': '198f9635ee865f38'}, {'id': 3, 'ticket_id': 3, 'title': 'PrePRD NCMSAPI-BATCH 서버 이상 확인', 'description': '', 'status': 'pending', 'priority': 'High', 'type': 'Bug', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': ['서버점검', '에러409', 'NCMS_운영지원'], 'created_at': '2025-09-02T06:25:04.408232', 'updated_at': '2025-09-02T08:08:44.168016', 'original_message_id': '198fe67462dbf92b'}, {'id': 2, 'ticket_id': 2, 'title': 'STG NCMSAPI-BATCH 서버 오류 문의', 'description': '', 'status': 'pending', 'priority': 'High', 'type': 'Bug', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': [], 'created_at': '2025-09-02T06:25:02.128991', 'updated_at': '2025-09-02T07:21:44.562831', 'original_message_id': '198fe6de5233d1f1'}, {'id': 1, 'ticket_id': 1, 'title': 'PRD NCMSAPI-BATCH 서버 다운 문의', 'description': '', 'status': 'pending', 'priority': 'Highest', 'type': 'Bug', 'reporter': '"조주연" <juyeonjo633@gmail.com>', 'labels': ['NCMS_운영지원'], 'created_at': '2025-09-02T06:24:59.624235', 'updated_at': '2025-09-02T08:02:35.635800', 'original_message_id': '198ff17f55b68052'}], 'new_tickets_created': 0, 'existing_tickets_found': 4, 'summary': {'total_tasks': 4}, 'message': '새로운 티켓 0개 생성, 총 4개 티켓 제공'}
+2025-09-02 08:24:52,225 - INFO - ProcessTicketsTool - 티켓 개수 확인: 4
+2025-09-02 08:24:52,225 - INFO - 세션에 직접 저장 완료: True
+2025-09-02 08:24:52,225 - INFO - 반환할 JSON: {{
+  "display_mode": "tickets",
+  "tickets": [
+    {{
+      "id": 4,
+      "ticket_id": 4,
+      "title": "서버 접속 불가 및 기능 제안",
+      "description": "",
+      "status": "pending",
+      "priority": "Highest (서버 접속 불가), Medium (버튼 색상 변경)",
+      "type": "Bug (서버 접속 불가), Improvement (버튼 색상 변경)",
+      "reporter": "\"조주연\" <juyeonjo633@gmail.com>",
+      "labels": [],
+      "created_at": "2025-09-02T06:25:17.401180",
+      "updated_at": "2025-09-02T08:07:51.944756",
+      "original_message_id": "198f9635ee865f38"
+    }},
+    {{
+      "id": 3,
+      "ticket_id": 3,
+      "title": "PrePRD NCMSAPI-BATCH 서버 이상 확인",
+      "description": "",
+      "status": "pending",
+      "priority": "High",
+      "type": "Bug",
+      "reporter": "\"조주연\" <juyeonjo633@gmail.com>",
+      "labels": [
+        "서버점검",
+        "에러409",
+        "NCMS_운영지원"
+      ],
+      "created_at": "2025-09-02T06:25:04.408232",
+      "updated_at": "2025-09-02T08:08:44.168016",
+      "original_message_id": "198fe67462dbf92b"
+    }},
+    {{
+      "id": 2,
+      "ticket_id": 2,
+      "title": "STG NCMSAPI-BATCH 서버 오류 문의",
+      "description": "",
+      "status": "pending",
+      "priority": "High",
+      "type": "Bug",
+      "reporter": "\"조주연\" <juyeonjo633@gmail.com>",
+      "labels": [],
+      "created_at": "2025-09-02T06:25:02.128991",
+      "updated_at": "2025-09-02T07:21:44.562831",
+      "original_message_id": "198fe6de5233d1f1"
+    }},
+    {{
+      "id": 1,
+      "ticket_id": 1,
+      "title": "PRD NCMSAPI-BATCH 서버 다운 문의",
+      "description": "",
+      "status": "pending",
+      "priority": "Highest",
+      "type": "Bug",
+      "reporter": "\"조주연\" <juyeonjo633@gmail.com>",
+      "labels": [
+        "NCMS_운영지원"
+      ],
+      "created_at": "2025-09-02T06:24:59.624235",
+      "updated_at": "2025-09-02T08:02:35.635800",
+      "original_message_id": "198ff17f55b68052"
+    }}
+  ],
+  "new_tickets_created": 0,
+  "existing_tickets_found": 4,
+  "summary": {{
+    "total_tasks": 4
+  }},
+  "message": "새로운 티켓 0개 생성, 총 4개 티켓 제공",
+  "ui_mode": "button_list"
+}}
+2025-09-02 08:24:52,580 - INFO - HTTP Request: POST https://skcc-atl-master-openai-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-10-21 "HTTP/1.1 200 OK"
+2025-09-02 08:24:52,900 - INFO - 도구가 사용되지 않음. LLM 직접 응답: process_tickets_tool 도구를 사용하여 요청하신 안 읽은 메일을 기반으로 티켓을 생성 및 조회했습니다. 결과는 화면에 표시됩니다.
+2025-09-02 08:28:00,840 - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-09-02 08:28:01,174 - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-09-02 08:28:01,221 - INFO - 📝 Jira 로깅 시작: logs/jira_sync_20250902_082801.log

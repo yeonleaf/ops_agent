@@ -71,8 +71,14 @@ class UserAction:
 class DatabaseManager:
     """데이터베이스 관리자"""
     
-    def __init__(self, db_path: str = "mail_tickets.db"):
+    def __init__(self, db_path: str = "tickets.db"):
         self.db_path = db_path
+        # 데이터베이스 파일이 있는 디렉토리 권한 확인 및 설정
+        import os
+        db_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
+        if not os.path.exists(db_dir):
+            os.makedirs(db_dir, mode=0o755, exist_ok=True)
+            print(f"✅ RDB 디렉토리 생성 및 권한 설정: {db_dir}")
         self.init_database()
     
     def init_database(self):
@@ -90,8 +96,8 @@ class DatabaseManager:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tickets (
                     ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    original_message_id TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'new',
+                    original_message_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'pending',
                     title TEXT NOT NULL,
                     description TEXT,
                     priority TEXT DEFAULT 'Medium',
@@ -605,36 +611,72 @@ class MailParser:
     def save_mail_and_ticket(self, mail: Mail, ticket: Ticket) -> Dict[str, Any]:
         """메일과 티켓을 데이터베이스에 저장"""
         
+        # 중복 티켓 생성 방지: 메일 ID로 이미 티켓이 존재하는지 확인
+        existing_tickets = self.db_manager.get_tickets_by_message_id(mail.message_id)
+        if existing_tickets:
+            print(f"⚠️ 메일 ID {mail.message_id}로 이미 티켓이 생성되어 있습니다. 중복 생성을 건너뜁니다.")
+            existing_ticket = existing_tickets[0]  # 첫 번째 티켓 사용
+            return {
+                'mail': asdict(mail),
+                'ticket': asdict(existing_ticket),
+                'ticket_id': existing_ticket.ticket_id,
+                'duplicate_prevented': True
+            }
+        
         # Vector DB에 메일 저장
+        print(f"🔍 Vector DB에 메일 저장 시도: {mail.message_id}")
         try:
             from vector_db_models import VectorDBManager
+            print(f"✅ VectorDBManager 모듈 로드 성공")
             vector_db = VectorDBManager()
+            print(f"✅ VectorDBManager 인스턴스 생성 성공")
             vector_save_success = vector_db.save_mail(mail)
             if vector_save_success:
                 print(f"✅ 메일이 Vector DB에 저장되었습니다: {mail.message_id}")
             else:
                 print(f"❌ 메일을 Vector DB에 저장하는데 실패했습니다: {mail.message_id}")
+        except ImportError as e:
+            print(f"❌ Vector DB 모듈을 불러올 수 없음: {str(e)}")
+            print(f"⚠️ Vector DB 저장을 건너뛰고 티켓만 저장합니다.")
         except Exception as e:
             print(f"⚠️ Vector DB 저장 중 오류: {str(e)}")
+            print(f"⚠️ Vector DB 저장을 건너뛰고 티켓만 저장합니다.")
         
-        # 티켓 저장
-        ticket_id = self.db_manager.insert_ticket(ticket)
-        ticket.ticket_id = ticket_id
-        
-        # 생성 이벤트 기록
-        event = TicketEvent(
-            event_id=None,
-            ticket_id=ticket_id,
-            event_type="ticket_created",
-            old_value="",
-            new_value="new",
-            created_at=datetime.now().isoformat()
-        )
-        
-        self.db_manager.insert_ticket_event(event)
-        
-        return {
-            'mail': asdict(mail),
-            'ticket': asdict(ticket),
-            'ticket_id': ticket_id
-        } 
+        # 티켓 저장 (중복 체크 포함)
+        try:
+            ticket_id = self.db_manager.insert_ticket(ticket)
+            ticket.ticket_id = ticket_id
+            
+            # 생성 이벤트 기록
+            event = TicketEvent(
+                event_id=None,
+                ticket_id=ticket_id,
+                event_type="ticket_created",
+                old_value="",
+                new_value="new",
+                created_at=datetime.now().isoformat()
+            )
+            
+            self.db_manager.insert_ticket_event(event)
+            
+            return {
+                'mail': asdict(mail),
+                'ticket': asdict(ticket),
+                'ticket_id': ticket_id,
+                'duplicate_prevented': False
+            }
+            
+        except sqlite3.IntegrityError as e:
+            # UNIQUE 제약조건 위반 시 (중복 메일 ID)
+            if "UNIQUE constraint failed" in str(e):
+                print(f"⚠️ 메일 ID {mail.message_id}로 이미 티켓이 존재합니다. 기존 티켓을 반환합니다.")
+                existing_tickets = self.db_manager.get_tickets_by_message_id(mail.message_id)
+                if existing_tickets:
+                    existing_ticket = existing_tickets[0]
+                    return {
+                        'mail': asdict(mail),
+                        'ticket': asdict(existing_ticket),
+                        'ticket_id': existing_ticket.ticket_id,
+                        'duplicate_prevented': True
+                    }
+            raise e 

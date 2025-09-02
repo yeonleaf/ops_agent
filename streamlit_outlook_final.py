@@ -19,6 +19,10 @@ import glob
 # .env 파일 로드
 load_dotenv()
 
+# 세션 상태 초기화
+if 'refresh_trigger' not in st.session_state:
+    st.session_state.refresh_trigger = 0
+
 # 페이지 설정
 st.set_page_config(
     page_title="📧 Outlook Final",
@@ -353,7 +357,7 @@ def main():
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.query_params.clear()
-        st.rerun()
+        st.session_state.refresh_trigger = st.session_state.get('refresh_trigger', 0) + 1
     
     if 'code' in query_params and 'state' in query_params:
         # 인증 코드 처리
@@ -375,12 +379,12 @@ def main():
                 # URL 정리
                 st.query_params.clear()
                 time.sleep(1)
-                st.rerun()
+                st.session_state.refresh_trigger = st.session_state.get('refresh_trigger', 0) + 1
             else:
                 st.error("❌ 로그인 실패")
                 if st.button("🔄 다시 시도"):
                     st.query_params.clear()
-                    st.rerun()
+                    st.session_state.refresh_trigger = st.session_state.get('refresh_trigger', 0) + 1
     
     # 토큰이 있는 경우 - 메일 조회
     elif 'access_token' in st.session_state:
@@ -398,7 +402,7 @@ def main():
             if st.button("🚪 로그아웃"):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
-                st.rerun()
+                st.session_state.refresh_trigger = st.session_state.get('refresh_trigger', 0) + 1
         
         # 저장된 메일 데이터 표시
         if 'emails_data' in st.session_state:

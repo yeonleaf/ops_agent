@@ -139,16 +139,29 @@ class MemoryBasedTicketProcessorTool(BaseTool):
             print("💾 4단계: 통합된 기억 저장 (Unified Memorization) 시작")
             self._unified_memorization_phase(reasoning_result, action_result, message_id)
             
-            # 최종 결과 반환
+            # 최종 결과 반환 (JSON 직렬화 가능하도록 변환)
+            def convert_to_serializable(obj):
+                """객체를 JSON 직렬화 가능한 형태로 변환"""
+                if isinstance(obj, dict):
+                    return {key: convert_to_serializable(value) for key, value in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_to_serializable(item) for item in obj]
+                elif hasattr(obj, '__dict__'):
+                    # 객체를 딕셔너리로 변환
+                    return {key: str(value) if not isinstance(value, (str, int, float, bool, list, dict)) else convert_to_serializable(value) 
+                           for key, value in obj.__dict__.items()}
+                else:
+                    return str(obj) if not isinstance(obj, (str, int, float, bool, list, dict)) else obj
+            
             final_result = {
                 "success": True,
                 "workflow_steps": {
-                    "retrieval": retrieval_result,
-                    "reasoning": reasoning_result,
-                    "action": action_result
+                    "retrieval": convert_to_serializable(retrieval_result),
+                    "reasoning": convert_to_serializable(reasoning_result),
+                    "action": convert_to_serializable(action_result)
                 },
-                "decision": reasoning_result,
-                "action": action_result,
+                "decision": convert_to_serializable(reasoning_result),
+                "action": convert_to_serializable(action_result),
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -168,6 +181,7 @@ class MemoryBasedTicketProcessorTool(BaseTool):
         """1단계: 검색 (Retrieval) - 유사 메일, 과거 티켓, 사용자 피드백 조회"""
         try:
             print("  🔍 1a. 유사 메일 검색 시작")
+            print(f"    📧 검색 대상: {email_subject[:50]}...")
             
             # Vector DB에서 유사한 과거 메일 검색
             vector_db = self._get_vector_db()
@@ -175,35 +189,102 @@ class MemoryBasedTicketProcessorTool(BaseTool):
             
             print(f"  ✅ 유사 메일 {len(similar_mails)}개 발견")
             
+            # 유사 메일 상세 정보 출력
+            for i, mail in enumerate(similar_mails, 1):
+                # Mail 객체의 속성에 직접 접근
+                subject = getattr(mail, 'subject', 'N/A')
+                mail_message_id = getattr(mail, 'message_id', 'N/A')
+                print(f"    📋 유사 메일 {i}: {subject[:40] if subject else 'N/A'}... (ID: {mail_message_id})")
+            
             # 1b. 과거 티켓 조회
             print("  🔍 1b. 과거 티켓 조회 시작")
             db_manager = self._get_db_manager()
             
             related_tickets = []
-            for mail in similar_mails:
-                if mail.get('message_id'):
-                    tickets = db_manager.get_tickets_by_message_id(mail['message_id'])
+            for i, mail in enumerate(similar_mails, 1):
+                mail_message_id = getattr(mail, 'message_id', None)
+                if mail_message_id:
+                    print(f"    🔎 메일 {i}의 티켓 조회 중: {mail_message_id}")
+                    tickets = db_manager.get_tickets_by_message_id(mail_message_id)
+                    print(f"    📊 메일 {i}에서 {len(tickets)}개 티켓 발견")
                     related_tickets.extend(tickets)
+                    
+                    # 발견된 티켓 정보 출력
+                    for j, ticket in enumerate(tickets, 1):
+                        ticket_id = getattr(ticket, 'ticket_id', None) if hasattr(ticket, 'ticket_id') else ticket.get('ticket_id', None)
+                        title = getattr(ticket, 'title', 'N/A') if hasattr(ticket, 'title') else ticket.get('title', 'N/A')
+                        print(f"      🎫 티켓 {j}: ID {ticket_id} - {title[:30] if title else 'N/A'}...")
             
             print(f"  ✅ 관련 티켓 {len(related_tickets)}개 발견")
             
             # 1c. 사용자 피드백(기억) 조회
             print("  🔍 1c. 사용자 피드백 기억 조회 시작")
-            user_action_db = self._get_user_action_vector_db()
             
             related_memories = []
-            for ticket in related_tickets:
+            for i, ticket in enumerate(related_tickets, 1):
                 if ticket.get('ticket_id'):
-                    memories = user_action_db.search_similar_actions(
-                        f"티켓 {ticket.get('title', '')}", 
-                        n_results=3
-                    )
-                    related_memories.extend(memories)
+                    print(f"    🔍 티켓 {i} (ID: {ticket.get('ticket_id')})의 사용자 액션 조회 중...")
+                    
+                    # SQLite RDB에서 직접 user_actions 조회
+                    try:
+                        from database_models import DatabaseManager
+                        db_manager = DatabaseManager()
+                        user_actions = db_manager.get_user_actions_by_ticket_id(ticket.get('ticket_id'))
+                        
+                        print(f"    📊 티켓 {i}에서 {len(user_actions)}개 액션 발견")
+                        
+                        action_count = 0
+                        for action in user_actions:
+                            if action.action_type in ['label_added', 'label_removed', 'priority_changed', 'status_changed']:
+                                action_count += 1
+                                # UUID를 문자열로 변환하여 JSON 직렬화 가능하게 만듦
+                                def convert_uuid_to_str(obj):
+                                    if hasattr(obj, '__str__'):
+                                        return str(obj)
+                                    return obj
+                                
+                                memory_dict = {
+                                    'memory_sentence': f"{action.action_type}: {action.action_description}",
+                                    'action_type': action.action_type,
+                                    'old_value': convert_uuid_to_str(action.old_value),
+                                    'new_value': convert_uuid_to_str(action.new_value),
+                                    'context': convert_uuid_to_str(action.context),
+                                    'created_at': convert_uuid_to_str(action.created_at)
+                                }
+                                related_memories.append(memory_dict)
+                                print(f"      📝 액션 {action_count}: {action.action_type} - {action.action_description}")
+                                if action.old_value and action.new_value:
+                                    print(f"        변경: {action.old_value} → {action.new_value}")
+                                elif action.new_value:
+                                    print(f"        추가: {action.new_value}")
+                                elif action.old_value:
+                                    print(f"        삭제: {action.old_value}")
+                    except Exception as e:
+                        print(f"    ⚠️ 티켓 {i} 사용자 액션 조회 실패: {e}")
             
             print(f"  ✅ 관련 기억 {len(related_memories)}개 발견")
             
+            # 기억 요약 출력
+            if related_memories:
+                print("  📋 발견된 사용자 액션 요약:")
+                for i, memory in enumerate(related_memories, 1):
+                    print(f"    {i}. {memory['memory_sentence']}")
+            else:
+                print("  ℹ️ 관련된 사용자 액션이 없습니다.")
+            
+            # Mail 객체를 딕셔너리로 변환
+            def convert_mail_to_dict(mail):
+                if hasattr(mail, '__dict__'):
+                    return {key: str(value) if not isinstance(value, (str, int, float, bool, list, dict)) else value 
+                           for key, value in mail.__dict__.items()}
+                else:
+                    return {"message_id": str(mail), "subject": "Unknown", "sender": "Unknown"}
+            
+            # 유사 메일을 딕셔너리로 변환
+            similar_mails_dict = [convert_mail_to_dict(mail) for mail in similar_mails]
+            
             return {
-                "similar_mails": similar_mails,
+                "similar_mails": similar_mails_dict,
                 "related_tickets": related_tickets,
                 "related_memories": related_memories,
                 "search_summary": {
@@ -232,6 +313,9 @@ class MemoryBasedTicketProcessorTool(BaseTool):
             
             # 검색된 기억들을 요약
             memory_summary = self._summarize_memories(retrieval_result.get("related_memories", []))
+            
+            print(f"  📋 AI 판단에 활용할 기억 요약:")
+            print(f"    {memory_summary}")
             
             # 판단 프롬프트 생성
             decision_prompt = ChatPromptTemplate.from_messages([
@@ -268,9 +352,18 @@ ticket_type: Bug/Feature/Task/Improvement"""),
 이 이메일에 대해 Jira 티켓을 생성해야 할까요? 과거 기억을 바탕으로 판단해주세요.""")
             ])
             
-            # LLM 실행
+            # LLM 실행 (스트리밍 버전)
             decision_chain = decision_prompt | llm | StrOutputParser()
-            decision_result = decision_chain.invoke({})
+            
+            # 스트리밍 처리
+            current_result = ""
+            final_result = None
+            
+            for chunk in decision_chain.stream({}):
+                current_result += chunk
+                final_result = current_result
+            
+            decision_result = final_result if final_result else ""
             
             # 텍스트 응답 파싱
             try:
@@ -395,7 +488,10 @@ ticket_type: Bug/Feature/Task/Improvement"""),
             
             # Vector DB에 저장
             user_action_db = self._get_user_action_vector_db()
-            user_action_db.save_user_action(memory_sentence, "ai_decision", "ai_system", action_id)
+            user_action_db.save_action_memory(str(action_id), memory_sentence, "ai_decision", 
+                                            ticket_id=action_result.get('ticket_id'), 
+                                            message_id=message_id, 
+                                            user_id="ai_system")
             
             print(f"  ✅ 기억 저장 완료: {action_id}")
             
@@ -517,7 +613,8 @@ def record_user_correction(ticket_id: Any, old_label: str, new_label: str, user_
         # Vector DB에 저장
         user_action_db = UserActionVectorDBManager()
         memory_sentence = f"User Correction: 티켓 {ticket_id}의 레이블을 '{old_label}'에서 '{new_label}'으로 수정함."
-        user_action_db.save_user_action(memory_sentence, "user_correction", user_id, action_id)
+        user_action_db.save_action_memory(str(action_id), memory_sentence, "user_correction", 
+                                        ticket_id=ticket_id, user_id=user_id)
         
         print(f"✅ 사용자 피드백 저장 완료: {action_id}")
         return True

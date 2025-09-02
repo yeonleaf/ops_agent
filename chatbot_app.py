@@ -11,6 +11,10 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from mcp_client import SimpleMCPClient
 
+# 세션 상태 초기화
+if 'refresh_trigger' not in st.session_state:
+    st.session_state.refresh_trigger = 0
+
 # 페이지 설정
 st.set_page_config(
     page_title="📧 메일 조회 챗봇",
@@ -169,7 +173,7 @@ def main():
         if st.button("🗑️ 대화 기록 삭제"):
             st.session_state.messages = []
             st.session_state.chatbot = ChatBot()
-            st.rerun()
+            st.session_state.refresh_trigger = st.session_state.get('refresh_trigger', 0) + 1
     
     # 메인 채팅 영역
     chat_container = st.container()

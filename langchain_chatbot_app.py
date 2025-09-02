@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import re
+import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
@@ -18,9 +19,245 @@ from langchain_openai import AzureChatOpenAI
 from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.callbacks import BaseCallbackHandler
 
 # 환경 변수 로딩 (가장 먼저 실행)
 load_dotenv()
+
+# 세션 상태 초기화
+if 'refresh_trigger' not in st.session_state:
+    st.session_state.refresh_trigger = 0
+
+# --- 1. 단계별 로그 관리자 클래스 ---
+
+class StepLogger:
+    """단계별 로그 파일 기록 클래스"""
+    
+    def __init__(self, session_id: str, chat_id: str):
+        self.session_id = session_id
+        self.chat_id = chat_id
+        self.log_dir = f"logs/{session_id}/{chat_id}"
+        self.step_counter = 0
+        
+        # 로그 디렉토리 생성 (더 안전한 방식)
+        try:
+            # logs 디렉토리 생성
+            os.makedirs("logs", exist_ok=True)
+            
+            # session 디렉토리 생성
+            session_dir = f"logs/{session_id}"
+            os.makedirs(session_dir, exist_ok=True)
+            
+            # chat 디렉토리 생성
+            os.makedirs(self.log_dir, exist_ok=True)
+            
+            print(f"📁 로그 디렉토리 생성 완료: {self.log_dir}")
+            
+            # 디렉토리 존재 확인
+            if os.path.exists(self.log_dir):
+                print(f"✅ 디렉토리 확인됨: {self.log_dir}")
+            else:
+                print(f"❌ 디렉토리 생성 실패: {self.log_dir}")
+                
+        except Exception as e:
+            print(f"❌ 로그 디렉토리 생성 오류: {e}")
+            # 현재 작업 디렉토리 출력
+            print(f"현재 작업 디렉토리: {os.getcwd()}")
+            print(f"로그 디렉토리 경로: {os.path.abspath(self.log_dir)}")
+    
+    def log_step(self, step_name: str, content: dict):
+        """단계별 로그 파일 생성"""
+        self.step_counter += 1
+        step_number = f"{self.step_counter:02d}"
+        filename = f"{step_number}_{step_name}.json"
+        filepath = os.path.join(self.log_dir, filename)
+        
+        # UUID를 문자열로 변환하는 함수
+        def convert_uuid_to_str(obj):
+            if hasattr(obj, '__str__'):
+                return str(obj)
+            return obj
+        
+        # 재귀적으로 딕셔너리의 모든 값을 변환
+        def convert_dict_values(data):
+            if isinstance(data, dict):
+                return {key: convert_dict_values(value) for key, value in data.items()}
+            elif isinstance(data, list):
+                return [convert_dict_values(item) for item in data]
+            else:
+                return convert_uuid_to_str(data)
+        
+        # 타임스탬프 추가
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "step_number": self.step_counter,
+            "step_name": step_name,
+            "content": convert_dict_values(content)
+        }
+        
+        try:
+            # 디렉토리가 존재하는지 확인하고 필요시 생성
+            if not os.path.exists(self.log_dir):
+                print(f"⚠️ 로그 디렉토리가 없습니다. 다시 생성합니다: {self.log_dir}")
+                os.makedirs(self.log_dir, exist_ok=True)
+            
+            # 파일 쓰기
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(log_data, f, ensure_ascii=False, indent=2)
+            print(f"📝 로그 파일 생성: {filename}")
+            
+        except Exception as e:
+            print(f"❌ 로그 파일 생성 실패: {e}")
+            print(f"   상세 오류: {type(e).__name__}: {str(e)}")
+            print(f"   로그 디렉토리: {self.log_dir}")
+            print(f"   파일 경로: {filepath}")
+            print(f"   현재 작업 디렉토리: {os.getcwd()}")
+            
+            # 디렉토리 정보 출력
+            try:
+                if os.path.exists("logs"):
+                    print(f"   logs 디렉토리 존재: {os.listdir('logs')}")
+                else:
+                    print("   logs 디렉토리가 존재하지 않습니다.")
+            except Exception as dir_e:
+                print(f"   디렉토리 확인 오류: {dir_e}")
+    
+    def get_log_files(self) -> List[Dict[str, Any]]:
+        """로그 파일들을 순서대로 읽어서 반환"""
+        log_files = []
+        
+        try:
+            if not os.path.exists(self.log_dir):
+                return log_files
+            
+            # JSON 파일들을 순서대로 읽기
+            json_files = [f for f in os.listdir(self.log_dir) if f.endswith('.json')]
+            json_files.sort()  # 파일명 순서대로 정렬
+            
+            for filename in json_files:
+                filepath = os.path.join(self.log_dir, filename)
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        log_data = json.load(f)
+                    log_files.append(log_data)
+                except Exception as e:
+                    print(f"❌ 로그 파일 읽기 실패 {filename}: {e}")
+            
+            return log_files
+        except Exception as e:
+            print(f"❌ 로그 파일 목록 조회 실패: {e}")
+            return log_files
+
+# --- 2. LangChain 콜백 핸들러 ---
+
+class FileLoggingCallbackHandler(BaseCallbackHandler):
+    """LangChain 이벤트를 파일로 로깅하는 콜백 핸들러"""
+    
+    def __init__(self, step_logger: StepLogger):
+        self.step_logger = step_logger
+    
+    def _update_status_file(self, status: str, step: str, message: str):
+        """상태를 파일에 저장하여 실시간 업데이트"""
+        try:
+            status_data = {
+                "status": status,
+                "step": step,
+                "message": message,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # 세션별 상태 파일 경로
+            session_id = self.step_logger.session_id
+            status_file = f"logs/{session_id}/current_status.json"
+            
+            # 디렉토리 생성 (더 안전한 방식)
+            try:
+                # logs 디렉토리 생성
+                os.makedirs("logs", exist_ok=True)
+                
+                # session 디렉토리 생성
+                session_dir = f"logs/{session_id}"
+                os.makedirs(session_dir, exist_ok=True)
+                
+                # 상태 파일에 저장
+                with open(status_file, 'w', encoding='utf-8') as f:
+                    json.dump(status_data, f, ensure_ascii=False, indent=2)
+                    
+            except Exception as dir_e:
+                print(f"❌ 디렉토리 생성 실패: {dir_e}")
+                print(f"   세션 ID: {session_id}")
+                print(f"   상태 파일 경로: {status_file}")
+                print(f"   현재 작업 디렉토리: {os.getcwd()}")
+                
+        except Exception as e:
+            print(f"❌ 상태 파일 업데이트 실패: {e}")
+            print(f"   상세 오류: {type(e).__name__}: {str(e)}")
+    
+    def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs):
+        """LLM 시작 시 호출"""
+        content = {
+            "event_type": "llm_start",
+            "prompts": prompts,
+            "kwargs": kwargs
+        }
+        self.step_logger.log_step("llm_start", content)
+        
+        # 실시간 상태 업데이트 (파일 기반)
+        self._update_status_file(
+            status="LLM 분석 중",
+            step="AI가 요청을 분석하고 있습니다...",
+            message="🤖 LLM 분석 시작"
+        )
+    
+    def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
+        """도구 시작 시 호출"""
+        tool_name = serialized.get("name", "unknown")
+        content = {
+            "event_type": "tool_start",
+            "tool_name": tool_name,
+            "input_str": input_str,
+            "kwargs": kwargs
+        }
+        self.step_logger.log_step("tool_start", content)
+        
+        # 실시간 상태 업데이트 (파일 기반)
+        self._update_status_file(
+            status="도구 실행 중",
+            step=f"🔧 {tool_name} 도구 실행 중...",
+            message=f"🔧 {tool_name} 도구 실행 시작"
+        )
+    
+    def on_tool_end(self, output: str, **kwargs):
+        """도구 종료 시 호출"""
+        content = {
+            "event_type": "tool_end",
+            "output": output,
+            "kwargs": kwargs
+        }
+        self.step_logger.log_step("tool_end", content)
+        
+        # 실시간 상태 업데이트 (파일 기반)
+        self._update_status_file(
+            status="도구 완료",
+            step="✅ 도구 실행 완료",
+            message="✅ 도구 실행 완료"
+        )
+    
+    def on_agent_finish(self, output: str, **kwargs):
+        """에이전트 종료 시 호출"""
+        content = {
+            "event_type": "agent_finish",
+            "output": output,
+            "kwargs": kwargs
+        }
+        self.step_logger.log_step("agent_finish", content)
+        
+        # 실시간 상태 업데이트 (파일 기반)
+        self._update_status_file(
+            status="완료",
+            step="🎯 처리 완료",
+            message="🎯 에이전트 처리 완료"
+        )
 
 # Gmail OAuth 토큰 갱신 시스템 초기화
 def initialize_gmail_oauth():
@@ -50,15 +287,25 @@ print("🚀 Gmail OAuth 토큰 갱신 시스템 초기화 시작...")
 gmail_oauth_ready = initialize_gmail_oauth()
 
 # 로컬 모듈 import
-from enhanced_ticket_ui import display_ticket_list_with_sidebar, clear_ticket_selection, add_ai_recommendation_to_history
 from mail_list_ui import create_mail_list_ui, create_mail_list_with_sidebar
+from enhanced_ticket_ui import (
+    display_ticket_list_with_sidebar, 
+    clear_ticket_selection, 
+    add_ai_recommendation_to_history,
+    display_ticket_detail,
+    add_label_to_ticket,
+    delete_label_from_ticket
+)
 from unified_email_service import (
     get_email_provider_status, 
     get_available_providers, 
     get_default_provider, 
     EmailMessage, 
     process_emails_with_ticket_logic, 
-    get_raw_emails
+    get_raw_emails,
+    test_ticket_creation_logic,
+    test_email_fetch_logic,
+    test_work_related_filtering
 )
 
 # Memory-Based Ticket Processor Tool import
@@ -627,6 +874,13 @@ def handle_mail_query(params: Dict[str, Any]) -> Dict[str, Any]:
             logging.info(safe_format_string("process_tickets 액션 시작: provider={provider}, params={params}", provider=provider, params=params))
             
             try:
+                logging.info("🔍 process_emails_with_ticket_logic 함수 호출 시작...")
+                logging.info(f"🔍 호출 파라미터: provider={provider}, user_query={str(params)}")
+                
+                # 함수가 실제로 존재하는지 확인
+                logging.info(f"🔍 process_emails_with_ticket_logic 함수 객체: {process_emails_with_ticket_logic}")
+                logging.info(f"🔍 함수 타입: {type(process_emails_with_ticket_logic)}")
+                
                 response_data = process_emails_with_ticket_logic(provider, user_query=str(params))
                 logging.info(safe_format_string("process_emails_with_ticket_logic 결과: {response_data}", response_data=response_data))
                 
@@ -753,6 +1007,19 @@ class ClassifyEmailsTool(BaseTool):
             import traceback
             logging.error(safe_format_string("오류 상세: {traceback}", traceback=traceback.format_exc()))
             return json.dumps({"error": error_msg}, ensure_ascii=False)
+
+def convert_datetime_to_iso(data):
+    """datetime 객체를 ISO 문자열로 변환하여 JSON 직렬화 가능하게 만듭니다."""
+    if isinstance(data, dict):
+        return {key: convert_datetime_to_iso(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [convert_datetime_to_iso(item) for item in data]
+    elif hasattr(data, 'isoformat'):  # datetime 객체
+        return data.isoformat()
+    elif hasattr(data, 'strftime'):  # date 객체
+        return data.strftime('%Y-%m-%d')
+    else:
+        return data
 
 class ProcessTicketsTool(BaseTool):
     """이메일 조회, 티켓 생성/조회 등 전체 티켓 워크플로우를 처리하는 LangChain 도구"""
@@ -889,6 +1156,9 @@ JSON 형식으로만 응답:
                 st.session_state.latest_response = result_data
                 logging.info(safe_format_string("세션에 직접 저장 완료: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
             
+            # datetime 객체를 JSON 직렬화 가능하게 변환
+            result_data = convert_datetime_to_iso(result_data)
+            
             json_result = json.dumps(result_data, ensure_ascii=False, indent=2)
             logging.info(safe_format_string("반환할 JSON: {json_result}", json_result=json_result))
             return json_result
@@ -901,16 +1171,35 @@ JSON 형식으로만 응답:
 
 def init_session_state():
     """세션 상태 변수들을 초기화합니다."""
+    # 새로운 세션 ID 생성 (앱 시작 시 또는 대화 초기화 시)
+    new_session_id = f"session_{str(uuid.uuid4())[:12]}"
+    
+    # 기존 세션 폴더가 있으면 삭제
+    if 'session_id' in st.session_state:
+        old_session_id = st.session_state.session_id
+        old_session_path = f"logs/{old_session_id}"
+        if os.path.exists(old_session_path):
+            try:
+                import shutil
+                shutil.rmtree(old_session_path)
+                print(f"🗑️ 기존 세션 폴더 삭제: {old_session_path}")
+            except Exception as e:
+                print(f"⚠️ 기존 세션 폴더 삭제 실패: {e}")
+    
     defaults = {
         'main_agent': None,
         'messages': [],
         'latest_response': None,
         'email_provider': get_default_provider(),
         'email_connected': False,
+        'session_id': new_session_id,  # 세션 ID 추가
+        'chat_counter': 0,  # 채팅 카운터 추가
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    
+    print(f"🆔 새로운 세션 생성: {new_session_id}")
 
 def create_main_agent():
     """LLM과 도구를 사용하여 메인 에이전트를 생성합니다."""
@@ -1007,7 +1296,9 @@ def create_main_agent():
         return None
         
 def handle_query(query: str):
-    """사용자 쿼리를 받아 에이전트를 실행하고 상태를 업데이트합니다."""
+    """사용자 쿼리를 처리하는 함수 (스트리밍 버전)"""
+    
+    # 초기화
     clear_ticket_selection()
     st.session_state.latest_response = None
     st.session_state.messages.append(HumanMessage(content=query))
@@ -1015,88 +1306,133 @@ def handle_query(query: str):
     if not st.session_state.main_agent:
         st.error("에이전트가 초기화되지 않았습니다. 설정을 확인해주세요.")
         return
-
-    with st.spinner("🤖 AI가 요청을 분석하고 처리하는 중..."):
-        try:
-            chat_history = st.session_state.messages[:-1] # 현재 입력을 제외한 히스토리
-            response = st.session_state.main_agent.invoke({
-                "input": query,
-                "chat_history": chat_history
-            })
-            
-            # 도구 결과를 안정적으로 추출 (핵심 개선)
-            tool_output_str = None
-            logging.info(safe_format_string("전체 응답 구조: {keys}", keys=list(response.keys())))
-            logging.info(safe_format_string("응답 내용: {response}", response=response))
-            
-            # 1. intermediate_steps에서 도구 결과 추출 시도
-            if "intermediate_steps" in response and response["intermediate_steps"]:
-                logging.info(safe_format_string("intermediate_steps 발견: {count}개", count=len(response['intermediate_steps'])))
-                for i, step in enumerate(response["intermediate_steps"]):
-                    logging.info(safe_format_string("Step {i}: {step}", i=i, step=step))
-                    if len(step) >= 2:
-                        tool_output_str = step[1]
-                        logging.info(safe_format_string("도구 출력 추출: {tool_output_str}", tool_output_str=tool_output_str))
-                        break
-            
-            # 2. output에서 도구 결과 추출 시도 (LangChain 버전에 따라 다를 수 있음)
-            elif "output" in response:
-                output = response["output"]
-                logging.info(safe_format_string("output 내용: {output}", output=output))
-                
-                # output이 문자열이고 JSON이 포함되어 있는지 확인
-                if isinstance(output, str) and "{" in output and "}" in output:
-                    # JSON 부분 추출 시도
-                    try:
-                        start = output.find("{")
-                        end = output.rfind("}") + 1
-                        if start != -1 and end != -1:
-                            json_str = output[start:end]
-                            logging.info(safe_format_string("JSON 추출 시도: {json_str}", json_str=json_str))
-                            # 유효한 JSON인지 확인
-                            json.loads(json_str)
-                            tool_output_str = json_str
-                            logging.info("output에서 JSON 추출 성공")
-                    except:
-                        logging.info("output에서 JSON 추출 실패")
-            
-            if not tool_output_str:
-                logging.info("도구 결과를 찾을 수 없습니다.")
-
-            if tool_output_str:
-                logging.info(safe_format_string("도구 실행 결과: {tool_output_str}", tool_output_str=tool_output_str))
-                try:
-                    response_data = json.loads(tool_output_str)
-                    
-                    # UI 모드 결정 및 저장
-                    ui_mode = determine_ui_mode(query, response_data)
-                    response_data['ui_mode'] = ui_mode
-                    st.session_state.latest_response = response_data
-                    
-                    logging.info(safe_format_string("UI 모드 결정: {ui_mode}, display_mode: {display_mode}", ui_mode=ui_mode, display_mode=response_data.get('display_mode')))
-                    logging.info(safe_format_string("latest_response 설정 완료: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
-                    
-                    # 화면에 표시될 최종 AI 답변 생성
-                    final_message = response.get("output", "결과를 확인해주세요.")
-                    st.session_state.messages.append(AIMessage(content=final_message))
-                except json.JSONDecodeError as e:
-                    logging.error(safe_format_string("JSON 파싱 오류: {error}, tool_output_str: {tool_output_str}", error=e, tool_output_str=tool_output_str))
-                    st.error(safe_format_string("응답 데이터 파싱 오류: {error}", error=e))
-                except Exception as e:
-                    logging.error(safe_format_string("응답 처리 오류: {error}", error=e))
-                    st.error(safe_format_string("응답 처리 중 오류 발생: {error}", error=e))
-            else:
-                logging.info(safe_format_string("도구가 사용되지 않음. LLM 직접 응답: {output}", output=response.get('output')))
-                # 도구를 사용하지 않은 일반 답변
-                st.session_state.messages.append(AIMessage(content=response.get("output")))
-
-        except Exception as e:
-            error_msg = safe_format_string("처리 중 오류 발생: {error}", error=e)
-            st.error(error_msg)
-            logging.error(error_msg)
-            st.session_state.messages.append(AIMessage(content=error_msg))
     
-    st.rerun()
+    # 세션 ID 확인
+    session_id = st.session_state.get('session_id')
+    if not session_id:
+        st.error("세션 ID가 없습니다. 페이지를 새로고침해주세요.")
+        return
+    
+    # 새로운 채팅 ID 생성
+    st.session_state.chat_counter += 1
+    chat_counter = st.session_state.chat_counter
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    chat_id = f"chat_{chat_counter:03d}_{timestamp}"
+    
+    print(f"💬 새로운 채팅 시작: {chat_id} (세션: {session_id})")
+
+    # StepLogger 및 CallbackHandler 초기화
+    step_logger = StepLogger(session_id, chat_id)
+    callback_handler = FileLoggingCallbackHandler(step_logger)
+    
+    # 초기 상태를 파일에 저장
+    callback_handler._update_status_file(
+        status="시작",
+        step="초기화 중...",
+        message="🔄 처리 시작"
+    )
+    
+    # 실시간 출력을 위한 placeholder 생성
+    output_placeholder = st.empty()
+    status_placeholder = st.empty()
+    
+    try:
+        # 에이전트 스트리밍 실행
+        chat_history = st.session_state.messages[:-1]  # 현재 입력을 제외한 히스토리
+        current_output = ""
+        tool_output_str = None
+        final_response = None
+        
+        # 스트리밍 처리
+        for chunk in st.session_state.main_agent.stream({
+            "input": query,
+            "chat_history": chat_history
+        }, config={'callbacks': [callback_handler]}):
+            
+            # 실시간 상태 업데이트
+            if "intermediate_steps" in chunk:
+                # 중간 단계 결과 처리
+                steps = chunk["intermediate_steps"]
+                if steps:
+                    latest_step = steps[-1]
+                    if len(latest_step) >= 2:
+                        tool_output_str = latest_step[1]
+                        # 도구 실행 결과를 실시간으로 표시
+                        with status_placeholder.container():
+                            st.info(f"🔧 도구 실행 중: {latest_step[0]}")
+                            if isinstance(tool_output_str, str) and len(tool_output_str) > 100:
+                                st.text_area("도구 결과", tool_output_str[:500] + "...", height=100, disabled=True)
+                            else:
+                                st.text_area("도구 결과", str(tool_output_str), height=100, disabled=True)
+            
+            # 출력 내용 실시간 업데이트
+            if "output" in chunk:
+                current_output += chunk["output"]
+                final_response = chunk
+                
+                # 실시간으로 출력 내용 표시
+                with output_placeholder.container():
+                    st.markdown("### 🤖 AI 응답 (실시간)")
+                    st.markdown(current_output)
+                    
+                    # 처리 중임을 나타내는 인디케이터
+                    if not chunk.get("end", False):
+                        st.info("🔄 처리 중...")
+        
+        # 최종 결과 처리
+        if tool_output_str:
+            logging.info(safe_format_string("도구 실행 결과: {tool_output_str}", tool_output_str=tool_output_str))
+            try:
+                response_data = json.loads(tool_output_str)
+                
+                # UI 모드 결정 및 저장
+                ui_mode = determine_ui_mode(query, response_data)
+                response_data['ui_mode'] = ui_mode
+                st.session_state.latest_response = response_data
+                
+                logging.info(safe_format_string("UI 모드 결정: {ui_mode}, display_mode: {display_mode}", ui_mode=ui_mode, display_mode=response_data.get('display_mode')))
+                logging.info(safe_format_string("latest_response 설정 완료: {latest_response}", latest_response=st.session_state.get('latest_response') is not None))
+                
+                # 화면에 표시될 최종 AI 답변 생성
+                final_message = final_response.get("output", "결과를 확인해주세요.") if final_response else "결과를 확인해주세요."
+                st.session_state.messages.append(AIMessage(content=final_message))
+                
+                # 최종 완료 상태 표시
+                with status_placeholder.container():
+                    st.success("✅ 처리 완료!")
+                    
+            except json.JSONDecodeError as e:
+                logging.error(safe_format_string("JSON 파싱 오류: {error}, tool_output_str: {tool_output_str}", error=e, tool_output_str=tool_output_str))
+                st.error(safe_format_string("응답 데이터 파싱 오류: {error}", error=e))
+            except Exception as e:
+                logging.error(safe_format_string("응답 처리 오류: {error}", error=e))
+                st.error(safe_format_string("응답 처리 중 오류 발생: {error}", error=e))
+        else:
+            logging.info(safe_format_string("도구가 사용되지 않음. LLM 직접 응답: {output}", output=final_response.get('output') if final_response else "없음"))
+            # 도구를 사용하지 않은 일반 답변
+            final_message = final_response.get("output", "응답을 생성할 수 없습니다.") if final_response else "응답을 생성할 수 없습니다."
+            st.session_state.messages.append(AIMessage(content=final_message))
+            
+            # 최종 완료 상태 표시
+            with status_placeholder.container():
+                st.success("✅ 처리 완료!")
+
+    except Exception as e:
+        error_msg = safe_format_string("처리 중 오류 발생: {error}", error=e)
+        st.error(error_msg)
+        logging.error(error_msg)
+        st.session_state.messages.append(AIMessage(content=error_msg))
+        
+        # 오류 상태를 파일에 저장
+        callback_handler._update_status_file(
+            status="오류",
+            step=f"오류 발생: {str(e)}",
+            message="❌ 처리 중 오류가 발생했습니다"
+        )
+        
+        # 오류 상태 표시
+        with status_placeholder.container():
+            st.error("❌ 처리 중 오류가 발생했습니다")
 
 def main():
     """메인 애플리케이션 함수"""
@@ -1147,6 +1483,130 @@ def main():
         if st.button("🗑️ 대화 초기화", use_container_width=True):
             init_session_state() # 모든 상태 초기화
             st.rerun()
+        
+        # 디버깅 섹션 추가
+        st.markdown("---")
+        st.subheader("🔍 디버깅 도구")
+        
+        # add_label_to_ticket 함수 테스트
+        if st.button("🧪 add_label_to_ticket 함수 테스트"):
+            st.write("🔍 add_label_to_ticket 함수 테스트 시작...")
+            try:
+                # 함수가 import되었는지 확인
+                st.write(f"🔍 enhanced_ticket_ui에서 import된 함수들:")
+                st.write(f"  - add_label_to_ticket: {add_label_to_ticket}")
+                st.write(f"  - delete_label_from_ticket: {delete_label_from_ticket}")
+                
+                # 함수 타입 확인
+                st.write(f"🔍 add_label_to_ticket 타입: {type(add_label_to_ticket)}")
+                
+                # 간단한 테스트 호출 (ticket_id=1, label="테스트")
+                st.write("🔍 테스트 함수 호출 시도...")
+                test_result = add_label_to_ticket(1, "테스트레이블")
+                st.write(f"🔍 테스트 결과: {test_result}")
+                
+            except Exception as e:
+                st.error(f"❌ 테스트 중 오류: {str(e)}")
+                import traceback
+                st.write(f"🔍 오류 상세: {traceback.format_exc()}")
+        
+        # delete_label_from_ticket 함수 테스트 추가
+        if st.button("🧪 delete_label_from_ticket 함수 테스트"):
+            st.write("🔍 delete_label_from_ticket 함수 테스트 시작...")
+            try:
+                # 함수가 import되었는지 확인
+                st.write(f"🔍 delete_label_from_ticket 함수 상태:")
+                st.write(f"  - 함수 객체: {delete_label_from_ticket}")
+                st.write(f"  - 함수 타입: {type(delete_label_from_ticket)}")
+                st.write(f"  - 함수 호출 가능: {callable(delete_label_from_ticket)}")
+                
+                # 간단한 테스트 호출 (ticket_id=1, label="테스트레이블")
+                st.write("🔍 테스트 함수 호출 시도...")
+                test_result = delete_label_from_ticket(1, "테스트레이블")
+                st.write(f"🔍 테스트 결과: {test_result}")
+                
+            except Exception as e:
+                st.error(f"❌ 테스트 중 오류: {str(e)}")
+                import traceback
+                st.write(f"🔍 오류 상세: {traceback.format_exc()}")
+        
+        # 현재 세션 상태 확인
+        if st.button("📊 세션 상태 확인"):
+            st.write("🔍 현재 세션 상태:")
+            for key, value in st.session_state.items():
+                if key != 'messages':  # messages는 너무 길어서 제외
+                    st.write(f"  - {key}: {value}")
+        
+        # enhanced_ticket_ui 모듈 상태 확인
+        if st.button("🔧 모듈 상태 확인"):
+            st.write("🔍 enhanced_ticket_ui 모듈 상태:")
+            try:
+                import enhanced_ticket_ui
+                st.write(f"  - 모듈 로드됨: {enhanced_ticket_ui}")
+                st.write(f"  - add_label_to_ticket 함수: {getattr(enhanced_ticket_ui, 'add_label_to_ticket', '없음')}")
+                st.write(f"  - delete_label_from_ticket 함수: {getattr(enhanced_ticket_ui, 'add_label_to_ticket', '없음')}")
+            except Exception as e:
+                st.error(f"❌ 모듈 확인 중 오류: {str(e)}")
+        
+        # 테스트용 티켓 생성 버튼 추가
+        if st.button("🧪 테스트 티켓 생성"):
+            st.write("🧪 테스트 티켓 생성 시작...")
+            try:
+                # test_ticket_creation_logic 함수 호출
+                test_result = test_ticket_creation_logic("gmail")
+                st.write(f"🧪 테스트 결과: {test_result}")
+                
+                if test_result.get('success'):
+                    st.success(f"✅ 테스트 티켓 생성 성공! ID: {test_result.get('ticket_id')}")
+                else:
+                    st.error(f"❌ 테스트 티켓 생성 실패: {test_result.get('message', '알 수 없는 오류')}")
+                    
+            except Exception as e:
+                st.error(f"❌ 테스트 티켓 생성 중 오류: {str(e)}")
+                import traceback
+                st.write(f"🔍 오류 상세: {traceback.format_exc()}")
+        
+        # 테스트용 메일 조회 버튼 추가
+        if st.button("🧪 테스트 메일 조회"):
+            st.write("🧪 테스트 메일 조회 시작...")
+            try:
+                # test_email_fetch_logic 함수 호출
+                test_result = test_email_fetch_logic("gmail")
+                st.write(f"🧪 테스트 결과: {test_result}")
+                
+                if test_result.get('success'):
+                    if test_result.get('email_count', 0) > 0:
+                        st.success(f"✅ 테스트 메일 조회 성공! {test_result.get('email_count')}개 메일 발견")
+                        st.write(f"🔍 첫 번째 메일: {test_result.get('first_email')}")
+                    else:
+                        st.info(f"ℹ️ 테스트 메일 조회 성공! 안 읽은 메일이 없습니다")
+                else:
+                    st.error(f"❌ 테스트 메일 조회 실패: {test_result.get('error', '알 수 없는 오류')}")
+                    
+            except Exception as e:
+                st.error(f"❌ 테스트 메일 조회 중 오류: {str(e)}")
+                import traceback
+                st.write(f"🔍 오류 상세: {traceback.format_exc()}")
+        
+        # 테스트용 업무 관련 메일 필터링 버튼 추가
+        if st.button("🧪 테스트 업무 관련 메일 필터링"):
+            st.write("🧪 테스트 업무 관련 메일 필터링 시작...")
+            try:
+                # test_work_related_filtering 함수 호출
+                test_result = test_work_related_filtering()
+                st.write(f"🧪 테스트 결과: {test_result}")
+                
+                if test_result.get('success'):
+                    st.success(f"✅ 테스트 필터링 성공! {test_result.get('message')}")
+                    st.write(f"🔍 총 메일: {test_result.get('total_emails')}개")
+                    st.write(f"🔍 업무 관련: {test_result.get('work_related_count')}개")
+                else:
+                    st.error(f"❌ 테스트 필터링 실패: {test_result.get('error', '알 수 없는 오류')}")
+                    
+            except Exception as e:
+                st.error(f"❌ 테스트 필터링 중 오류: {str(e)}")
+                import traceback
+                st.write(f"🔍 오류 상세: {traceback.format_exc()}")
 
     # 에이전트 초기화 (한 번만 실행)
     if st.session_state.main_agent is None:
@@ -1159,13 +1619,165 @@ def main():
     
     # 탭 1: AI 챗봇
     with tab1:
+        # 세션 정보 표시
+        session_id = st.session_state.get('session_id', 'N/A')
+        chat_counter = st.session_state.get('chat_counter', 0)
+        st.info(f"🆔 **현재 세션**: {session_id} | 💬 **채팅 수**: {chat_counter}")
+        
+        # 자동 리프레시 설정 (실시간 업데이트를 위해)
+        session_id = st.session_state.get('session_id')
+        if session_id:
+            status_file = f"logs/{session_id}/current_status.json"
+            if os.path.exists(status_file):
+                try:
+                    with open(status_file, 'r', encoding='utf-8') as f:
+                        status_data = json.load(f)
+                    
+                    # 완료 상태가 아니면 자동 새로고침
+                    if status_data.get('status') != "완료":
+                        # 자동 새로고침을 위한 JavaScript 코드
+                        st.markdown("""
+                        <script>
+                        // 2초마다 자동 새로고침
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 2000);
+                        </script>
+                        """, unsafe_allow_html=True)
+                        
+                        # 또는 Streamlit의 자동 새로고침
+                        st.markdown("🔄 **자동 새로고침 중... (2초마다)**")
+                        
+                except Exception as e:
+                    pass
+        
         # 1. 채팅 기록 표시
         for message in st.session_state.messages:
             role = "user" if isinstance(message, HumanMessage) else "assistant"
             with st.chat_message(role):
                 st.markdown(message.content)
 
-        # 2. 최신 응답 데이터가 있으면 UI 컴포넌트 렌더링
+        # 2. 실시간 처리 상태 표시
+        session_id = st.session_state.get('session_id')
+        if session_id:
+            status_file = f"logs/{session_id}/current_status.json"
+            
+            # 상태 파일이 존재하면 읽어서 표시
+            if os.path.exists(status_file):
+                try:
+                    with open(status_file, 'r', encoding='utf-8') as f:
+                        status_data = json.load(f)
+                    
+                    status = status_data.get('status', '')
+                    step = status_data.get('step', '')
+                    message = status_data.get('message', '')
+                    timestamp = status_data.get('timestamp', '')
+                    
+                    # 완료 상태가 아니면 실시간 상태 표시
+                    if status != "완료":
+                        with st.container():
+                            st.markdown("### 🔄 실시간 처리 상태")
+                            
+                            # 현재 상태 표시
+                            if status == "시작":
+                                st.info(f"🔄 {step}")
+                            elif status == "LLM 분석 중":
+                                st.info(f"🤖 {step}")
+                            elif status == "도구 실행 중":
+                                st.info(f"🔧 {step}")
+                            elif status == "도구 완료":
+                                st.success(f"✅ {step}")
+                            elif status == "오류":
+                                st.error(f"❌ {step}")
+                            
+                            # 타임스탬프 표시
+                            if timestamp:
+                                time_str = timestamp[11:19] if len(timestamp) > 19 else timestamp
+                                st.caption(f"🕐 {time_str}")
+                            
+                            # 메시지 표시
+                            if message:
+                                st.text(f"📝 {message}")
+                            
+                            # 실시간 업데이트 안내
+                            st.markdown("---")
+                            st.markdown("""
+                            **💡 실시간 진행상황을 보려면:**
+                            - **F5** 키를 눌러 새로고침하세요
+                            - 또는 아래 **새로고침 버튼**을 클릭하세요
+                            """)
+                            
+                            # 새로고침 버튼과 자동 새로고침 옵션
+                            col1, col2 = st.columns([1, 2])
+                            
+                            with col1:
+                                if st.button("🔄 수동 새로고침", key="refresh_status"):
+                                    st.rerun()
+                            
+                            with col2:
+                                if st.checkbox("🔄 자동 새로고침 (3초마다)", key="auto_refresh"):
+                                    st.markdown("""
+                                    <script>
+                                    setTimeout(function() {
+                                        window.location.reload();
+                                    }, 3000);
+                                    </script>
+                                    """, unsafe_allow_html=True)
+                                    st.info("자동 새로고침이 활성화되었습니다.")
+                    
+                    # 완료 상태면 상태 파일 삭제
+                    elif status == "완료":
+                        try:
+                            os.remove(status_file)
+                        except:
+                            pass
+                            
+                except Exception as e:
+                    st.error(f"상태 파일 읽기 오류: {e}")
+
+        # 3. 채팅 입력
+        if prompt := st.chat_input("메시지를 입력하세요..."):
+            # 실시간 상태 표시를 위한 컨테이너 생성
+            status_placeholder = st.empty()
+            
+            # 처리 시작 상태 표시
+            with status_placeholder.container():
+                st.markdown("### 🔄 실시간 처리 상태")
+                st.info("🔄 처리를 시작합니다...")
+                try:
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    st.caption(f"🕐 {current_time}")
+                except Exception as e:
+                    st.caption("🕐 시간 표시 오류")
+                    print(f"시간 표시 오류: {e}")
+                
+                # 자동 새로고침 안내
+                st.markdown("""
+                **💡 실시간 진행상황을 보려면:**
+                - 브라우저에서 **F5** 키를 눌러 새로고침하세요
+                - 또는 **새로고침 버튼**을 클릭하세요
+                """)
+                
+                # 새로고침 버튼
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    if st.button("🔄 수동 새로고침", key="manual_refresh"):
+                        st.rerun()
+                with col2:
+                    if st.checkbox("🔄 자동 새로고침 (3초마다)", key="auto_refresh"):
+                        st.markdown("""
+                        <script>
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 3000);
+                        </script>
+                        """, unsafe_allow_html=True)
+                        st.info("자동 새로고침이 활성화되었습니다.")
+            
+            # 실제 처리 실행
+            handle_query(prompt)
+
+        # 4. 최신 응답 데이터가 있으면 UI 컴포넌트 렌더링
         st.markdown("---")
         st.subheader("🔍 디버깅 정보")
         
@@ -1183,16 +1795,134 @@ def main():
             
             if display_mode == 'tickets':
                 if ui_mode == 'button_list':
-                    display_ticket_list_with_sidebar(response_data, "요청하신 티켓 목록")
+                    # enhanced_ticket_ui의 함수 사용
+                    display_ticket_list_with_sidebar(response_data.get('tickets', []), 'button_list')
                 else:
-                    # 텍스트 형태로 간단히 표시
-                    tickets = response_data.get('tickets', [])
-                    if tickets:
-                        st.subheader("📋 티켓 요약")
-                        for i, ticket in enumerate(tickets, 1):
-                            st.write(safe_format_string("{i}. {title} - {status}", i=i, title=ticket.get('title', '제목 없음'), status=ticket.get('status', '상태 불명')))
-                    else:
-                        st.info("표시할 티켓이 없습니다.")
+                    # enhanced_ticket_ui의 테이블 형태 사용
+                    display_ticket_list_with_sidebar(response_data.get('tickets', []), 'table')
+                
+                # 선택된 티켓이 있으면 상세 정보 표시
+                if 'selected_ticket' in st.session_state and st.session_state.selected_ticket:
+                    st.markdown("---")
+                    # enhanced_ticket_ui의 display_ticket_detail 함수 사용
+                    display_ticket_detail(st.session_state.selected_ticket)
+                    
+                    # 추가: 레이블 관리 기능 직접 구현
+                    st.markdown("---")
+                    st.subheader("🏷️ 레이블 관리 (직접 구현)")
+                    
+                    # 현재 티켓 정보
+                    current_ticket = st.session_state.selected_ticket
+                    ticket_id = current_ticket.get('id') or current_ticket.get('ticket_id')
+                    
+                    if ticket_id:
+                        # 새 레이블 추가
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            new_label = st.text_input("새 레이블 입력", key=f"new_label_{ticket_id}")
+                        with col2:
+                            if st.button("레이블 추가", key=f"add_label_{ticket_id}"):
+                                st.write("🔍 버튼 클릭됨! 함수 호출 시작...")
+                                print(f"🔍 langchain_chatbot_app.py에서 레이블 추가 버튼 클릭됨: ticket_id={ticket_id}")
+                                
+                                if new_label and new_label.strip():
+                                    st.write(f"🔍 입력된 레이블: '{new_label.strip()}'")
+                                    print(f"🔍 입력된 레이블: '{new_label.strip()}'")
+                                    
+                                    try:
+                                        st.write("🔍 add_label_to_ticket 함수 호출 중...")
+                                        print(f"🔍 add_label_to_ticket 함수 호출 시작: ticket_id={ticket_id}, label='{new_label.strip()}'")
+                                        
+                                        # add_label_to_ticket 함수 직접 호출
+                                        success = add_label_to_ticket(int(ticket_id), new_label.strip())
+                                        
+                                        st.write(f"🔍 함수 호출 결과: {success}")
+                                        print(f"🔍 add_label_to_ticket 함수 호출 결과: {success}")
+                                        
+                                        if success:
+                                            st.success(f"레이블 '{new_label.strip()}' 추가 완료!")
+                                            st.session_state.refresh_trigger += 1
+                                            st.write("🔍 refresh_trigger 증가됨")
+                                        else:
+                                            st.error("레이블 추가 실패")
+                                    except Exception as e:
+                                        st.error(f"레이블 추가 중 오류: {str(e)}")
+                                        st.write(f"🔍 오류 상세: {str(e)}")
+                                        print(f"❌ 레이블 추가 중 오류: {str(e)}")
+                                        import traceback
+                                        print(f"❌ 오류 상세: {traceback.format_exc()}")
+                                else:
+                                    st.warning("레이블을 입력해주세요")
+                                    st.write("🔍 레이블이 입력되지 않음")
+                        
+                        # 현재 레이블 표시 및 삭제 기능
+                        st.write("**현재 레이블:**")
+                        
+                        # 테스트용 간단한 삭제 버튼 추가
+                        st.write("🔍 **테스트용 삭제 버튼:**")
+                        if st.button("🧪 테스트 삭제 (ticket_id=1, label='테스트')", key="test_delete_button"):
+                            st.write("🔍 테스트 삭제 버튼 클릭됨!")
+                            try:
+                                test_result = delete_label_from_ticket(1, "테스트")
+                                st.write(f"🔍 테스트 삭제 결과: {test_result}")
+                            except Exception as e:
+                                st.error(f"❌ 테스트 삭제 오류: {str(e)}")
+                        
+                        st.write("---")
+                        try:
+                            from sqlite_ticket_models import SQLiteTicketManager
+                            from datetime import datetime
+                            ticket_manager = SQLiteTicketManager()
+                            current_ticket_obj = ticket_manager.get_ticket_by_id(int(ticket_id))
+                            
+                            if current_ticket_obj and current_ticket_obj.labels:
+                                st.write(f"🔍 총 {len(current_ticket_obj.labels)}개의 레이블 발견")
+                                for idx, label in enumerate(current_ticket_obj.labels):
+                                    st.write(f"🔍 레이블 {idx}: '{label}' 처리 중...")
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        st.write(f"🏷️ {label}")
+                                    with col2:
+                                        # 간단한 키로 삭제 버튼 생성
+                                        delete_button_key = f"del_{ticket_id}_{idx}"
+                                        st.write(f"🔍 삭제 버튼 키: {delete_button_key}")
+                                        st.write(f"🔍 버튼 생성 시도...")
+                                        
+                                        if st.button("🗑️ 삭제", key=delete_button_key, type="secondary"):
+                                            st.write("🔍 🗑️ 삭제 버튼 클릭됨!")
+                                            st.write(f"🔍 삭제할 레이블: '{label}'")
+                                            st.write(f"🔍 티켓 ID: {ticket_id}")
+                                            print(f"🔍 langchain_chatbot_app.py에서 레이블 삭제 버튼 클릭됨: ticket_id={ticket_id}, label='{label}'")
+                                            
+                                            # 함수 존재 확인
+                                            st.write("🔍 delete_label_from_ticket 함수 확인:")
+                                            st.write(f"  - 함수 객체: {delete_label_from_ticket}")
+                                            st.write(f"  - 함수 타입: {type(delete_label_from_ticket)}")
+                                            st.write(f"  - 함수 호출 가능: {callable(delete_label_from_ticket)}")
+                                            
+                                            try:
+                                                # delete_label_from_ticket 함수 직접 호출
+                                                success = delete_label_from_ticket(int(ticket_id), label)
+                                                
+                                                st.write(f"🔍 삭제 함수 호출 결과: {success}")
+                                                print(f"🔍 delete_label_from_ticket 함수 호출 결과: {success}")
+                                                
+                                                if success:
+                                                    st.success(f"레이블 '{label}' 삭제 완료!")
+                                                    st.session_state.refresh_trigger += 1
+                                                    st.write("🔍 refresh_trigger 증가됨")
+                                                else:
+                                                    st.error("레이블 삭제 실패")
+                                            except Exception as e:
+                                                st.error(f"레이블 삭제 중 오류: {str(e)}")
+                                                st.write(f"🔍 오류 상세: {str(e)}")
+                                                print(f"❌ 레이블 삭제 중 오류: {str(e)}")
+                                                import traceback
+                                                print(f"❌ 오류 상세: {traceback.format_exc()}")
+                            else:
+                                st.info("설정된 레이블이 없습니다")
+                        except Exception as e:
+                            st.warning(f"레이블 로드 실패: {str(e)}")
                         
             elif display_mode == 'mail_list':
                 if ui_mode == 'button_list':

@@ -111,10 +111,50 @@ class MailAgent:
         return agent_executor
     
     def query(self, user_input: str) -> str:
-        """사용자 질문 처리"""
+        """사용자 질문 처리 (스트리밍 버전)"""
         try:
-            result = self.agent_executor.invoke({"input": user_input})
-            return result.get("output", "응답을 생성하지 못했습니다.")
+            # 스트리밍 처리
+            current_output = ""
+            final_result = None
+            
+            for chunk in self.agent_executor.stream({"input": user_input}):
+                if "output" in chunk:
+                    current_output += chunk["output"]
+                    final_result = chunk
+            
+            return final_result.get("output", "응답을 생성하지 못했습니다.") if final_result else "응답을 생성하지 못했습니다."
         except Exception as e:
             return f"처리 중 오류가 발생했습니다: {str(e)}"
+    
+    def query_with_streaming(self, user_input: str, output_placeholder=None):
+        """사용자 질문 처리 (실시간 스트리밍 표시)"""
+        try:
+            current_output = ""
+            final_result = None
+            
+            for chunk in self.agent_executor.stream({"input": user_input}):
+                if "output" in chunk:
+                    current_output += chunk["output"]
+                    final_result = chunk
+                    
+                    # 실시간 출력 업데이트
+                    if output_placeholder:
+                        with output_placeholder.container():
+                            st.markdown("### 🤖 AI 응답 (실시간)")
+                            st.markdown(current_output)
+                            if not chunk.get("end", False):
+                                st.info("🔄 처리 중...")
+            
+            # 최종 완료 표시
+            if output_placeholder:
+                with output_placeholder.container():
+                    st.success("✅ 처리 완료!")
+            
+            return final_result.get("output", "응답을 생성하지 못했습니다.") if final_result else "응답을 생성하지 못했습니다."
+        except Exception as e:
+            error_msg = f"처리 중 오류가 발생했습니다: {str(e)}"
+            if output_placeholder:
+                with output_placeholder.container():
+                    st.error(error_msg)
+            return error_msg
 

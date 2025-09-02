@@ -402,9 +402,11 @@ def process_todays_tasks() -> str:
         
         # 3. 기존의 처리 중인 티켓들도 추가
         existing_active_tickets = db_manager.get_all_tickets()
-        today_tickets = [t for t in existing_active_tickets if t.status in ["new", "in_progress"]]
+        # pending, approved, rejected 상태의 모든 티켓 포함 (new 상태 제거)
+        today_tickets = [t for t in existing_active_tickets if t.status in ["pending", "approved", "rejected"]]
         
-        for ticket in today_tickets[:5]:  # 추가로 최대 5개
+        # 기존 티켓들을 더 많이 포함하고, 레이블 정보도 추가
+        for ticket in today_tickets[:15]:  # 최대 15개로 증가
             # 이미 처리한 티켓이 아닌 경우만 추가
             if not any(r.get("ticket_id") == ticket.ticket_id for r in processed_results):
                 processed_results.append({
@@ -414,6 +416,7 @@ def process_todays_tasks() -> str:
                     "title": ticket.title,
                     "status": ticket.status,
                     "priority": ticket.priority,
+                    "labels": ticket.labels,  # 레이블 정보 추가
                     "created_at": ticket.created_at,
                     "action": "기존 활성"
                 })
@@ -468,10 +471,14 @@ if __name__ == "__main__":
     
     # 1. 안읽은 메일 조회 테스트
     print("\n1. 안읽은 메일 조회:")
-    result = get_todays_unread_emails.invoke({})
-    print(result[:200] + "..." if len(result) > 200 else result)
+    current_result = ""
+    for chunk in get_todays_unread_emails.stream({}):
+        current_result += chunk
+    print(current_result[:200] + "..." if len(current_result) > 200 else current_result)
     
     # 2. 전체 워크플로우 테스트
     print("\n2. 전체 워크플로우 테스트:")
-    result = process_todays_tasks.invoke({})
-    print(result[:300] + "..." if len(result) > 300 else result)
+    current_result = ""
+    for chunk in process_todays_tasks.stream({}):
+        current_result += chunk
+    print(current_result[:300] + "..." if len(current_result) > 300 else current_result)

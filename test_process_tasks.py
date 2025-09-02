@@ -50,22 +50,26 @@ def test_basic_functions():
     
     try:
         print("1. get_todays_unread_emails:")
-        result = get_todays_unread_emails.invoke({})
-        print(f"   결과 길이: {len(result)}")
-        print(f"   결과 미리보기: {result[:100]}...")
+        current_result = ""
+        for chunk in get_todays_unread_emails.stream({}):
+            current_result += chunk
+        print(f"   결과 길이: {len(current_result)}")
+        print(f"   결과 미리보기: {current_result[:100]}...")
         
     except Exception as e:
         print(f"   ❌ 오류: {e}")
     
     try:
         print("\n2. process_todays_tasks:")
-        result = process_todays_tasks.invoke({})
-        print(f"   결과 길이: {len(result)}")
-        print(f"   결과 미리보기: {result[:200]}...")
+        current_result = ""
+        for chunk in process_todays_tasks.stream({}):
+            current_result += chunk
+        print(f"   결과 길이: {len(current_result)}")
+        print(f"   결과 미리보기: {current_result[:200]}...")
         
         # JSON 파싱 테스트
         try:
-            parsed = json.loads(result)
+            parsed = json.loads(current_result)
             print(f"   ✅ JSON 파싱 성공")
             print(f"   📊 요약: {parsed.get('summary', {})}")
             print(f"   📝 작업 수: {len(parsed.get('tasks', []))}")
@@ -80,7 +84,7 @@ def test_basic_functions():
                 
         except json.JSONDecodeError as e:
             print(f"   ❌ JSON 파싱 실패: {e}")
-            print(f"   원본 결과: {result}")
+            print(f"   원본 결과: {current_result}")
         
     except Exception as e:
         print(f"   ❌ 오류: {e}")

@@ -10,6 +10,10 @@ from datetime import datetime
 from database_models import DatabaseManager, MailParser, Mail
 from enhanced_content_extractor import EnhancedContentExtractor
 
+# 세션 상태 초기화
+if 'refresh_trigger' not in st.session_state:
+    st.session_state.refresh_trigger = 0
+
 # 페이지 설정
 st.set_page_config(
     page_title="📧 Sample Mail Ticket Creator",
@@ -196,13 +200,13 @@ def main():
                 index=["new", "in_progress", "resolved", "closed"].index(selected_ticket.status)
             )
             
-            if st.button("상태 업데이트") and new_status != selected_ticket.status:
-                try:
-                    db_manager.update_ticket_status(selected_ticket.ticket_id, new_status, selected_ticket.status)
-                    st.success(f"✅ 티켓 상태가 '{new_status}'로 업데이트되었습니다!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ 상태 업데이트 중 오류가 발생했습니다: {str(e)}")
+                            if st.button("상태 업데이트") and new_status != selected_ticket.status:
+                    try:
+                        db_manager.update_ticket_status(selected_ticket.ticket_id, new_status, selected_ticket.status)
+                        st.success(f"✅ 티켓 상태가 '{new_status}'로 업데이트되었습니다!")
+                        st.session_state.refresh_trigger = st.session_state.get('refresh_trigger', 0) + 1
+                    except Exception as e:
+                        st.error(f"❌ 상태 업데이트 중 오류가 발생했습니다: {str(e)}")
 
 if __name__ == "__main__":
     main()
