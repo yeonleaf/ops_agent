@@ -1,3 +1,0 @@
-2025-09-01 21:16:12,920 - INFO - file_cache is only supported with oauth2client<4.0.0
-2025-09-01 21:16:13,846 - INFO - file_cache is only supported with oauth2client<4.0.0
-2025-09-01 21:16:14,132 - INFO - file_cache is only supported with oauth2client<4.0.0

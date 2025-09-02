@@ -13,3 +13,4 @@ __pycache__
 *.code-workspace
 /vector_db/
 /logs
+debug_logs_*.txt

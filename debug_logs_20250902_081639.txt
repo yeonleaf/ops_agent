@@ -1,2 +1,0 @@
-2025-09-02 08:17:50,412 - INFO - file_cache is only supported with oauth2client<4.0.0
-2025-09-02 08:17:50,453 - INFO - 📝 Jira 로깅 시작: logs/jira_sync_20250902_081750.log
