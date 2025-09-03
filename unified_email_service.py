@@ -196,9 +196,8 @@ class UnifiedEmailService:
         if 'date_before' in filters:
             query_parts.append(f"before:{filters['date_before']}")
         
-        # 기본 쿼리 (최신 메일부터)
-        if not query_parts:
-            query_parts.append("is:any")
+        # 기본 쿼리 (최신 메일부터) - Gmail API에서는 빈 쿼리 사용
+        # is:any는 Gmail API에서 유효하지 않으므로 빈 문자열 사용
         
         # 쿼리 조합
         final_query = " ".join(query_parts)

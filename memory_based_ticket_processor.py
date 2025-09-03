@@ -222,14 +222,17 @@ class MemoryBasedTicketProcessorTool(BaseTool):
             
             related_memories = []
             for i, ticket in enumerate(related_tickets, 1):
-                if ticket.get('ticket_id'):
-                    print(f"    🔍 티켓 {i} (ID: {ticket.get('ticket_id')})의 사용자 액션 조회 중...")
+                # Ticket 객체에서 ticket_id 추출
+                ticket_id = getattr(ticket, 'ticket_id', None) if hasattr(ticket, 'ticket_id') else (ticket.get('ticket_id') if hasattr(ticket, 'get') else None)
+                
+                if ticket_id:
+                    print(f"    🔍 티켓 {i} (ID: {ticket_id})의 사용자 액션 조회 중...")
                     
                     # SQLite RDB에서 직접 user_actions 조회
                     try:
                         from database_models import DatabaseManager
                         db_manager = DatabaseManager()
-                        user_actions = db_manager.get_user_actions_by_ticket_id(ticket.get('ticket_id'))
+                        user_actions = db_manager.get_user_actions_by_ticket_id(ticket_id)
                         
                         print(f"    📊 티켓 {i}에서 {len(user_actions)}개 액션 발견")
                         
