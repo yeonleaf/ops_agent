@@ -391,11 +391,36 @@ class TicketingAgent:
                 메모리 조회 결과
             """
             try:
+                # 티켓 조회 요청인지 확인
+                if query and any(keyword in query.lower() for keyword in ["티켓 조회", "전체 티켓", "티켓 목록", "생성된 티켓"]):
+                    from sqlite_ticket_models import SQLiteTicketManager
+                    
+                    ticket_manager = SQLiteTicketManager()
+                    tickets = ticket_manager.get_all_tickets()
+                    
+                    if not tickets:
+                        return "생성된 티켓이 없습니다."
+                    
+                    result = f"📋 전체 티켓 목록 ({len(tickets)}개):\n\n"
+                    for i, ticket in enumerate(tickets[:10], 1):  # 최대 10개만 표시
+                        result += f"{i}. {ticket.title}\n"
+                        result += f"   ID: {ticket.ticket_id}\n"
+                        result += f"   상태: {ticket.status}\n"
+                        result += f"   우선순위: {ticket.priority}\n"
+                        result += f"   레이블: {', '.join(ticket.labels) if ticket.labels else '없음'}\n"
+                        result += f"   생성일: {ticket.created_at[:10]}\n\n"
+                    
+                    if len(tickets) > 10:
+                        result += f"... 외 {len(tickets) - 10}개 더\n"
+                    
+                    return result
+                
+                # 기존 메모리 조회 로직
                 from database_models import DatabaseManager
                 
                 db_manager = DatabaseManager()
                 
-                if ticket_id:
+                if ticket_id and ticket_id.isdigit():
                     # 특정 티켓의 사용자 액션 조회
                     user_actions = db_manager.get_user_actions_by_ticket_id(int(ticket_id))
                     
@@ -436,7 +461,7 @@ class TicketingAgent:
         
         return Tool(
             name="memory_tool",
-            description="과거 사용자 피드백과 메모리를 조회합니다. 특정 티켓의 사용자 액션이나 전체 사용자 액션을 조회할 수 있습니다.",
+            description="과거 사용자 피드백과 메모리를 조회합니다. 특정 티켓의 사용자 액션이나 전체 사용자 액션을 조회할 수 있습니다. 티켓 조회 요청도 처리합니다.",
             func=memory_tool
         )
     

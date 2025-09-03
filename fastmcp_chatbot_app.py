@@ -12,12 +12,32 @@ from typing import List, Dict, Any, Optional
 # 라우터 에이전트 import
 from router_agent import create_router_agent
 
+# 새로운 UI import
+from enhanced_ticket_ui_v2 import (
+    load_tickets_from_db, 
+    display_ticket_button_list, 
+    display_ticket_detail,
+    create_mem0_memory
+)
+
 # 세션 상태 초기화
 if 'refresh_trigger' not in st.session_state:
     st.session_state.refresh_trigger = 0
 
 if 'conversation_history' not in st.session_state:
     st.session_state.conversation_history = []
+
+if 'selected_ticket' not in st.session_state:
+    st.session_state.selected_ticket = None
+
+if 'mem0_memory' not in st.session_state:
+    st.session_state.mem0_memory = create_mem0_memory("chatbot_user")
+
+if 'auto_switch_to_tickets' not in st.session_state:
+    st.session_state.auto_switch_to_tickets = False
+
+if 'ticket_message' not in st.session_state:
+    st.session_state.ticket_message = ""
 
 # 페이지 설정
 st.set_page_config(
@@ -75,11 +95,17 @@ class AgentNetworkChatBot:
             # 라우터 에이전트 호출
             result = self.router_client.call_agent(user_input)
             
+            # 응답 메시지 가져오기
+            response_message = result.get("message", "응답을 생성할 수 없습니다.")
+            
+            # 티켓 관련 요청인지 확인하고 간단한 메시지로 변경
+            simplified_message, should_switch = self._process_ticket_response(user_input, response_message)
+            
             # 대화 기록에 추가
             self.conversation_history.append({
                 "timestamp": datetime.now().isoformat(),
                 "user": user_input,
-                "assistant": result.get("message", "응답을 생성할 수 없습니다."),
+                "assistant": simplified_message,
                 "success": result.get("success", False),
                 "tools_used": result.get("tools_used", []),
                 "data": result.get("data")
@@ -88,7 +114,12 @@ class AgentNetworkChatBot:
             # 세션 상태 업데이트
             st.session_state.conversation_history = self.conversation_history
             
-            return result.get("message", "응답을 생성할 수 없습니다.")
+            # 티켓 관리 탭으로 자동 전환 설정
+            if should_switch:
+                st.session_state.auto_switch_to_tickets = True
+                st.session_state.ticket_message = simplified_message
+            
+            return simplified_message
             
         except Exception as e:
             error_message = f"입력 처리 중 오류가 발생했습니다: {str(e)}"
@@ -101,6 +132,34 @@ class AgentNetworkChatBot:
                 "data": None
             })
             return error_message
+    
+    def _process_ticket_response(self, user_input: str, response_message: str) -> tuple[str, bool]:
+        """티켓 관련 응답을 처리하고 간단한 메시지로 변경"""
+        user_input_lower = user_input.lower()
+        
+        # 티켓 관련 키워드 확인
+        ticket_keywords = [
+            "티켓", "ticket", "안 읽은 메일", "메일 처리", "메일 가져와서", 
+            "티켓으로", "티켓 만들어", "티켓 생성", "티켓 조회", "티켓 보여"
+        ]
+        
+        is_ticket_request = any(keyword in user_input_lower for keyword in ticket_keywords)
+        
+        if is_ticket_request:
+            # 티켓 생성 요청인지 확인
+            if any(keyword in user_input_lower for keyword in ["만들어", "생성", "처리", "가져와서"]):
+                return "✅ 티켓 생성 요청을 처리했습니다. 티켓 관리 탭에서 결과를 확인하세요.", True
+            
+            # 티켓 조회 요청인지 확인
+            elif any(keyword in user_input_lower for keyword in ["조회", "보여", "보여줘", "확인"]):
+                return "✅ 티켓 조회 요청을 처리했습니다. 티켓 관리 탭에서 티켓 목록을 확인하세요.", True
+            
+            # 기타 티켓 관련 요청
+            else:
+                return "✅ 티켓 관련 요청을 처리했습니다. 티켓 관리 탭에서 결과를 확인하세요.", True
+        
+        # 티켓 관련 요청이 아닌 경우 원본 응답 반환
+        return response_message, False
     
     def get_conversation_history(self) -> List[Dict[str, Any]]:
         """대화 기록 반환"""
@@ -121,6 +180,24 @@ def main():
     # 챗봇 인스턴스 생성
     chatbot = AgentNetworkChatBot()
     
+    # 탭 생성
+    tab1, tab2 = st.tabs(["💬 채팅", "🎫 티켓 관리"])
+    
+    # 자동 탭 전환 처리
+    if st.session_state.auto_switch_to_tickets:
+        st.session_state.auto_switch_to_tickets = False
+        st.success(st.session_state.ticket_message)
+        st.info("🎫 티켓 관리 탭으로 이동합니다...")
+        st.rerun()
+    
+    with tab1:
+        display_chat_interface(chatbot)
+    
+    with tab2:
+        display_ticket_management()
+
+def display_chat_interface(chatbot):
+    """채팅 인터페이스 표시"""
     # 사이드바 - 서버 상태 및 도구
     with st.sidebar:
         st.header("🔧 서버 상태")
@@ -171,75 +248,6 @@ def main():
                     st.text_area("결과", value=result, height=200)
                 except Exception as e:
                     st.error(f"❌ 에이전트 실행 실패: {str(e)}")
-        
-        elif selected_tool == "process_emails_with_ticket_logic":
-            provider_name = st.text_input("Provider Name", value="gmail")
-            user_query = st.text_input("User Query", value="안 읽은 메일 처리해주세요")
-            
-            if st.button("도구 실행"):
-                result = chatbot.mcp_client.call_tool(selected_tool, {
-                    "provider_name": provider_name,
-                    "user_query": user_query
-                })
-                st.json(result)
-        
-        elif selected_tool == "get_email_provider_status":
-            provider_name = st.text_input("Provider Name (선택사항)", value="")
-            
-            if st.button("도구 실행"):
-                result = chatbot.mcp_client.call_tool(selected_tool, {
-                    "provider_name": provider_name if provider_name else None
-                })
-                st.json(result)
-        
-        elif selected_tool == "get_mail_content_by_id":
-            message_id = st.text_input("Message ID", value="")
-            
-            if st.button("도구 실행"):
-                result = chatbot.mcp_client.call_tool(selected_tool, {
-                    "message_id": message_id
-                })
-                st.json(result)
-        
-        elif selected_tool == "create_ticket_from_single_email":
-            email_data = st.text_area("Email Data (JSON)", value='{"id": "test", "subject": "테스트", "sender": "test@example.com", "body": "테스트 내용"}')
-            
-            if st.button("도구 실행"):
-                try:
-                    email_data_dict = json.loads(email_data)
-                    result = chatbot.mcp_client.call_tool(selected_tool, {
-                        "email_data": email_data_dict
-                    })
-                    st.json(result)
-                except json.JSONDecodeError:
-                    st.error("JSON 형식이 올바르지 않습니다.")
-        
-        elif selected_tool == "fetch_emails_sync":
-            provider_name = st.text_input("Provider Name", value="gmail")
-            use_classifier = st.checkbox("Use Classifier", value=False)
-            max_results = st.number_input("Max Results", value=50, min_value=1, max_value=1000)
-            
-            if st.button("도구 실행"):
-                result = chatbot.mcp_client.call_tool(selected_tool, {
-                    "provider_name": provider_name,
-                    "use_classifier": use_classifier,
-                    "max_results": max_results
-                })
-                st.json(result)
-        
-        elif selected_tool in ["get_available_providers", "get_default_provider", "test_work_related_filtering", "get_server_status"]:
-            if st.button("도구 실행"):
-                result = chatbot.mcp_client.call_tool(selected_tool, {})
-                st.json(result)
-        
-        elif selected_tool in ["test_email_fetch_logic", "test_ticket_creation_logic"]:
-            provider_name = st.text_input("Provider Name", value="gmail")
-            
-            if st.button("도구 실행"):
-                result = chatbot.mcp_client.call_tool(selected_tool, {
-                    "provider_name": provider_name
-                })
-                st.json(result)
         
         st.markdown("---")
         
@@ -311,6 +319,26 @@ def main():
     # 푸터
     st.markdown("---")
     st.markdown("**FastMCP 기반 이메일 서비스 챗봇** | 🤖 AI-Powered Email Management")
+
+def display_ticket_management():
+    """티켓 관리 인터페이스 표시"""
+    st.header("🎫 티켓 관리 시스템")
+    
+    # 새로고침 버튼
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🔄 새로고침"):
+            st.session_state.refresh_trigger += 1
+            st.rerun()
+    
+    # 티켓 목록 또는 상세 보기
+    if st.session_state.selected_ticket:
+        display_ticket_detail(st.session_state.selected_ticket)
+    else:
+        # 티켓 목록 표시
+        tickets = load_tickets_from_db()
+        st.session_state.tickets = tickets
+        display_ticket_button_list(tickets)
 
 if __name__ == "__main__":
     main()

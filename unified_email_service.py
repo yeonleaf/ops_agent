@@ -21,6 +21,7 @@ import streamlit as st
 from email_provider import create_provider, get_available_providers, get_default_provider
 from email_models import EmailMessage, EmailSearchResult, EmailPriority
 from memory_based_ticket_processor import MemoryBasedTicketProcessorTool
+from mem0_memory_adapter import create_mem0_memory, add_ticket_event, search_related_memories
 
 # TicketCreationStatus enum 정의 (memory_based_ticket_processor에서 가져옴)
 class TicketCreationStatus(str):
@@ -621,65 +622,64 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
             work_related_emails = unread_emails
             logging.warning("⚠️ LLM 필터링 실패로 모든 메일을 업무 관련으로 간주")
         
-        # 3단계: 유사 메일 검색 및 LLM 기반 레이블 추천
-        logging.info("🔍 3단계: 유사 메일 검색 및 LLM 기반 레이블 추천 시작...")
+        # 3단계: mem0 기반 관련 기억 검색 및 LLM 기반 레이블 추천 (단순화됨)
+        logging.info("🔍 3단계: mem0 기반 관련 기억 검색 및 LLM 기반 레이블 추천 시작...")
         try:
-            from vector_db_models import VectorDBManager
-            from database_models import DatabaseManager
+            # mem0 메모리 인스턴스 생성
+            mem0_memory = create_mem0_memory("ai_system")
             
-            vector_db = VectorDBManager()
-            db_manager = DatabaseManager()
-            
-            # 각 업무 관련 메일에 대해 유사 메일 검색 및 LLM 레이블 추천
+            # 각 업무 관련 메일에 대해 mem0 기반 관련 기억 검색 및 LLM 레이블 추천
             for email in work_related_emails:
                 try:
-                    # 메일 내용을 Vector DB에 저장 (아직 저장되지 않은 경우)
+                    # 메일 내용 구성
                     email_content = f"제목: {email.subject}\n발신자: {email.sender}\n내용: {email.body}"
                     
-                    # 유사 메일 검색 - n_results 파라미터 사용
-                    similar_mails = vector_db.search_similar_mails(email_content, n_results=5)
-                    logging.info(f"🔍 메일 '{email.subject}' 유사 메일 {len(similar_mails)}개 발견")
+                    # mem0에서 관련 기억 검색 (기존의 복잡한 Vector DB + RDB 조회를 단 한 줄로 교체)
+                    related_memories = search_related_memories(
+                        memory=mem0_memory,
+                        email_content=email_content,
+                        limit=5
+                    )
                     
-                    # 유사 메일의 모든 user_action 수집
+                    logging.info(f"🔍 메일 '{email.subject}' 관련 기억 {len(related_memories)}개 발견")
+                    
+                    # 관련 기억에서 액션 정보 추출
                     similar_user_actions = []
                     action_summary = {}  # 액션 타입별 개수 집계
                     
-                    if similar_mails:
-                        for similar_mail in similar_mails:
-                            # 유사 메일과 관련된 user_action 조회
-                            mail_id = similar_mail.message_id if hasattr(similar_mail, 'message_id') else None
-                            if mail_id:
-                                # 해당 메일과 관련된 티켓의 모든 user_action 조회
-                                user_actions = db_manager.get_user_actions_by_message_id(mail_id)
-                                for action in user_actions:
-                                    similar_user_actions.append({
-                                        'action_type': action.action_type,
-                                        'old_value': action.old_value,
-                                        'new_value': action.new_value,
-                                        'created_at': action.created_at,
-                                        'user_id': action.user_id
-                                    })
-                                    
-                                    # 액션 타입별 개수 집계
-                                    action_key = f"{action.action_type}"
-                                    if action.action_type in ['label_added', 'label_deleted']:
-                                        if action.action_type == 'label_added':
-                                            action_key += f":{action.new_value}"
-                                        else:
-                                            action_key += f":{action.old_value}"
-                                    
-                                    action_summary[action_key] = action_summary.get(action_key, 0) + 1
+                    for memory in related_memories:
+                        metadata = memory.get('metadata', {})
+                        action_type = metadata.get('action_type', 'unknown')
+                        
+                        if action_type in ['label_updated', 'user_correction', 'ai_decision']:
+                            similar_user_actions.append({
+                                'action_type': action_type,
+                                'old_value': metadata.get('old_value', ''),
+                                'new_value': metadata.get('new_value', ''),
+                                'created_at': metadata.get('timestamp', ''),
+                                'user_id': metadata.get('user_id', 'unknown')
+                            })
+                            
+                            # 액션 타입별 개수 집계
+                            action_key = f"{action_type}"
+                            if action_type in ['label_updated', 'user_correction']:
+                                old_val = metadata.get('old_value', '')
+                                new_val = metadata.get('new_value', '')
+                                if old_val and new_val:
+                                    action_key += f":{old_val}→{new_val}"
+                            
+                            action_summary[action_key] = action_summary.get(action_key, 0) + 1
                     
                     # 액션 요약 로깅
                     if action_summary:
-                        logging.info(f"🔍 메일 '{email.subject}' 유사 user_action 요약:")
+                        logging.info(f"🔍 메일 '{email.subject}' mem0 관련 기억 요약:")
                         for action_key, count in sorted(action_summary.items()):
                             if count > 1:
                                 logging.info(f"   - {action_key}: {count}회")
                             else:
                                 logging.info(f"   - {action_key}: 1회")
                     
-                    logging.info(f"🔍 메일 '{email.subject}' 유사 user_action 총 {len(similar_user_actions)}개 수집")
+                    logging.info(f"🔍 메일 '{email.subject}' mem0 관련 기억 총 {len(similar_user_actions)}개 수집")
                     
                     # LLM에게 user_action 정보와 함께 레이블 추천 요청
                     try:
@@ -720,15 +720,15 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                                 for i, action in enumerate(set(other_actions), 1):  # 중복 제거
                                     action_summary += f"  {i}. {action}\n"
                             
-                            llm_prompt = f"""당신은 과거의 사용자 행동 데이터를 분석하여, 새로운 이메일에 가장 적합한 Jira 레이블을 추천하는 '전문 데이터 분석가'입니다.
+                            llm_prompt = f"""당신은 mem0에서 검색된 '관련 기억'을 분석하여, 새로운 이메일에 가장 적합한 Jira 레이블을 추천하는 '전문 데이터 분석가'입니다.
 
-당신에게는 '새로운 이메일 정보'와 '과거 행동 기록(user_actions)' 두 가지가 제공됩니다.
+당신에게는 '새로운 이메일 정보'와 'mem0 관련 기억' 두 가지가 제공됩니다.
 
-'과거 행동 기록'은 리스트 형태이며, 각 항목은 label_added: [레이블명] (사용자가 추가한 레이블), label_deleted: [레이블명] (사용자가 삭제한 레이블), ai_decision: [AI의 초기 판단]과 같은 형식으로 구성됩니다.
+'mem0 관련 기억'은 과거의 사용자 행동과 AI 결정을 요약한 맥락화된 정보입니다. 각 기억은 사용자가 직접 수행한 액션(레이블 수정, 티켓 생성 등)과 AI의 판단을 포함합니다.
 
-당신의 임무는, '과거 행동 기록'을 면밀히 분석하여 '새로운 이메일'과 가장 관련성이 높은 핵심 패턴을 찾아내는 것입니다.
+당신의 임무는, 'mem0 관련 기억'을 면밀히 분석하여 '새로운 이메일'과 가장 관련성이 높은 핵심 패턴을 찾아내는 것입니다.
 
-특히, label_added 기록은 사용자가 직접 정답을 알려준 것이므로 가장 중요한 단서입니다. 이 기록이 여러 번 나타난다면, 해당 레이블이 정답일 확률이 매우 높습니다.
+특히, 사용자가 직접 수행한 레이블 수정이나 티켓 생성 기록은 가장 중요한 단서입니다. 이 기록이 여러 번 나타난다면, 해당 레이블이 정답일 확률이 매우 높습니다.
 
 분석이 끝나면, 가장 적합하다고 생각하는 레이블을 최대 3개까지 추천해주세요.
 
@@ -737,14 +737,14 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
 발신자: {email.sender}
 내용: {email.body}
 
-=== 과거 행동 기록(user_actions) ===
+=== mem0 관련 기억 ===
 {action_summary}
 
 답변은 반드시 아래의 JSON 형식만을 사용해야 하며, 다른 어떤 설명도 추가해서는 안 됩니다.
 
 {{
   "recommended_labels": ["추천레이블_1", "추천레이블_2"],
-  "reasoning": "과거 사용자가 유사한 '서버 점검' 이메일에 대해 'NCMS_운영지원' 레이블을 3번 추가했기 때문에, 이 레이블을 가장 강력하게 추천합니다."
+  "reasoning": "mem0 관련 기억에서 과거 사용자가 유사한 '서버 점검' 이메일에 대해 'NCMS_운영지원' 레이블을 3번 추가했기 때문에, 이 레이블을 가장 강력하게 추천합니다."
 }}"""
                         else:
                             # user_action이 없는 경우 - 강력한 새로운 프롬프트
@@ -970,6 +970,19 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                         if new_ticket_id:
                             new_tickets_created += 1
                             logging.info(f"🔍 새로운 티켓 생성 완료: ID={new_ticket_id}")
+                            
+                            # mem0에 티켓 생성 기억 저장
+                            try:
+                                memory_id = add_ticket_event(
+                                    memory=mem0_memory,
+                                    event_type="ticket_created",
+                                    description=f"AI가 '{email.subject}' 이메일로부터 티켓 #{new_ticket_id}를 생성함 (레이블: {', '.join(all_labels)})",
+                                    ticket_id=str(new_ticket_id),
+                                    message_id=email.id
+                                )
+                                logging.info(f"🔍 mem0 티켓 생성 기억 저장 완료: {memory_id}")
+                            except Exception as mem_error:
+                                logging.warning(f"⚠️ mem0 기억 저장 실패: {mem_error}")
                         else:
                             logging.warning(f"⚠️ 티켓 생성 실패: {email.id}")
                     except Exception as e:

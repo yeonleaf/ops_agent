@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""
+Enhanced Ticket UI v2 - 개선된 티켓 관리 시스템
+- 버튼 리스트 형태로 티켓 표시
+- 상세 정보 표시 (제목, 원본 메일, description, 레이블)
+- 레이블 편집 기능 (띄어쓰기로 구분, mem0에 반영)
+"""
+
+import streamlit as st
+import sqlite3
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+import json
+from vector_db_models import VectorDBManager
+from sqlite_ticket_models import SQLiteTicketManager, Ticket
+from mem0_memory_adapter import create_mem0_memory, add_ticket_event
+
+# 페이지 설정
+st.set_page_config(
+    page_title="Enhanced Ticket Management v2",
+    page_icon="🎫",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# 세션 상태 초기화
+if 'tickets' not in st.session_state:
+    st.session_state.tickets = []
+if 'selected_ticket' not in st.session_state:
+    st.session_state.selected_ticket = None
+if 'refresh_trigger' not in st.session_state:
+    st.session_state.refresh_trigger = 0
+if 'mem0_memory' not in st.session_state:
+    st.session_state.mem0_memory = create_mem0_memory("ui_user")
+
+def load_tickets_from_db() -> List[Ticket]:
+    """데이터베이스에서 티켓을 로드합니다."""
+    try:
+        ticket_manager = SQLiteTicketManager()
+        tickets = ticket_manager.get_all_tickets()
+        return tickets
+    except Exception as e:
+        st.error(f"티켓 로드 중 오류: {str(e)}")
+        return []
+
+def display_ticket_button_list(tickets: List[Ticket]):
+    """버튼 리스트 형태로 티켓 목록을 표시합니다."""
+    if not tickets:
+        st.info("등록된 티켓이 없습니다.")
+        return
+    
+    st.subheader("📋 티켓 목록")
+    
+    # 상태별로 그룹화
+    status_groups = {}
+    for ticket in tickets:
+        status = ticket.status
+        if status not in status_groups:
+            status_groups[status] = []
+        status_groups[status].append(ticket)
+    
+    # 각 상태별로 티켓 표시
+    for status, status_tickets in status_groups.items():
+        with st.expander(f"📊 {status.upper()} ({len(status_tickets)}개)", expanded=True):
+            for ticket in status_tickets:
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    # 티켓 기본 정보
+                    st.write(f"**{ticket.title}**")
+                    st.write(f"📅 {ticket.created_at[:10]} | 🏷️ {', '.join(ticket.labels) if ticket.labels else '레이블 없음'}")
+                    if ticket.description and len(ticket.description) > 100:
+                        st.write(f"📝 {ticket.description[:100]}...")
+                    elif ticket.description:
+                        st.write(f"📝 {ticket.description}")
+                
+                with col2:
+                    # 상세보기 버튼
+                    if st.button("상세보기", key=f"detail_{ticket.ticket_id}"):
+                        st.session_state.selected_ticket = ticket
+                        st.session_state.refresh_trigger += 1
+                
+                with col3:
+                    # 상태 표시
+                    status_colors = {
+                        'pending': '🟡',
+                        'approved': '🟢', 
+                        'rejected': '🔴'
+                    }
+                    status_icon = status_colors.get(status, '❓')
+                    st.write(f"{status_icon} {status}")
+                
+                st.divider()
+
+def display_ticket_detail(ticket: Ticket):
+    """선택된 티켓의 상세 정보를 표시합니다."""
+    if not ticket:
+        st.warning("표시할 티켓이 선택되지 않았습니다.")
+        return
+    
+    st.subheader("🎫 티켓 상세 정보")
+    
+    # 기본 정보 섹션
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write(f"**ID:** {ticket.ticket_id}")
+        st.write(f"**제목:** {ticket.title}")
+        st.write(f"**상태:** {ticket.status}")
+        st.write(f"**우선순위:** {ticket.priority}")
+        st.write(f"**타입:** {ticket.ticket_type}")
+    
+    with col2:
+        st.write(f"**생성일:** {ticket.created_at}")
+        st.write(f"**수정일:** {ticket.updated_at}")
+        st.write(f"**담당자:** {ticket.reporter}")
+        st.write(f"**이메일:** {ticket.reporter_email}")
+    
+    # 설명 섹션
+    st.subheader("📝 설명")
+    st.write(ticket.description or "설명이 없습니다.")
+    
+    # 레이블 관리 섹션
+    st.subheader("🏷️ 레이블 관리")
+    
+    # 현재 레이블 표시
+    current_labels = ticket.labels if ticket.labels else []
+    if current_labels:
+        st.write("**현재 레이블:**")
+        for i, label in enumerate(current_labels):
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("❌", key=f"delete_label_{ticket.ticket_id}_{i}"):
+                    delete_label_from_ticket(ticket.ticket_id, label)
+                    st.session_state.refresh_trigger += 1
+                    st.rerun()
+            with col2:
+                st.write(f"• {label}")
+    else:
+        st.write("**현재 레이블:** 없음")
+    
+    # 레이블 편집
+    st.write("**레이블 편집:**")
+    st.write("💡 레이블을 띄어쓰기로 구분하여 입력하세요. 예: 버그 긴급 서버오류")
+    
+    new_labels_text = st.text_input(
+        "새 레이블 입력:",
+        value=" ".join(current_labels) if current_labels else "",
+        key=f"label_input_{ticket.ticket_id}",
+        help="띄어쓰기로 구분하여 여러 레이블을 입력할 수 있습니다."
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("레이블 저장", key=f"save_labels_{ticket.ticket_id}"):
+            # 띄어쓰기로 구분하여 레이블 리스트 생성
+            new_labels = [label.strip() for label in new_labels_text.split() if label.strip()]
+            
+            # 기존 레이블과 비교하여 변경사항 확인
+            old_labels = current_labels.copy()
+            
+            if new_labels != old_labels:
+                success = update_ticket_labels(ticket.ticket_id, new_labels, old_labels)
+                if success:
+                    st.success("✅ 레이블이 업데이트되었습니다!")
+                    # mem0에 레이블 변경 이벤트 기록
+                    record_label_change_to_mem0(ticket, old_labels, new_labels)
+                    st.session_state.refresh_trigger += 1
+                    st.rerun()
+                else:
+                    st.error("❌ 레이블 업데이트에 실패했습니다.")
+            else:
+                st.info("변경사항이 없습니다.")
+    
+    with col2:
+        if st.button("취소", key=f"cancel_labels_{ticket.ticket_id}"):
+            st.session_state.refresh_trigger += 1
+            st.rerun()
+    
+    # 원본 메일 섹션
+    st.subheader("📧 원본 메일")
+    
+    try:
+        vector_db = VectorDBManager()
+        mail = vector_db.get_mail_by_id(ticket.original_message_id)
+        
+        if mail:
+            # 메일 정보 표시
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write(f"**발신자:** {mail.sender}")
+                st.write(f"**제목:** {mail.subject}")
+            
+            with col2:
+                st.write(f"**수신일:** {mail.received_datetime}")
+                st.write(f"**상태:** {mail.status}")
+            
+            # 메일 내용 표시
+            st.subheader("📄 메일 내용")
+            
+            # 탭으로 원본/정제된 내용 구분
+            tab1, tab2 = st.tabs(["📝 정제된 내용", "📄 원본 내용"])
+            
+            with tab1:
+                if mail.refined_content:
+                    st.text_area("정제된 내용", mail.refined_content, height=300, disabled=True)
+                else:
+                    st.info("정제된 내용이 없습니다.")
+            
+            with tab2:
+                if mail.original_content:
+                    st.text_area("원본 내용", mail.original_content, height=300, disabled=True)
+                else:
+                    st.info("원본 내용이 없습니다.")
+            
+            # 요약 및 핵심 포인트
+            if mail.content_summary:
+                st.subheader("📋 요약")
+                st.write(mail.content_summary)
+            
+            if mail.key_points:
+                st.subheader("🎯 핵심 포인트")
+                for point in mail.key_points:
+                    st.write(f"• {point}")
+        else:
+            st.warning("메일을 찾을 수 없습니다.")
+    except Exception as e:
+        st.error(f"메일 로드 중 오류: {str(e)}")
+    
+    # 뒤로가기 버튼
+    if st.button("← 목록으로 돌아가기", key=f"back_{ticket.ticket_id}"):
+        st.session_state.selected_ticket = None
+        st.session_state.refresh_trigger += 1
+        st.rerun()
+
+def update_ticket_labels(ticket_id: int, new_labels: List[str], old_labels: List[str]) -> bool:
+    """티켓 레이블을 업데이트합니다."""
+    try:
+        ticket_manager = SQLiteTicketManager()
+        success = ticket_manager.update_ticket_labels(ticket_id, new_labels, old_labels)
+        return success
+    except Exception as e:
+        st.error(f"레이블 업데이트 중 오류: {str(e)}")
+        return False
+
+def delete_label_from_ticket(ticket_id: int, label: str):
+    """티켓에서 특정 레이블을 삭제합니다."""
+    try:
+        ticket_manager = SQLiteTicketManager()
+        current_ticket = ticket_manager.get_ticket_by_id(ticket_id)
+        
+        if current_ticket and current_ticket.labels:
+            old_labels = current_ticket.labels.copy()
+            if label in old_labels:
+                old_labels.remove(label)
+                success = ticket_manager.update_ticket_labels(ticket_id, old_labels, current_ticket.labels)
+                if success:
+                    st.success(f"✅ 레이블 '{label}'이 삭제되었습니다!")
+                    # mem0에 레이블 삭제 이벤트 기록
+                    record_label_change_to_mem0(current_ticket, current_ticket.labels, old_labels)
+                    st.session_state.refresh_trigger += 1
+                    st.rerun()
+                else:
+                    st.error("❌ 레이블 삭제에 실패했습니다.")
+            else:
+                st.warning(f"레이블 '{label}'을 찾을 수 없습니다.")
+        else:
+            st.warning("티켓을 찾을 수 없거나 레이블이 없습니다.")
+    except Exception as e:
+        st.error(f"레이블 삭제 중 오류: {str(e)}")
+
+def record_label_change_to_mem0(ticket: Ticket, old_labels: List[str], new_labels: List[str]):
+    """레이블 변경을 mem0에 기록합니다."""
+    try:
+        mem0_memory = st.session_state.mem0_memory
+        
+        # 변경사항 분석
+        added_labels = [label for label in new_labels if label not in old_labels]
+        removed_labels = [label for label in old_labels if label not in new_labels]
+        
+        # 추가된 레이블 기록
+        for label in added_labels:
+            event_description = f"사용자가 티켓 #{ticket.ticket_id} '{ticket.title}'에 레이블 '{label}'을 추가함"
+            add_ticket_event(
+                memory=mem0_memory,
+                event_type="label_added",
+                description=event_description,
+                ticket_id=str(ticket.ticket_id),
+                message_id=ticket.original_message_id,
+                old_value="",
+                new_value=label,
+                user_id="ui_user"
+            )
+        
+        # 삭제된 레이블 기록
+        for label in removed_labels:
+            event_description = f"사용자가 티켓 #{ticket.ticket_id} '{ticket.title}'에서 레이블 '{label}'을 삭제함"
+            add_ticket_event(
+                memory=mem0_memory,
+                event_type="label_deleted",
+                description=event_description,
+                ticket_id=str(ticket.ticket_id),
+                message_id=ticket.original_message_id,
+                old_value=label,
+                new_value="",
+                user_id="ui_user"
+            )
+        
+        print(f"✅ 레이블 변경사항이 mem0에 기록되었습니다: 추가={added_labels}, 삭제={removed_labels}")
+        
+    except Exception as e:
+        print(f"⚠️ mem0 레이블 변경 기록 실패: {str(e)}")
+
+def main():
+    st.title("🎫 Enhanced Ticket Management System v2")
+    
+    # 사이드바
+    with st.sidebar:
+        st.header("🔧 설정")
+        
+        # 새로고침 버튼
+        if st.button("🔄 데이터 새로고침"):
+            st.session_state.refresh_trigger += 1
+            st.rerun()
+        
+        st.divider()
+        
+        # 통계 정보
+        st.subheader("📊 통계")
+        tickets = load_tickets_from_db()
+        if tickets:
+            status_counts = {}
+            for ticket in tickets:
+                status = ticket.status
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            for status, count in status_counts.items():
+                st.write(f"**{status}:** {count}개")
+        else:
+            st.write("티켓이 없습니다.")
+    
+    # 메인 컨텐츠
+    if st.session_state.selected_ticket:
+        display_ticket_detail(st.session_state.selected_ticket)
+    else:
+        # 티켓 목록 표시
+        tickets = load_tickets_from_db()
+        st.session_state.tickets = tickets
+        display_ticket_button_list(tickets)
+
+if __name__ == "__main__":
+    main()
