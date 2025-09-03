@@ -10,6 +10,10 @@ import os
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# 환경 변수 로드
+load_dotenv()
 
 # Streamlit은 UI 피드백용으로만 제한적으로 사용
 import streamlit as st
@@ -618,8 +622,8 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
             work_related_emails = unread_emails
             logging.warning("⚠️ LLM 필터링 실패로 모든 메일을 업무 관련으로 간주")
         
-        # 3단계: 유사 메일 검색 및 레이블 생성
-        logging.info("🔍 3단계: 유사 메일 검색 및 레이블 생성 시작...")
+        # 3단계: 유사 메일 검색 및 LLM 기반 레이블 추천
+        logging.info("🔍 3단계: 유사 메일 검색 및 LLM 기반 레이블 추천 시작...")
         try:
             from vector_db_models import VectorDBManager
             from database_models import DatabaseManager
@@ -627,7 +631,7 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
             vector_db = VectorDBManager()
             db_manager = DatabaseManager()
             
-            # 각 업무 관련 메일에 대해 유사 메일 검색
+            # 각 업무 관련 메일에 대해 유사 메일 검색 및 LLM 레이블 추천
             for email in work_related_emails:
                 try:
                     # 메일 내용을 Vector DB에 저장 (아직 저장되지 않은 경우)
@@ -637,51 +641,246 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                     similar_mails = vector_db.search_similar_mails(email_content, n_results=5)
                     logging.info(f"🔍 메일 '{email.subject}' 유사 메일 {len(similar_mails)}개 발견")
                     
-                    # user_action 테이블에서 유사한 패턴의 레이블 조회
-                    similar_labels = []
+                    # 유사 메일의 모든 user_action 수집
+                    similar_user_actions = []
+                    action_summary = {}  # 액션 타입별 개수 집계
+                    
                     if similar_mails:
                         for similar_mail in similar_mails:
-                            # 유사 메일과 관련된 user_action에서 레이블 정보 추출
+                            # 유사 메일과 관련된 user_action 조회
                             mail_id = similar_mail.message_id if hasattr(similar_mail, 'message_id') else None
                             if mail_id:
-                                # 해당 메일과 관련된 티켓의 user_action 조회
+                                # 해당 메일과 관련된 티켓의 모든 user_action 조회
                                 user_actions = db_manager.get_user_actions_by_message_id(mail_id)
                                 for action in user_actions:
-                                    if action.action_type == 'label_added':
-                                        similar_labels.append(action.new_value)
-                                        logging.info(f"🔍 유사 메일에서 레이블 발견: {action.new_value}")
+                                    similar_user_actions.append({
+                                        'action_type': action.action_type,
+                                        'old_value': action.old_value,
+                                        'new_value': action.new_value,
+                                        'created_at': action.created_at,
+                                        'user_id': action.user_id
+                                    })
+                                    
+                                    # 액션 타입별 개수 집계
+                                    action_key = f"{action.action_type}"
+                                    if action.action_type in ['label_added', 'label_deleted']:
+                                        if action.action_type == 'label_added':
+                                            action_key += f":{action.new_value}"
+                                        else:
+                                            action_key += f":{action.old_value}"
+                                    
+                                    action_summary[action_key] = action_summary.get(action_key, 0) + 1
                     
-                    # 중복 제거
-                    similar_labels = list(set(similar_labels))
-                    logging.info(f"🔍 메일 '{email.subject}' 유사 레이블: {similar_labels}")
+                    # 액션 요약 로깅
+                    if action_summary:
+                        logging.info(f"🔍 메일 '{email.subject}' 유사 user_action 요약:")
+                        for action_key, count in sorted(action_summary.items()):
+                            if count > 1:
+                                logging.info(f"   - {action_key}: {count}회")
+                            else:
+                                logging.info(f"   - {action_key}: 1회")
                     
-                    # email 객체에 레이블 정보를 딕셔너리로 저장 (EmailMessage 객체 수정 불가)
-                    if not hasattr(email, '_suggested_labels'):
-                        email._suggested_labels = similar_labels
-                    else:
-                        email._suggested_labels = similar_labels
+                    logging.info(f"🔍 메일 '{email.subject}' 유사 user_action 총 {len(similar_user_actions)}개 수집")
+                    
+                    # LLM에게 user_action 정보와 함께 레이블 추천 요청
+                    try:
+                        # LLM 프롬프트에 user_action 정보 포함
+                        if similar_user_actions:
+                            # user_action이 있는 경우 - 강력한 새로운 프롬프트
+                            
+                            # 액션 타입별로 그룹화하여 표시
+                            label_actions = []
+                            status_actions = []
+                            other_actions = []
+                            
+                            for action in similar_user_actions[:15]:  # 최대 15개
+                                if action['action_type'] in ['label_added', 'label_deleted']:
+                                    if action['action_type'] == 'label_added':
+                                        label_actions.append(f"'{action['new_value']}' 추가")
+                                    else:
+                                        label_actions.append(f"'{action['old_value']}' 삭제")
+                                elif action['action_type'] == 'status_change':
+                                    status_actions.append(f"{action['old_value']} → {action['new_value']}")
+                                else:
+                                    other_actions.append(f"{action['action_type']}: {action['new_value'] or action['old_value'] or '값 없음'}")
+                            
+                            # 액션 요약 생성
+                            action_summary = ""
+                            if label_actions:
+                                action_summary += "\n레이블 관련 행동:\n"
+                                for i, action in enumerate(set(label_actions), 1):  # 중복 제거
+                                    action_summary += f"  {i}. {action}\n"
+                            
+                            if status_actions:
+                                action_summary += f"\n상태 변경 행동:\n"
+                                for i, action in enumerate(set(status_actions), 1):  # 중복 제거
+                                    action_summary += f"  {i}. {action}\n"
+                            
+                            if other_actions:
+                                action_summary += f"\n기타 행동:\n"
+                                for i, action in enumerate(set(other_actions), 1):  # 중복 제거
+                                    action_summary += f"  {i}. {action}\n"
+                            
+                            llm_prompt = f"""당신은 과거의 사용자 행동 데이터를 분석하여, 새로운 이메일에 가장 적합한 Jira 레이블을 추천하는 '전문 데이터 분석가'입니다.
+
+당신에게는 '새로운 이메일 정보'와 '과거 행동 기록(user_actions)' 두 가지가 제공됩니다.
+
+'과거 행동 기록'은 리스트 형태이며, 각 항목은 label_added: [레이블명] (사용자가 추가한 레이블), label_deleted: [레이블명] (사용자가 삭제한 레이블), ai_decision: [AI의 초기 판단]과 같은 형식으로 구성됩니다.
+
+당신의 임무는, '과거 행동 기록'을 면밀히 분석하여 '새로운 이메일'과 가장 관련성이 높은 핵심 패턴을 찾아내는 것입니다.
+
+특히, label_added 기록은 사용자가 직접 정답을 알려준 것이므로 가장 중요한 단서입니다. 이 기록이 여러 번 나타난다면, 해당 레이블이 정답일 확률이 매우 높습니다.
+
+분석이 끝나면, 가장 적합하다고 생각하는 레이블을 최대 3개까지 추천해주세요.
+
+=== 새로운 이메일 정보 ===
+제목: {email.subject}
+발신자: {email.sender}
+내용: {email.body}
+
+=== 과거 행동 기록(user_actions) ===
+{action_summary}
+
+답변은 반드시 아래의 JSON 형식만을 사용해야 하며, 다른 어떤 설명도 추가해서는 안 됩니다.
+
+{{
+  "recommended_labels": ["추천레이블_1", "추천레이블_2"],
+  "reasoning": "과거 사용자가 유사한 '서버 점검' 이메일에 대해 'NCMS_운영지원' 레이블을 3번 추가했기 때문에, 이 레이블을 가장 강력하게 추천합니다."
+}}"""
+                        else:
+                            # user_action이 없는 경우 - 강력한 새로운 프롬프트
+                            llm_prompt = f"""당신은 이메일 내용을 분석하여 가장 적합한 Jira 레이블을 추천하는 '전문 데이터 분석가'입니다.
+
+당신에게는 '새로운 이메일 정보'가 제공됩니다. 과거 사용자 행동 기록은 없지만, 이메일의 내용, 제목, 발신자를 종합적으로 분석하여 적절한 레이블을 추천해야 합니다.
+
+당신의 임무는 이메일의 핵심 내용을 파악하고, 업무적 맥락에서 가장 적합한 레이블을 찾아내는 것입니다.
+
+분석 기준:
+- 이메일의 주요 주제나 내용과 관련된 레이블
+- 발신자나 도메인과 관련된 레이블  
+- 우선순위나 긴급도를 나타내는 레이블
+- 업무 유형을 나타내는 레이블
+
+분석이 끝나면, 가장 적합하다고 생각하는 레이블을 최대 3개까지 추천해주세요.
+
+=== 새로운 이메일 정보 ===
+제목: {email.subject}
+발신자: {email.sender}
+내용: {email.body}
+
+답변은 반드시 아래의 JSON 형식만을 사용해야 하며, 다른 어떤 설명도 추가해서는 안 됩니다.
+
+{{
+  "recommended_labels": ["추천레이블_1", "추천레이블_2"],
+  "reasoning": "이메일 내용에서 '서버 점검' 관련 내용이 확인되어 'NCMS_운영지원' 레이블을 추천합니다."
+}}"""
+                        
+                        # LLM에게 레이블 추천 요청 (직접 Azure OpenAI 호출)
+                        try:
+                            from langchain_openai import AzureChatOpenAI
+                            from langchain_core.prompts import ChatPromptTemplate
+                            from langchain_core.output_parsers import StrOutputParser
+                            import os
+                            
+                            # Azure OpenAI 설정
+                            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+                            deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+                            api_key = os.getenv("AZURE_OPENAI_API_KEY")
+                            api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+                            
+                            if not all([azure_endpoint, deployment_name, api_key]):
+                                raise ValueError("Azure OpenAI 환경 변수가 설정되지 않았습니다.")
+                            
+                            # LLM 인스턴스 생성
+                            llm = AzureChatOpenAI(
+                                azure_endpoint=azure_endpoint,
+                                deployment_name=deployment_name,
+                                openai_api_key=api_key,
+                                openai_api_version=api_version,
+                                temperature=0.3
+                            )
+                            
+                            # 프롬프트 템플릿 생성
+                            prompt_template = ChatPromptTemplate.from_messages([
+                                ("system", "당신은 이메일 내용을 분석하여 적절한 Jira 레이블을 추천하는 전문가입니다."),
+                                ("human", "{prompt}")
+                            ])
+                            
+                            # 체인 생성
+                            chain = prompt_template | llm | StrOutputParser()
+                            
+                            # LLM 호출
+                            llm_response = chain.invoke({"prompt": llm_prompt})
+                            
+                        except Exception as llm_error:
+                            logging.error(f"⚠️ 직접 LLM 호출 실패: {str(llm_error)}")
+                            # 폴백: Memory-Based Ticket Processor 사용
+                            from memory_based_ticket_processor import create_memory_based_ticket_processor
+                            processor = create_memory_based_ticket_processor()
+                            llm_response = processor._run(
+                                email_content=llm_prompt,
+                                email_subject=email.subject,
+                                email_sender=email.sender,
+                                message_id=email.id
+                            )
+                        
+                        # LLM 응답 파싱
+                        import json
+                        import re
+                        try:
+                            # LLM 응답에서 JSON 부분 추출
+                            json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
+                            if json_match:
+                                json_str = json_match.group()
+                                llm_data = json.loads(json_str)
+                                
+                                # LLM 응답에서 레이블 추출 (새로운 JSON 형식에 맞게)
+                                suggested_labels = llm_data.get('recommended_labels', [])
+                                reasoning = llm_data.get('reasoning', 'LLM 추천')
+                                
+                                logging.info(f"🔍 LLM 레이블 추천: {suggested_labels}")
+                                logging.info(f"🔍 추천 이유: {reasoning}")
+                                
+                                # email 객체에 LLM 추천 레이블 저장
+                                email._llm_suggested_labels = suggested_labels
+                                email._llm_reasoning = reasoning
+                                
+                            else:
+                                # JSON 형식이 아닌 경우 기본 레이블
+                                email._llm_suggested_labels = ['일반', '업무']
+                                email._llm_reasoning = 'JSON 형식 아님'
+                                logging.warning(f"⚠️ LLM 응답에서 JSON 형식을 찾을 수 없음: {llm_response[:200]}")
+                                
+                        except json.JSONDecodeError as e:
+                            # JSON 파싱 실패 시 기본 레이블
+                            email._llm_suggested_labels = ['일반', '업무']
+                            email._llm_reasoning = 'JSON 파싱 실패'
+                            logging.warning(f"⚠️ LLM 응답 JSON 파싱 실패: {str(e)}")
+                            logging.warning(f"⚠️ 원본 응답: {llm_response[:200]}")
+                            
+                    except Exception as llm_error:
+                        logging.error(f"⚠️ LLM 레이블 추천 실패: {str(llm_error)}")
+                        # LLM 실패 시 기본 레이블
+                        email._llm_suggested_labels = ['일반', '업무']
+                        email._llm_reasoning = 'LLM 오류'
                     
                 except Exception as e:
                     logging.error(f"⚠️ 메일 '{email.subject}' 유사 메일 검색 실패: {str(e)}")
-                    # 오류 발생 시 빈 레이블 설정
-                    if not hasattr(email, '_suggested_labels'):
-                        email._suggested_labels = []
-                    else:
-                        email._suggested_labels = []
+                    # 오류 발생 시 기본 레이블 설정
+                    email._llm_suggested_labels = ['일반', '업무']
+                    email._llm_reasoning = '오류 발생'
                     continue
             
-            logging.info(f"🔍 유사 메일 검색 및 레이블 생성 완료")
+            logging.info(f"🔍 유사 메일 검색 및 LLM 기반 레이블 추천 완료")
             
         except Exception as e:
-            logging.error(f"❌ 유사 메일 검색 및 레이블 생성 실패: {str(e)}")
+            logging.error(f"❌ 유사 메일 검색 및 LLM 기반 레이블 추천 실패: {str(e)}")
             import traceback
             logging.error(f"❌ 오류 상세: {traceback.format_exc()}")
             # 오류 발생 시 기본 레이블 설정
             for email in work_related_emails:
-                if not hasattr(email, '_suggested_labels'):
-                    email._suggested_labels = []
-                else:
-                    email._suggested_labels = []
+                email._llm_suggested_labels = ['일반', '업무']
+                email._llm_reasoning = '시스템 오류'
         
         # 4단계: 새로운 티켓 생성 (업무 관련 메일만)
         logging.info("🔍 4단계: 새로운 티켓 생성 시작...")
@@ -710,11 +909,40 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                         # 티켓 생성 - insert_ticket 메서드 사용
                         from sqlite_ticket_models import Ticket
                         
-                        # LLM이 제안한 레이블과 우선순위 사용
+                        # LLM 분석 결과와 LLM 레이블 추천 결과 통합
                         llm_analysis = getattr(email, '_llm_analysis', {})
-                        suggested_labels = llm_analysis.get('suggested_labels', []) or []
+                        llm_suggested_labels = llm_analysis.get('suggested_labels', []) or []
                         suggested_priority = llm_analysis.get('priority', 'Medium')
                         suggested_ticket_type = llm_analysis.get('ticket_type', 'email')
+                        
+                        # 3단계에서 LLM이 user_action 기반으로 추천한 레이블
+                        llm_action_based_labels = getattr(email, '_llm_suggested_labels', []) or []
+                        llm_reasoning = getattr(email, '_llm_reasoning', '')
+                        
+                        # 두 LLM 레이블 소스를 통합 (user_action 기반 레이블 우선)
+                        all_labels = []
+                        
+                        # 1. user_action 기반 LLM 추천 레이블 우선 추가
+                        for label in llm_action_based_labels:
+                            if label not in all_labels:
+                                all_labels.append(label)
+                                logging.info(f"🔍 user_action 기반 LLM 레이블 추가: {label}")
+                        
+                        # 2. 일반 LLM 추천 레이블 추가 (중복되지 않는 것만)
+                        for label in llm_suggested_labels:
+                            if label not in all_labels:
+                                all_labels.append(label)
+                                logging.info(f"🔍 일반 LLM 추천 레이블 추가: {label}")
+                        
+                        # 3. 레이블이 없으면 기본 레이블 추가
+                        if not all_labels:
+                            all_labels = ['일반', '업무']
+                            logging.info(f"🔍 기본 레이블 추가: {all_labels}")
+                        
+                        logging.info(f"🔍 최종 통합 레이블: {all_labels}")
+                        logging.info(f"🔍 user_action 기반 LLM 레이블: {llm_action_based_labels}")
+                        logging.info(f"🔍 일반 LLM 추천 레이블: {llm_suggested_labels}")
+                        logging.info(f"🔍 LLM 추천 이유: {llm_reasoning}")
                         
                         # Ticket 객체 생성 (모든 필수 인자 포함)
                         current_time = datetime.now().isoformat()
@@ -728,13 +956,13 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                             ticket_type=suggested_ticket_type,  # LLM이 제안한 티켓 타입 사용
                             reporter=email.sender or '발신자 없음',
                             reporter_email=email.sender or '발신자 없음',
-                            labels=suggested_labels,  # LLM이 제안한 레이블 사용
+                            labels=all_labels,  # 통합된 레이블 사용
                             created_at=current_time,
                             updated_at=current_time
                         )
                         
                         logging.info(f"🔍 새로운 티켓 객체 생성: {new_ticket}")
-                        logging.info(f"🔍 LLM 제안 레이블: {suggested_labels}")
+                        logging.info(f"🔍 최종 통합 레이블: {all_labels}")
                         logging.info(f"🔍 LLM 제안 우선순위: {suggested_priority}")
                         logging.info(f"🔍 LLM 제안 티켓 타입: {suggested_ticket_type}")
                         
