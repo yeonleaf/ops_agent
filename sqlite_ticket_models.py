@@ -401,36 +401,38 @@ class SQLiteTicketManager:
             
             conn.commit()
     
-    def update_ticket_description(self, ticket_id: int, new_description: str):
-        """티켓 설명 업데이트"""
-        current_time = datetime.now().isoformat()
-        
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            cursor = conn.cursor()
+    def update_ticket_description(self, ticket_id: int, new_description: str, old_description: str) -> bool:
+        """티켓 description 업데이트"""
+        try:
+            current_time = datetime.now().isoformat()
             
-            # 기존 설명 조회
-            cursor.execute("SELECT description FROM tickets WHERE ticket_id = ?", (ticket_id,))
-            result = cursor.fetchone()
-            if not result:
-                raise ValueError(f"티켓 {ticket_id}를 찾을 수 없습니다.")
-            
-            old_description = result[0] or ""
-            
-            # 티켓 설명 업데이트
-            cursor.execute("""
-                UPDATE tickets 
-                SET description = ?, updated_at = ?
-                WHERE ticket_id = ?
-            """, (new_description, current_time, ticket_id))
-            
-            # 이벤트 기록
-            cursor.execute("""
-                INSERT INTO ticket_events (ticket_id, event_type, old_value, new_value, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (ticket_id, "description_change", old_description, new_description, current_time))
-            
-            conn.commit()
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                cursor = conn.cursor()
+                
+                # 티켓 description 업데이트
+                cursor.execute("""
+                    UPDATE tickets 
+                    SET description = ?, updated_at = ?
+                    WHERE ticket_id = ?
+                """, (new_description, current_time, ticket_id))
+                
+                # 이벤트 기록
+                cursor.execute("""
+                    INSERT INTO ticket_events (ticket_id, event_type, old_value, new_value, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (ticket_id, "description_change", old_description or "", new_description or "", current_time))
+                
+                conn.commit()
+                print(f"✅ RDB description 업데이트 완료: ticket_id={ticket_id}")
+                return True
+                
+        except Exception as e:
+            print(f"❌ RDB description 업데이트 실패: {str(e)}")
+            import traceback
+            print(f"❌ 오류 상세: {traceback.format_exc()}")
+            return False
+    
     
     def get_ticket_events(self, ticket_id: int) -> List[TicketEvent]:
         """티켓의 모든 이벤트 조회"""

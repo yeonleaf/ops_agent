@@ -1035,10 +1035,33 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None)
                 }
                 tickets.append(ticket_data)
             
+            # 업무용이 아니라고 판단된 메일들 수집 (confidence가 높은 것들만)
+            non_work_emails = []
+            for email in unread_emails:
+                if hasattr(email, '_llm_analysis') and email._llm_analysis:
+                    analysis = email._llm_analysis
+                    if not analysis.get('is_work_related', True) and analysis.get('confidence', 0) > 0.7:
+                        non_work_emails.append({
+                            'id': email.id,
+                            'subject': email.subject,
+                            'sender': email.sender,
+                            'body': email.body[:200] + '...' if len(email.body) > 200 else email.body,
+                            'received_date': str(email.received_date),
+                            'confidence': analysis.get('confidence', 0),
+                            'reason': analysis.get('reason', ''),
+                            'priority': analysis.get('priority', 'Low'),
+                            'suggested_labels': analysis.get('suggested_labels', []),
+                            'ticket_type': analysis.get('ticket_type', 'Task')
+                        })
+            
+            # confidence 순으로 정렬 (높은 것부터)
+            non_work_emails.sort(key=lambda x: x['confidence'], reverse=True)
+            
             # 결과 반환
             result = {
                 'display_mode': 'tickets',
                 'tickets': tickets,
+                'non_work_emails': non_work_emails,
                 'new_tickets_created': new_tickets_created,
                 'existing_tickets_found': len(tickets) - new_tickets_created,
                 'summary': { 'total_tasks': len(tickets) },

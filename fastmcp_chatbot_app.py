@@ -20,6 +20,9 @@ from enhanced_ticket_ui_v2 import (
     create_mem0_memory
 )
 
+# AI 추천 기능 import
+from ticket_ai_recommender import get_ticket_ai_recommendation
+
 # 세션 상태 초기화
 if 'refresh_trigger' not in st.session_state:
     st.session_state.refresh_trigger = 0
@@ -38,6 +41,9 @@ if 'auto_switch_to_tickets' not in st.session_state:
 
 if 'ticket_message' not in st.session_state:
     st.session_state.ticket_message = ""
+
+if 'non_work_emails' not in st.session_state:
+    st.session_state.non_work_emails = []
 
 # 페이지 설정
 st.set_page_config(
@@ -81,6 +87,50 @@ class RouterAgentClient:
             "available_agents": ["ViewingAgent", "AnalysisAgent", "TicketingAgent"],
             "message": "에이전트 네트워크가 정상적으로 실행 중입니다."
         }
+
+def display_correction_ui(non_work_emails: List[Dict[str, Any]]):
+    """업무용이 아니라고 판단된 메일들의 정정 UI를 표시합니다."""
+    if not non_work_emails:
+        return
+    
+    st.markdown("---")
+    st.markdown("### 🔍 업무용이 아니라고 판단된 메일")
+    st.markdown("※ confidence가 높은 메일들입니다. 티켓 생성이 필요하다면 정정 버튼을 클릭하세요.")
+    
+    for i, email in enumerate(non_work_emails):
+        with st.expander(f"📧 {email.get('subject', '제목 없음')} (신뢰도: {email.get('confidence', 0):.2f})"):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.markdown(f"**발신자:** {email.get('sender', 'N/A')}")
+                st.markdown(f"**수신일:** {email.get('received_date', 'N/A')}")
+                st.markdown(f"**판단 근거:** {email.get('reason', 'N/A')}")
+                st.markdown(f"**내용 미리보기:** {email.get('body', 'N/A')}")
+            
+            with col2:
+                if st.button(f"정정", key=f"correction_{i}", type="primary"):
+                    # 정정 요청 처리
+                    try:
+                        from specialist_agents import create_ticketing_agent
+                        
+                        ticketing_agent = create_ticketing_agent()
+                        correction_result = ticketing_agent.execute(
+                            f"correction_tool을 사용해서 다음 메일을 정정해주세요: "
+                            f"email_id={email.get('id')}, "
+                            f"email_subject='{email.get('subject')}', "
+                            f"email_sender='{email.get('sender')}', "
+                            f"email_body='{email.get('body')}'"
+                        )
+                        
+                        st.success("✅ 정정 완료!")
+                        st.info(correction_result)
+                        
+                        # 세션 상태 업데이트
+                        st.session_state.refresh_trigger += 1
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ 정정 실패: {str(e)}")
 
 class AgentNetworkChatBot:
     """에이전트 네트워크 기반 챗봇 클래스"""
@@ -146,6 +196,18 @@ class AgentNetworkChatBot:
         is_ticket_request = any(keyword in user_input_lower for keyword in ticket_keywords)
         
         if is_ticket_request:
+            # 티켓 관련 요청인 경우 non_work_emails 정보 추출 시도
+            try:
+                # response_message에서 non_work_emails 정보가 있는지 확인
+                if "업무용이 아니라고 판단된 메일" in response_message:
+                    # 실제 데이터는 unified_email_service에서 가져와야 하지만,
+                    # 여기서는 간단히 세션 상태에 플래그만 설정
+                    st.session_state.has_non_work_emails = True
+                else:
+                    st.session_state.has_non_work_emails = False
+            except Exception as e:
+                st.session_state.has_non_work_emails = False
+            
             # 티켓 생성 요청인지 확인
             if any(keyword in user_input_lower for keyword in ["만들어", "생성", "처리", "가져와서"]):
                 return "✅ 티켓 생성 요청을 처리했습니다. 티켓 관리 탭에서 결과를 확인하세요.", True
@@ -325,10 +387,59 @@ def display_ticket_management():
     st.header("🎫 티켓 관리 시스템")
     
     # 새로고침 버튼
-    col1, col2 = st.columns([1, 4])
+    col1, col2, col3 = st.columns([1, 1, 3])
     with col1:
         if st.button("🔄 새로고침"):
             st.session_state.refresh_trigger += 1
+            st.rerun()
+    
+    with col2:
+        if st.button("🤖 전체 AI 추천"):
+            with st.spinner("모든 티켓에 대한 AI 추천을 생성하고 있습니다..."):
+                tickets = load_tickets_from_db()
+                if tickets:
+                    recommendations = []
+                    for ticket in tickets[:3]:  # 최대 3개 티켓만 처리
+                        recommendation = get_ticket_ai_recommendation(ticket.ticket_id)
+                        if recommendation.get("success"):
+                            recommendations.append({
+                                "ticket_id": ticket.ticket_id,
+                                "title": ticket.title,
+                                "recommendation": recommendation.get("recommendation", "")
+                            })
+                    
+                    if recommendations:
+                        st.session_state["bulk_recommendations"] = recommendations
+                        st.success(f"✅ {len(recommendations)}개 티켓의 AI 추천이 생성되었습니다!")
+                    else:
+                        st.warning("AI 추천을 생성할 수 없습니다.")
+                else:
+                    st.info("추천할 티켓이 없습니다.")
+    
+    # 정정 UI 표시 (non_work_emails가 있는 경우)
+    if hasattr(st.session_state, 'has_non_work_emails') and st.session_state.has_non_work_emails:
+        # 실제 non_work_emails 데이터를 가져와서 표시
+        try:
+            from unified_email_service import process_emails_with_ticket_logic
+            result = process_emails_with_ticket_logic("gmail", "안 읽은 메일을 바탕으로 티켓을 생성해줘")
+            non_work_emails = result.get('non_work_emails', [])
+            if non_work_emails:
+                display_correction_ui(non_work_emails)
+        except Exception as e:
+            st.error(f"정정 UI 로드 실패: {str(e)}")
+    
+    
+    # 대량 AI 추천 결과 표시
+    if "bulk_recommendations" in st.session_state:
+        st.subheader("🤖 전체 AI 추천 결과")
+        recommendations = st.session_state["bulk_recommendations"]
+        
+        for rec in recommendations:
+            with st.expander(f"🎫 티켓 #{rec['ticket_id']}: {rec['title']}", expanded=False):
+                st.markdown(rec["recommendation"])
+        
+        if st.button("🗑️ 추천 결과 지우기"):
+            del st.session_state["bulk_recommendations"]
             st.rerun()
     
     # 티켓 목록 또는 상세 보기

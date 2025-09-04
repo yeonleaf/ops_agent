@@ -46,9 +46,16 @@ class ViewingAgent:
 ## 사용 가능한 도구
 - view_emails_tool: 이메일을 조회하고 목록을 반환합니다
 
+## 중요: 발신자 정보 해석 주의사항
+- 이메일 조회 결과에서 "발신자" 필드에 표시된 정보를 정확히 그대로 사용하세요
+- 실제 발신자 이메일 주소나 이름을 확인하고, 추측하지 마세요
+- 예: 발신자가 "조주연 <juyeonjo633@gmail.com>"로 표시되면, "조주연" 또는 "juyeonjo633@gmail.com"에서 보낸 것으로 정확히 표시하세요
+- Microsoft, Google 등의 회사명으로 추측하지 말고, 실제 발신자 정보만 사용하세요
+
 ## 응답 형식
 - 조회된 이메일 목록을 명확하고 읽기 쉽게 정리하여 제공합니다
 - 각 이메일의 제목, 발신자, 날짜, 읽음 상태 등을 포함합니다
+- 발신자 정보는 도구에서 반환된 정확한 정보를 그대로 사용하세요
 - 한국어로 친근하고 전문적인 톤으로 응답합니다"""
 
         # 도구 정의
@@ -90,8 +97,35 @@ class ViewingAgent:
                 elif "읽은" in query_lower and "안" not in query_lower:
                     filters['is_read'] = True
                 
-                # 개수 제한 추출
+                # 발신자 필터 추출
                 import re
+                sender_patterns = [
+                    r'([가-힣a-zA-Z\s]+)에서\s+보낸',
+                    r'([가-힣a-zA-Z\s]+)이\s+보낸',
+                    r'([가-힣a-zA-Z\s]+)가\s+보낸',
+                    r'from\s+([가-힣a-zA-Z\s@.]+)',
+                    r'발신자[:\s]*([가-힣a-zA-Z\s@.]+)'
+                ]
+                
+                for pattern in sender_patterns:
+                    sender_match = re.search(pattern, query_lower)
+                    if sender_match:
+                        sender = sender_match.group(1).strip()
+                        # Microsoft, Google, Apple 등의 회사명을 이메일 도메인으로 변환
+                        if sender.lower() in ['microsoft', 'ms']:
+                            filters['sender'] = 'microsoft.com'
+                        elif sender.lower() in ['google', 'gmail']:
+                            filters['sender'] = 'gmail.com'
+                        elif sender.lower() in ['apple']:
+                            filters['sender'] = 'apple.com'
+                        else:
+                            # 정확한 이메일 주소나 도메인이 아닌 경우 필터링하지 않음
+                            # (예: "조주연"이라는 이름으로 검색하는 경우)
+                            if '@' in sender or '.' in sender:
+                                filters['sender'] = sender
+                        break
+                
+                # 개수 제한 추출
                 limit_match = re.search(r'(\d+)개', query)
                 if limit_match:
                     filters['limit'] = int(limit_match.group(1))
@@ -200,12 +234,12 @@ class AnalysisAgent:
     
     def _create_classify_emails_tool(self) -> Tool:
         """이메일 분류 도구 생성"""
-        def classify_emails_tool(emails_json: str) -> str:
+        def classify_emails_tool(emails_data: str = "") -> str:
             """
-            이메일을 분석하고 분류합니다.
+            ViewingAgent로부터 받은 이메일 데이터를 분석하고 분류합니다.
             
             Args:
-                emails_json: 분석할 이메일 데이터 (JSON 문자열)
+                emails_data: ViewingAgent로부터 받은 이메일 데이터 (JSON 문자열 또는 텍스트)
             
             Returns:
                 이메일 분석 및 분류 결과
@@ -214,20 +248,29 @@ class AnalysisAgent:
                 import json
                 
                 # 이메일 데이터 파싱
+                if not emails_data:
+                    return "분석할 이메일 데이터가 제공되지 않았습니다. ViewingAgent로부터 이메일 데이터를 받아야 합니다."
+                
+                # JSON 형태인지 확인
                 try:
-                    emails_data = json.loads(emails_json)
+                    if isinstance(emails_data, str) and emails_data.strip().startswith('['):
+                        emails_list = json.loads(emails_data)
+                    else:
+                        # 텍스트 형태인 경우 파싱 시도
+                        emails_list = [emails_data]
                 except (json.JSONDecodeError, TypeError):
                     # JSON이 아닌 경우 문자열로 처리
-                    emails_data = emails_json
+                    emails_list = [emails_data]
                 
-                if not emails_data:
+                if not emails_list:
                     return "분석할 이메일 데이터가 없습니다."
                 
                 # LLM을 사용하여 이메일 분석
                 analysis_prompt = f"""
-다음 이메일들을 분석하여 업무 관련성을 판단하고 분류해주세요:
+다음 {len(emails_list)}개의 이메일들을 분석하여 업무 관련성을 판단하고 분류해주세요:
 
-이메일 데이터: {emails_data}
+이메일 데이터:
+{emails_list}
 
 각 이메일에 대해 다음을 분석해주세요:
 1. 업무 관련성 (업무용/개인용)
@@ -235,7 +278,18 @@ class AnalysisAgent:
 3. 핵심 내용 요약
 4. 필요한 조치사항
 
-분석 결과를 명확하고 구체적으로 설명해주세요."""
+분석 결과를 다음과 같은 형식으로 정리해주세요:
+
+📧 이메일 분석 결과 ({len(emails_list)}개)
+
+**업무용 이메일:**
+- [이메일 제목]: [우선순위] - [핵심 내용 요약]
+
+**개인용 이메일:**
+- [이메일 제목]: [핵심 내용 요약]
+
+**권장사항:**
+- 업무용 이메일 중 티켓 생성이 필요한 항목들을 명시해주세요."""
 
                 # LLM 호출
                 response = self.llm.invoke([HumanMessage(content=analysis_prompt)])
@@ -247,7 +301,7 @@ class AnalysisAgent:
         
         return Tool(
             name="classify_emails_tool",
-            description="이메일을 분석하고 업무 관련성, 우선순위, 핵심 내용을 분류합니다.",
+            description="ViewingAgent로부터 받은 이메일 데이터를 분석하여 업무용과 개인용으로 분류하고, 업무 관련성, 우선순위, 핵심 내용을 분석합니다.",
             func=classify_emails_tool
         )
     
@@ -303,7 +357,18 @@ class TicketingAgent:
 
 ## 사용 가능한 도구
 - process_tickets_tool: 이메일을 분석하여 티켓을 생성하고 처리합니다
-- memory_tool: 과거 사용자 피드백과 메모리를 조회합니다
+- memory_tool: 티켓 조회 및 과거 사용자 피드백과 메모리를 조회합니다
+- correction_tool: 업무용이 아니라고 판단된 메일을 정정하여 티켓을 생성합니다
+
+## 중요: 티켓 조회 시 주의사항
+- memory_tool에서 "📋 전체 티켓 목록"으로 시작하는 결과가 나오면, 이는 실제 데이터베이스에 저장된 티켓 목록입니다
+- 이 경우 "생성된 티켓이 없습니다"라고 답하지 말고, 실제 티켓 목록을 사용자에게 보여주세요
+- 사용자 액션 기록만 보고 티켓이 없다고 판단하지 마세요
+
+## 중요: 티켓 생성 요청 처리
+- "안읽은 메일을 바탕으로 티켓을 생성해줘", "메일을 티켓으로 만들어줘" 등의 요청은 process_tickets_tool을 사용해야 합니다
+- memory_tool은 기존 티켓 조회용이므로, 신규 티켓 생성에는 process_tickets_tool을 사용하세요
+- 티켓 생성 요청과 티켓 조회 요청을 구분하여 적절한 도구를 선택하세요
 
 ## 응답 형식
 - 티켓 생성/처리 결과를 상세하고 구조화된 형태로 제공합니다
@@ -311,7 +376,7 @@ class TicketingAgent:
 - 한국어로 전문적이고 신뢰할 수 있는 톤으로 응답합니다"""
 
         # 도구 정의
-        self.tools = [self._create_process_tickets_tool(), self._create_memory_tool()]
+        self.tools = [self._create_process_tickets_tool(), self._create_memory_tool(), self._create_correction_tool()]
         
         # 에이전트 생성
         self.agent = self._create_agent()
@@ -344,6 +409,7 @@ class TicketingAgent:
                 
                 if result.get('display_mode') == 'tickets':
                     tickets = result.get('tickets', [])
+                    non_work_emails = result.get('non_work_emails', [])
                     new_tickets = result.get('new_tickets_created', 0)
                     existing_tickets = result.get('existing_tickets_found', 0)
                     
@@ -363,6 +429,20 @@ class TicketingAgent:
                         if len(tickets) > 5:
                             response += f"... 외 {len(tickets) - 5}개 더\n"
                     
+                    # 업무용이 아니라고 판단된 메일들 추가
+                    if non_work_emails:
+                        response += f"\n🔍 업무용이 아니라고 판단된 메일 ({len(non_work_emails)}개):\n"
+                        response += "※ confidence가 높은 메일들입니다. 티켓 생성이 필요하다면 정정 요청을 해주세요.\n\n"
+                        
+                        for i, email in enumerate(non_work_emails[:3], 1):
+                            response += f"{i}. {email.get('subject', '제목 없음')}\n"
+                            response += f"   발신자: {email.get('sender', 'N/A')}\n"
+                            response += f"   신뢰도: {email.get('confidence', 0):.2f}\n"
+                            response += f"   판단 근거: {email.get('reason', 'N/A')[:100]}...\n\n"
+                        
+                        if len(non_work_emails) > 3:
+                            response += f"... 외 {len(non_work_emails) - 3}개 더\n"
+                    
                     return response
                 else:
                     return result.get('message', '티켓 처리 결과를 가져올 수 없습니다.')
@@ -379,7 +459,7 @@ class TicketingAgent:
     
     def _create_memory_tool(self) -> Tool:
         """메모리 조회 도구 생성"""
-        def memory_tool(ticket_id: str = None, query: str = "") -> str:
+        def memory_tool(query: str = "", ticket_id: str = None) -> str:
             """
             과거 사용자 피드백과 메모리를 조회합니다.
             
@@ -391,8 +471,10 @@ class TicketingAgent:
                 메모리 조회 결과
             """
             try:
-                # 티켓 조회 요청인지 확인
-                if query and any(keyword in query.lower() for keyword in ["티켓 조회", "전체 티켓", "티켓 목록", "생성된 티켓"]):
+                # 티켓 조회 요청인지 확인 (더 넓은 키워드 매칭)
+                if query and any(keyword in query.lower() for keyword in [
+                    "티켓 조회", "전체 티켓", "티켓 목록", "생성된 티켓", "티켓", "조회", "목록", "전체"
+                ]):
                     from sqlite_ticket_models import SQLiteTicketManager
                     
                     ticket_manager = SQLiteTicketManager()
@@ -429,10 +511,10 @@ class TicketingAgent:
                     
                     result = f"📋 티켓 ID {ticket_id}의 사용자 액션:\n\n"
                     for i, action in enumerate(user_actions, 1):
-                        result += f"{i}. {action.get('action_type', 'N/A')}\n"
-                        result += f"   이전 값: {action.get('old_value', 'N/A')}\n"
-                        result += f"   새 값: {action.get('new_value', 'N/A')}\n"
-                        result += f"   시간: {action.get('created_at', 'N/A')}\n\n"
+                        result += f"{i}. {action.action_type or 'N/A'}\n"
+                        result += f"   이전 값: {action.old_value or 'N/A'}\n"
+                        result += f"   새 값: {action.new_value or 'N/A'}\n"
+                        result += f"   시간: {action.created_at or 'N/A'}\n\n"
                     
                     return result
                 else:
@@ -444,11 +526,11 @@ class TicketingAgent:
                     
                     result = f"📋 전체 사용자 액션 ({len(user_actions)}개):\n\n"
                     for i, action in enumerate(user_actions[:10], 1):  # 최대 10개만 표시
-                        result += f"{i}. {action.get('action_type', 'N/A')}\n"
-                        result += f"   티켓 ID: {action.get('ticket_id', 'N/A')}\n"
-                        result += f"   이전 값: {action.get('old_value', 'N/A')}\n"
-                        result += f"   새 값: {action.get('new_value', 'N/A')}\n"
-                        result += f"   시간: {action.get('created_at', 'N/A')}\n\n"
+                        result += f"{i}. {action.action_type or 'N/A'}\n"
+                        result += f"   티켓 ID: {action.ticket_id or 'N/A'}\n"
+                        result += f"   이전 값: {action.old_value or 'N/A'}\n"
+                        result += f"   새 값: {action.new_value or 'N/A'}\n"
+                        result += f"   시간: {action.created_at or 'N/A'}\n\n"
                     
                     if len(user_actions) > 10:
                         result += f"... 외 {len(user_actions) - 10}개 더\n"
@@ -461,8 +543,85 @@ class TicketingAgent:
         
         return Tool(
             name="memory_tool",
-            description="과거 사용자 피드백과 메모리를 조회합니다. 특정 티켓의 사용자 액션이나 전체 사용자 액션을 조회할 수 있습니다. 티켓 조회 요청도 처리합니다.",
+            description="티켓 조회 및 사용자 액션 기록을 조회합니다. query 파라미터에 '티켓 조회', '전체 티켓', '생성된 티켓' 등을 입력하면 실제 데이터베이스에서 티켓 목록을 반환합니다. ticket_id 파라미터에 특정 티켓 ID를 입력하면 해당 티켓의 사용자 액션을 조회합니다.",
             func=memory_tool
+        )
+    
+    def _create_correction_tool(self) -> Tool:
+        """정정 도구 생성"""
+        def correction_tool(email_id: str, email_subject: str, email_sender: str, email_body: str) -> str:
+            """
+            업무용이 아니라고 판단된 메일을 정정하여 티켓을 생성합니다.
+            
+            Args:
+                email_id: 이메일 ID
+                email_subject: 이메일 제목
+                email_sender: 이메일 발신자
+                email_body: 이메일 본문
+            
+            Returns:
+                정정 결과 및 티켓 생성 정보
+            """
+            try:
+                from sqlite_ticket_models import SQLiteTicketManager
+                from datetime import datetime
+                from mem0_memory_adapter import create_mem0_memory, add_ticket_event
+                
+                # 1. 티켓 생성
+                ticket_manager = SQLiteTicketManager()
+                
+                # 이미 해당 메일로 티켓이 생성되었는지 확인
+                existing_tickets = ticket_manager.get_all_tickets()
+                for ticket in existing_tickets:
+                    if ticket.original_message_id == email_id:
+                        return f"❌ 이미 해당 메일로 티켓이 생성되어 있습니다: {ticket.ticket_id}"
+                
+                # 새 티켓 생성
+                ticket_data = {
+                    'title': email_subject,
+                    'description': f"정정 요청으로 생성된 티켓\n\n발신자: {email_sender}\n내용: {email_body[:500]}...",
+                    'status': 'pending',
+                    'priority': 'Medium',
+                    'ticket_type': 'Task',
+                    'reporter': 'system',
+                    'labels': ['정정요청', '사용자판단'],
+                    'original_message_id': email_id
+                }
+                
+                new_ticket = ticket_manager.create_ticket(**ticket_data)
+                
+                # 2. mem0에 정정 행동 저장
+                try:
+                    mem0_memory = create_mem0_memory("ai_system")
+                    
+                    # 정정 이벤트 저장
+                    correction_event = f"사용자 정정: '{email_subject}' 메일을 업무용으로 재분류하여 티켓 생성. AI는 업무용이 아니라고 판단했으나 사용자가 정정 요청."
+                    
+                    add_ticket_event(
+                        memory=mem0_memory,
+                        event=correction_event,
+                        action_type="user_correction",
+                        ticket_id=new_ticket.ticket_id,
+                        message_id=email_id,
+                        old_value="no_ticket_created",
+                        new_value="ticket_created_by_correction"
+                    )
+                    
+                    logging.info(f"✅ 정정 행동이 mem0에 저장되었습니다: {new_ticket.ticket_id}")
+                    
+                except Exception as mem_error:
+                    logging.error(f"⚠️ mem0 저장 실패: {str(mem_error)}")
+                
+                return f"✅ 정정 완료!\n\n📋 생성된 티켓:\n- ID: {new_ticket.ticket_id}\n- 제목: {email_subject}\n- 상태: pending\n- 우선순위: Medium\n- 레이블: 정정요청, 사용자판단\n\n💾 정정 행동이 학습 데이터로 저장되었습니다."
+                
+            except Exception as e:
+                logging.error(f"❌ 정정 실패: {str(e)}")
+                return f"정정 중 오류가 발생했습니다: {str(e)}"
+        
+        return Tool(
+            name="correction_tool",
+            description="업무용이 아니라고 판단된 메일을 정정하여 티켓을 생성합니다. 사용자가 AI의 판단을 수정하고 싶을 때 사용합니다.",
+            func=correction_tool
         )
     
     def _create_agent(self):

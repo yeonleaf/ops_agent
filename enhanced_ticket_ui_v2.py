@@ -14,6 +14,7 @@ import json
 from vector_db_models import VectorDBManager
 from sqlite_ticket_models import SQLiteTicketManager, Ticket
 from mem0_memory_adapter import create_mem0_memory, add_ticket_event
+from ticket_ai_recommender import get_ticket_ai_recommendation
 
 # 페이지 설정
 st.set_page_config(
@@ -118,7 +119,111 @@ def display_ticket_detail(ticket: Ticket):
     
     # 설명 섹션
     st.subheader("📝 설명")
-    st.write(ticket.description or "설명이 없습니다.")
+    
+    # 설명 편집 모드 확인
+    edit_mode_key = f"edit_mode_{ticket.ticket_id}"
+    if edit_mode_key not in st.session_state:
+        st.session_state[edit_mode_key] = False
+    
+    if st.session_state[edit_mode_key]:
+        # 편집 모드
+        new_description = st.text_area(
+            "설명 편집:",
+            value=ticket.description or "",
+            height=150,
+            key=f"description_edit_{ticket.ticket_id}",
+            help="티켓의 상세 설명을 입력하세요."
+        )
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("💾 저장", key=f"save_desc_{ticket.ticket_id}"):
+                if new_description != ticket.description:
+                    success = update_ticket_description(ticket.ticket_id, new_description, ticket.description or "")
+                    if success:
+                        st.success("✅ 설명이 업데이트되었습니다!")
+                        # mem0에 설명 변경 이벤트 기록
+                        record_description_change_to_mem0(ticket, ticket.description or "", new_description)
+                        st.session_state[edit_mode_key] = False
+                        st.session_state.refresh_trigger += 1
+                        st.rerun()
+                    else:
+                        st.error("❌ 설명 업데이트에 실패했습니다.")
+                else:
+                    st.info("변경사항이 없습니다.")
+                    st.session_state[edit_mode_key] = False
+                    st.rerun()
+        
+        with col2:
+            if st.button("❌ 취소", key=f"cancel_desc_{ticket.ticket_id}"):
+                st.session_state[edit_mode_key] = False
+                st.rerun()
+        
+        with col3:
+            if st.button("🤖 AI 추천", key=f"ai_rec_{ticket.ticket_id}"):
+                with st.spinner("AI가 추천을 생성하고 있습니다..."):
+                    recommendation = get_ticket_ai_recommendation(ticket.ticket_id)
+                    if recommendation.get("success"):
+                        st.session_state[f"ai_recommendation_{ticket.ticket_id}"] = recommendation
+                        st.success("✅ AI 추천이 생성되었습니다!")
+                    else:
+                        st.error(f"❌ AI 추천 생성 실패: {recommendation.get('error', '알 수 없는 오류')}")
+    else:
+        # 보기 모드
+        if ticket.description:
+            st.write(ticket.description)
+        else:
+            st.write("설명이 없습니다.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✏️ 편집", key=f"edit_btn_{ticket.ticket_id}"):
+                st.session_state[edit_mode_key] = True
+                st.rerun()
+        
+        with col2:
+            if st.button("🤖 AI 추천", key=f"ai_rec_view_{ticket.ticket_id}"):
+                with st.spinner("AI가 추천을 생성하고 있습니다..."):
+                    recommendation = get_ticket_ai_recommendation(ticket.ticket_id)
+                    if recommendation.get("success"):
+                        st.session_state[f"ai_recommendation_{ticket.ticket_id}"] = recommendation
+                        st.success("✅ AI 추천이 생성되었습니다!")
+                    else:
+                        st.error(f"❌ AI 추천 생성 실패: {recommendation.get('error', '알 수 없는 오류')}")
+    
+    # AI 추천 결과 표시
+    recommendation_key = f"ai_recommendation_{ticket.ticket_id}"
+    if recommendation_key in st.session_state:
+        st.subheader("🤖 AI 추천")
+        recommendation = st.session_state[recommendation_key]
+        
+        with st.expander("📋 AI 추천 내용", expanded=True):
+            st.markdown(recommendation.get("recommendation", "추천 내용이 없습니다."))
+            
+            # 추천 메타데이터
+            col1, col2 = st.columns(2)
+            with col1:
+                st.caption(f"🕒 생성 시간: {recommendation.get('generated_at', 'N/A')}")
+            with col2:
+                st.caption(f"📊 참조된 유사 사례: {recommendation.get('similar_emails_count', 0)}개")
+        
+        # 추천 내용을 설명에 적용하는 버튼
+        if st.button("📝 추천 내용을 설명에 적용", key=f"apply_rec_{ticket.ticket_id}"):
+            # 추천 내용의 요약을 설명에 추가
+            recommendation_text = recommendation.get("recommendation", "")
+            if recommendation_text:
+                # 기존 설명에 AI 추천 추가
+                current_desc = ticket.description or ""
+                new_desc = f"{current_desc}\n\n--- AI 추천 ---\n{recommendation_text}"
+                
+                success = update_ticket_description(ticket.ticket_id, new_desc, current_desc)
+                if success:
+                    st.success("✅ AI 추천이 설명에 적용되었습니다!")
+                    st.session_state[edit_mode_key] = False
+                    st.session_state.refresh_trigger += 1
+                    st.rerun()
+                else:
+                    st.error("❌ AI 추천 적용에 실패했습니다.")
     
     # 레이블 관리 섹션
     st.subheader("🏷️ 레이블 관리")
@@ -269,6 +374,38 @@ def delete_label_from_ticket(ticket_id: int, label: str):
             st.warning("티켓을 찾을 수 없거나 레이블이 없습니다.")
     except Exception as e:
         st.error(f"레이블 삭제 중 오류: {str(e)}")
+
+def update_ticket_description(ticket_id: int, new_description: str, old_description: str) -> bool:
+    """티켓 description을 업데이트합니다."""
+    try:
+        ticket_manager = SQLiteTicketManager()
+        success = ticket_manager.update_ticket_description(ticket_id, new_description, old_description)
+        return success
+    except Exception as e:
+        st.error(f"Description 업데이트 중 오류: {str(e)}")
+        return False
+
+def record_description_change_to_mem0(ticket: Ticket, old_description: str, new_description: str):
+    """Description 변경을 mem0에 기록합니다."""
+    try:
+        mem0_memory = st.session_state.mem0_memory
+        
+        event_description = f"사용자가 티켓 #{ticket.ticket_id} '{ticket.title}'의 설명을 수정함"
+        add_ticket_event(
+            memory=mem0_memory,
+            event_type="description_updated",
+            description=event_description,
+            ticket_id=str(ticket.ticket_id),
+            message_id=ticket.original_message_id,
+            old_value=old_description[:200] + "..." if len(old_description) > 200 else old_description,
+            new_value=new_description[:200] + "..." if len(new_description) > 200 else new_description,
+            user_id="ui_user"
+        )
+        
+        print(f"✅ Description 변경사항이 mem0에 기록되었습니다: ticket_id={ticket.ticket_id}")
+        
+    except Exception as e:
+        print(f"⚠️ mem0 Description 변경 기록 실패: {str(e)}")
 
 def record_label_change_to_mem0(ticket: Ticket, old_labels: List[str], new_labels: List[str]):
     """레이블 변경을 mem0에 기록합니다."""
