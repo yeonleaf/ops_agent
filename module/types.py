@@ -14,6 +14,7 @@ class DocumentType(Enum):
     PDF = "pdf"
     XLSX = "xlsx"
     TEXT = "text"
+    XML = "xml"
 
 class ContentType(Enum):
     """콘텐츠 타입 (text-based vs layout-based)"""

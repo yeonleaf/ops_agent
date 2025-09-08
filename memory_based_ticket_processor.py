@@ -294,18 +294,32 @@ ticket_type: Bug/Feature/Task/Improvement"""),
 주어진 '관련 기억'들을 참고하여, 새로운 이메일에 가장 적합한 레이블을 추천하고 티켓 생성 여부를 판단해주세요.""")
             ])
             
-            # LLM 실행 (스트리밍 버전)
+            # LLM 실행 (스트리밍 버전) - Content Filter 오류 처리 포함
             decision_chain = decision_prompt | llm | StrOutputParser()
             
             # 스트리밍 처리
             current_result = ""
             final_result = None
             
-            for chunk in decision_chain.stream({}):
-                current_result += chunk
-                final_result = current_result
-            
-            decision_result = final_result if final_result else ""
+            try:
+                for chunk in decision_chain.stream({}):
+                    current_result += chunk
+                    final_result = current_result
+                
+                decision_result = final_result if final_result else ""
+                
+            except Exception as llm_error:
+                # Content Filter 오류 또는 기타 LLM 오류 처리
+                error_str = str(llm_error)
+                if "content_filter" in error_str or "ResponsibleAIPolicyViolation" in error_str:
+                    print(f"  ⚠️ Content Filter 오류 감지: {error_str}")
+                    print(f"  🔄 기본 키워드 기반 분석으로 폴백")
+                    
+                    # Content Filter 오류 시 기본 키워드 기반 분석 수행
+                    decision_result = self._fallback_keyword_analysis(email_content, email_subject, email_sender)
+                else:
+                    # 기타 LLM 오류는 그대로 전파
+                    raise llm_error
             
             # 텍스트 응답 파싱
             try:
@@ -527,6 +541,62 @@ ticket_type: Bug/Feature/Task/Improvement"""),
                 "labels": ["error-fallback"],
                 "ticket_type": "Task"
             }
+    
+    def _fallback_keyword_analysis(self, email_content: str, email_subject: str, email_sender: str) -> str:
+        """Content Filter 오류 시 사용할 기본 키워드 기반 분석"""
+        print("  🔍 키워드 기반 폴백 분석 시작")
+        
+        # 업무 관련 키워드 패턴
+        work_keywords = [
+            'bug', 'error', 'issue', 'problem', 'fix', 'urgent', 'important',
+            'meeting', 'schedule', 'deadline', 'project', 'task', 'request',
+            'approve', 'review', 'feedback', 'action', 'required', 'help',
+            'support', 'service', 'system', 'server', 'database', 'api',
+            '버그', '오류', '문제', '수정', '긴급', '중요', '회의', '일정',
+            '마감', '프로젝트', '작업', '요청', '승인', '검토', '피드백',
+            '액션', '필요', '도움', '지원', '서비스', '시스템', '서버', '데이터베이스'
+        ]
+        
+        # 개인/마케팅 관련 키워드 패턴
+        personal_keywords = [
+            'newsletter', 'marketing', 'promotion', 'sale', 'discount',
+            'personal', 'private', 'spam', 'unsubscribe', 'advertisement',
+            '뉴스레터', '마케팅', '프로모션', '세일', '할인', '개인', '사적',
+            '스팸', '구독취소', '광고', '지옥', '고백', 'MZ', '숏폼'
+        ]
+        
+        # 텍스트 분석
+        full_text = f"{email_subject} {email_content}".lower()
+        
+        work_score = sum(1 for keyword in work_keywords if keyword.lower() in full_text)
+        personal_score = sum(1 for keyword in personal_keywords if keyword.lower() in full_text)
+        
+        # 판단 로직
+        if work_score > personal_score and work_score > 0:
+            decision = "create_ticket"
+            reason = f"키워드 분석: 업무 관련 키워드 {work_score}개 발견 (개인/마케팅 키워드 {personal_score}개)"
+            confidence = min(0.7, 0.3 + (work_score * 0.1))
+            priority = "High" if work_score >= 3 else "Medium"
+            labels = ["키워드-분석", "업무-관련"]
+            ticket_type = "Bug" if any(kw in full_text for kw in ['bug', 'error', '오류', '버그']) else "Task"
+        else:
+            decision = "no_ticket"
+            reason = f"키워드 분석: 개인/마케팅 키워드 {personal_score}개 발견 (업무 키워드 {work_score}개)"
+            confidence = min(0.6, 0.3 + (personal_score * 0.1))
+            priority = "Low"
+            labels = ["키워드-분석", "개인-관련"]
+            ticket_type = "Task"
+        
+        # 결과 포맷팅
+        result = f"""decision: {decision}
+reason: {reason}
+confidence: {confidence:.2f}
+priority: {priority}
+labels: {', '.join(labels)}
+ticket_type: {ticket_type}"""
+        
+        print(f"  ✅ 키워드 분석 완료: {decision} (신뢰도: {confidence:.2f})")
+        return result
 
 def create_memory_based_ticket_processor():
     """MemoryBasedTicketProcessorTool 인스턴스 생성 헬퍼 함수"""

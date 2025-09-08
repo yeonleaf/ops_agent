@@ -27,15 +27,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class RouterAgent:
     """라우터 에이전트 - 전문가 에이전트들을 라우팅하는 최상위 에이전트"""
     
-    def __init__(self):
+    def __init__(self, llm_client):
         self.name = "RouterAgent"
-        self.llm = AzureChatOpenAI(
-            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            temperature=0.1
-        )
+        self.llm = llm_client
         
         # 시스템 프롬프트
         self.system_prompt = """당신은 유능한 프로젝트 매니저입니다.
@@ -85,9 +79,9 @@ class RouterAgent:
 - 한국어로 친근하고 전문적인 톤으로 응답합니다"""
 
         # 전문가 에이전트 인스턴스 생성
-        self.viewing_agent = create_viewing_agent()
-        self.analysis_agent = create_analysis_agent()
-        self.ticketing_agent = create_ticketing_agent()
+        self.viewing_agent = create_viewing_agent(llm_client)
+        self.analysis_agent = create_analysis_agent(llm_client)
+        self.ticketing_agent = create_ticketing_agent(llm_client)
         
         # 전문가 에이전트들을 도구로 변환
         self.tools = [
@@ -219,13 +213,22 @@ class RouterAgent:
 
 
 # 라우터 에이전트 인스턴스 생성 함수
-def create_router_agent() -> RouterAgent:
+def create_router_agent(llm_client) -> RouterAgent:
     """RouterAgent 인스턴스 생성"""
-    return RouterAgent()
+    return RouterAgent(llm_client)
 
 if __name__ == "__main__":
+    # 테스트용 LLM 클라이언트 생성
+    test_llm = AzureChatOpenAI(
+        azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        temperature=0.1
+    )
+    
     # 테스트
-    router_agent = create_router_agent()
+    router_agent = create_router_agent(test_llm)
     
     # 다양한 쿼리 테스트
     test_queries = [

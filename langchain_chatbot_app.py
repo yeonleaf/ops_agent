@@ -1943,7 +1943,7 @@ def main():
         # 파일 업로더
         uploaded_files = st.file_uploader(
             "문서 파일을 선택하세요",
-            type=['docx', 'pptx', 'pdf', 'xlsx', 'txt', 'md', 'csv', 'scds'],
+            type=['docx', 'pptx', 'pdf', 'xlsx', 'txt', 'md', 'csv', 'scds', 'xml'],
             accept_multiple_files=True,
             help="여러 파일을 동시에 선택할 수 있습니다. 파일이 손상되지 않았는지 확인해주세요."
         )
@@ -1955,6 +1955,7 @@ def main():
             - **문서**: DOCX, PPTX, PDF
             - **스프레드시트**: XLSX, CSV  
             - **텍스트**: TXT, MD
+            - **데이터**: XML (JIRA RSS, 일반 XML)
             - **바이너리**: SCDS (System Configuration Data Set)
             
             **주의사항:**

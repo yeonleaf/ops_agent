@@ -15,6 +15,9 @@ from enum import Enum
 import logging
 from dotenv import load_dotenv
 
+# 텍스트 전처리 모듈 import
+from text_preprocessor import preprocess_for_embedding
+
 # HTML 정제기 import
 try:
     from html_text_cleaner import JiraHTMLCleaner
@@ -364,7 +367,9 @@ class JiraAPIProcessor:
                 comments_text = "\n".join([f"댓글: {comment}" for comment in cleaned_comments])
                 parts.append(f"최근 댓글:\n{comments_text}")
         
-        return "\n\n".join(parts)
+        # 최종 텍스트에 전처리 적용
+        final_text = "\n\n".join(parts)
+        return preprocess_for_embedding(final_text)
     
     def process_issue(self, issue_data: Dict, extract_attachments_content: bool = False) -> ProcessedJiraIssue:
         """단일 이슈 데이터 정제"""

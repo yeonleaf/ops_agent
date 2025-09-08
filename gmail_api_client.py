@@ -36,6 +36,39 @@ class GmailAPIClient:
         self.last_token_refresh = None
         self.token_refresh_attempts = 0
         self.max_refresh_attempts = 3
+        self.last_refresh_attempt_time = None
+        self.min_refresh_interval = 30  # 최소 30초 간격
+        
+        # API 호출 캐싱
+        self._cache = {}
+        self._cache_ttl = 60  # 60초 캐시 유지
+    
+    def _get_cache_key(self, method: str, **kwargs) -> str:
+        """캐시 키 생성"""
+        import hashlib
+        key_data = f"{method}:{sorted(kwargs.items())}"
+        return hashlib.md5(key_data.encode()).hexdigest()
+    
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """캐시 유효성 검사"""
+        if cache_key not in self._cache:
+            return False
+        
+        cache_time, _ = self._cache[cache_key]
+        return (datetime.now() - cache_time).total_seconds() < self._cache_ttl
+    
+    def _get_from_cache(self, cache_key: str):
+        """캐시에서 데이터 가져오기"""
+        if self._is_cache_valid(cache_key):
+            _, data = self._cache[cache_key]
+            print(f"📦 캐시에서 데이터 반환: {cache_key[:8]}...")
+            return data
+        return None
+    
+    def _save_to_cache(self, cache_key: str, data):
+        """캐시에 데이터 저장"""
+        self._cache[cache_key] = (datetime.now(), data)
+        print(f"💾 캐시에 데이터 저장: {cache_key[:8]}...")
         
     def authenticate(self, force_refresh: bool = False):
         """Gmail API 인증 - 자동 토큰 갱신 포함"""
@@ -163,7 +196,13 @@ class GmailAPIClient:
             # 토큰 갱신
             self.creds.refresh(Request())
             self.last_token_refresh = datetime.now()
+            self.last_refresh_attempt_time = datetime.now()
             self.token_refresh_attempts = 0  # 성공 시 카운터 리셋
+            
+            # 토큰 갱신 후 상태 확인
+            if self.creds.expired:
+                print("⚠️ 토큰 갱신 후에도 만료 상태입니다. 재시도가 필요할 수 있습니다.")
+                return False
             
             print("✅ 토큰 갱신 성공")
             return True
@@ -504,13 +543,23 @@ class GmailAPIClient:
             if not self.creds:
                 return False
             
+            # 최근 갱신 시도 시간 확인 (무한 루프 방지)
+            now = datetime.now()
+            if (self.last_refresh_attempt_time and 
+                (now - self.last_refresh_attempt_time).total_seconds() < self.min_refresh_interval):
+                print("⏳ 토큰 갱신 간격이 너무 짧습니다. 잠시 대기...")
+                return True
+            
             # 토큰이 만료되었거나 곧 만료될 예정인 경우
             if self.creds.expired or (self.creds.expiry and 
                 self.creds.expiry - datetime.now() < timedelta(minutes=5)):
                 
                 print("🔄 토큰 만료 임박, 자동 갱신 시도")
+                self.last_refresh_attempt_time = now
+                
                 if self._refresh_token():
                     self._save_tokens()
+                    print("✅ 토큰 저장 완료")
                     return True
                 else:
                     print("❌ 자동 토큰 갱신 실패")
@@ -524,6 +573,12 @@ class GmailAPIClient:
     
     def get_unread_emails(self, max_results: int = 50) -> List[Dict[str, Any]]:
         """안읽은 메일 가져오기"""
+        # 캐시 확인
+        cache_key = self._get_cache_key("get_unread_emails", max_results=max_results)
+        cached_data = self._get_from_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
+        
         if not self.service:
             if not self.authenticate():
                 return []
@@ -549,13 +604,35 @@ class GmailAPIClient:
                 if email_data:
                     emails.append(email_data)
             
+            # 캐시에 저장
+            self._save_to_cache(cache_key, emails)
             return emails
             
         except HttpError as error:
             if error.resp.status == 401:  # 인증 오류
                 print("🔐 인증 오류 발생, 토큰 재발급 시도")
                 if self.authenticate(force_refresh=True):
-                    return self.get_unread_emails(max_results)  # 재귀 호출
+                    # 재귀 호출 대신 현재 요청 재시도
+                    try:
+                        results = self.service.users().messages().list(
+                            userId='me',
+                            labelIds=['UNREAD'],
+                            maxResults=max_results
+                        ).execute()
+                        messages = results.get('messages', [])
+                        emails = []
+                        
+                        for message in messages:
+                            email_data = self.get_email_details(message['id'])
+                            if email_data:
+                                emails.append(email_data)
+                        
+                        # 캐시에 저장
+                        self._save_to_cache(cache_key, emails)
+                        return emails
+                    except Exception as retry_error:
+                        print(f"❌ 재시도 실패: {retry_error}")
+                        return []
                 else:
                     print("❌ Gmail 인증 실패")
                     return []
@@ -675,7 +752,24 @@ class GmailAPIClient:
             if error.resp.status == 401:  # 인증 오류
                 print("🔐 인증 오류 발생, 토큰 재발급 시도")
                 if self.authenticate(force_refresh=True):
-                    return self.get_all_emails(max_results)  # 재귀 호출
+                    # 재귀 호출 대신 현재 요청 재시도
+                    try:
+                        results = self.service.users().messages().list(
+                            userId='me',
+                            maxResults=max_results
+                        ).execute()
+                        messages = results.get('messages', [])
+                        emails = []
+                        
+                        for message in messages:
+                            email_data = self.get_email_details(message['id'])
+                            if email_data:
+                                emails.append(email_data)
+                        
+                        return emails
+                    except Exception as retry_error:
+                        print(f"❌ 재시도 실패: {retry_error}")
+                        return []
                 else:
                     print("❌ Gmail 인증 실패")
                     return []
@@ -718,7 +812,25 @@ class GmailAPIClient:
             if error.resp.status == 401:  # 인증 오류
                 print("🔐 인증 오류 발생, 토큰 재발급 시도")
                 if self.authenticate(force_refresh=True):
-                    return self.search_emails(query, max_results)  # 재귀 호출
+                    # 재귀 호출 대신 현재 요청 재시도
+                    try:
+                        results = self.service.users().messages().list(
+                            userId='me',
+                            q=query,
+                            maxResults=max_results
+                        ).execute()
+                        messages = results.get('messages', [])
+                        emails = []
+                        
+                        for message in messages:
+                            email_data = self.get_email_details(message['id'])
+                            if email_data:
+                                emails.append(email_data)
+                        
+                        return emails
+                    except Exception as retry_error:
+                        print(f"❌ 재시도 실패: {retry_error}")
+                        return []
                 else:
                     print("❌ Gmail 인증 실패")
                     return []

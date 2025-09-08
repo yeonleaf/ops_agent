@@ -6,8 +6,13 @@ FastMCP 기반 메일 조회 챗봇 앱
 
 import streamlit as st
 import json
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+
+# LangChain imports
+from langchain_openai import AzureChatOpenAI
 
 # 라우터 에이전트 import
 from router_agent import create_router_agent
@@ -16,12 +21,37 @@ from router_agent import create_router_agent
 from enhanced_ticket_ui_v2 import (
     load_tickets_from_db, 
     display_ticket_button_list, 
-    display_ticket_detail,
-    create_mem0_memory
+    display_ticket_detail
 )
+
+# mem0 memory import
+from mem0_memory_adapter import create_mem0_memory
+
+# 환경 변수 로드
+load_dotenv()
 
 # AI 추천 기능 import
 from ticket_ai_recommender import get_ticket_ai_recommendation
+
+# RAG 데이터 관리자 import
+from rag_data_manager import create_rag_manager_tab
+
+def create_llm_client():
+    """Azure OpenAI LLM 클라이언트 생성"""
+    try:
+        llm_client = AzureChatOpenAI(
+            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+            temperature=0.1,
+            max_tokens=2000
+        )
+        print("✅ Azure OpenAI LLM 클라이언트 생성 성공")
+        return llm_client
+    except Exception as e:
+        print(f"❌ LLM 클라이언트 생성 실패: {e}")
+        raise e
 
 # 세션 상태 초기화
 if 'refresh_trigger' not in st.session_state:
@@ -33,8 +63,15 @@ if 'conversation_history' not in st.session_state:
 if 'selected_ticket' not in st.session_state:
     st.session_state.selected_ticket = None
 
+if 'llm_client' not in st.session_state:
+    st.session_state.llm_client = create_llm_client()
+
 if 'mem0_memory' not in st.session_state:
-    st.session_state.mem0_memory = create_mem0_memory("chatbot_user")
+    st.session_state.mem0_memory = create_mem0_memory(st.session_state.llm_client, "chatbot_user")
+
+# mem0 메모리를 전역적으로 사용할 수 있도록 설정
+import sys
+sys.modules['__main__'].mem0_memory = st.session_state.mem0_memory
 
 if 'auto_switch_to_tickets' not in st.session_state:
     st.session_state.auto_switch_to_tickets = False
@@ -55,8 +92,8 @@ st.set_page_config(
 class RouterAgentClient:
     """라우터 에이전트 클라이언트 래퍼"""
     
-    def __init__(self):
-        self.router_agent = create_router_agent()
+    def __init__(self, llm_client):
+        self.router_agent = create_router_agent(llm_client)
     
     def call_agent(self, user_query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """라우터 에이전트 호출"""
@@ -125,6 +162,17 @@ def display_correction_ui(non_work_emails: List[Dict[str, Any]]):
                         st.success("✅ 정정 완료!")
                         st.info(correction_result)
                         
+                        # non_work_emails에서 해당 메일 제거
+                        if hasattr(st.session_state, 'non_work_emails') and st.session_state.non_work_emails:
+                            st.session_state.non_work_emails = [
+                                e for e in st.session_state.non_work_emails 
+                                if e.get('id') != email.get('id')
+                            ]
+                            
+                            # 모든 메일이 정정된 경우 목록 초기화
+                            if not st.session_state.non_work_emails:
+                                st.session_state.has_non_work_emails = False
+                        
                         # 세션 상태 업데이트
                         st.session_state.refresh_trigger += 1
                         st.rerun()
@@ -135,8 +183,8 @@ def display_correction_ui(non_work_emails: List[Dict[str, Any]]):
 class AgentNetworkChatBot:
     """에이전트 네트워크 기반 챗봇 클래스"""
     
-    def __init__(self):
-        self.router_client = RouterAgentClient()
+    def __init__(self, llm_client):
+        self.router_client = RouterAgentClient(llm_client)
         self.conversation_history = st.session_state.conversation_history
     
     def process_user_input(self, user_input: str) -> str:
@@ -196,21 +244,41 @@ class AgentNetworkChatBot:
         is_ticket_request = any(keyword in user_input_lower for keyword in ticket_keywords)
         
         if is_ticket_request:
-            # 티켓 관련 요청인 경우 non_work_emails 정보 추출 시도
-            try:
-                # response_message에서 non_work_emails 정보가 있는지 확인
-                if "업무용이 아니라고 판단된 메일" in response_message:
-                    # 실제 데이터는 unified_email_service에서 가져와야 하지만,
-                    # 여기서는 간단히 세션 상태에 플래그만 설정
-                    st.session_state.has_non_work_emails = True
-                else:
-                    st.session_state.has_non_work_emails = False
-            except Exception as e:
-                st.session_state.has_non_work_emails = False
-            
             # 티켓 생성 요청인지 확인
             if any(keyword in user_input_lower for keyword in ["만들어", "생성", "처리", "가져와서"]):
-                return "✅ 티켓 생성 요청을 처리했습니다. 티켓 관리 탭에서 결과를 확인하세요.", True
+                # Gmail API 중복 호출 방지: process_emails_with_ticket_logic 내부에서 캐싱 처리
+                try:
+                    from unified_email_service import process_emails_with_ticket_logic
+                    result = process_emails_with_ticket_logic("gmail", user_input, st.session_state.mem0_memory)
+                    non_work_emails = result.get('non_work_emails', [])
+                    
+                    if non_work_emails:
+                        # confidence가 높은 상위 10개만 선택
+                        top_non_work_emails = non_work_emails[:10]
+                        
+                        # 응답 메시지에 non_work_emails 정보 포함
+                        response = "✅ 티켓 생성 요청을 처리했습니다.\n\n"
+                        response += f"🔍 업무용이 아니라고 판단된 메일 ({len(top_non_work_emails)}개):\n\n"
+                        
+                        for i, email in enumerate(top_non_work_emails, 1):
+                            response += f"{i}. **{email.get('subject', '제목 없음')}**\n"
+                            response += f"   - 발신자: {email.get('sender', 'N/A')}\n"
+                            response += f"   - 신뢰도: {email.get('confidence', 0):.2f}\n"
+                            response += f"   - 판단 근거: {email.get('reason', 'N/A')}\n"
+                            response += f"   - 내용 미리보기: {email.get('body', 'N/A')[:100]}...\n\n"
+                        
+                        # 세션 상태에 저장
+                        st.session_state.non_work_emails = top_non_work_emails
+                        st.session_state.has_non_work_emails = True
+                        
+                        return response, True
+                    else:
+                        st.session_state.has_non_work_emails = False
+                        return "✅ 티켓 생성 요청을 처리했습니다. 티켓 관리 탭에서 결과를 확인하세요.", True
+                        
+                except Exception as e:
+                    st.session_state.has_non_work_emails = False
+                    return f"✅ 티켓 생성 요청을 처리했습니다. (오류: {str(e)}) 티켓 관리 탭에서 결과를 확인하세요.", True
             
             # 티켓 조회 요청인지 확인
             elif any(keyword in user_input_lower for keyword in ["조회", "보여", "보여줘", "확인"]):
@@ -240,10 +308,10 @@ def main():
     st.markdown("---")
     
     # 챗봇 인스턴스 생성
-    chatbot = AgentNetworkChatBot()
+    chatbot = AgentNetworkChatBot(st.session_state.llm_client)
     
     # 탭 생성
-    tab1, tab2 = st.tabs(["💬 채팅", "🎫 티켓 관리"])
+    tab1, tab2, tab3 = st.tabs(["💬 AI 챗봇", "🎫 티켓 관리", "📚 RAG 데이터 관리자"])
     
     # 자동 탭 전환 처리
     if st.session_state.auto_switch_to_tickets:
@@ -257,6 +325,9 @@ def main():
     
     with tab2:
         display_ticket_management()
+    
+    with tab3:
+        create_rag_manager_tab()
 
 def display_chat_interface(chatbot):
     """채팅 인터페이스 표시"""
@@ -325,11 +396,89 @@ def display_chat_interface(chatbot):
     with col1:
         st.header("💬 채팅")
         
+        # non_work_emails가 있는 경우 별도 섹션으로 표시
+        if hasattr(st.session_state, 'non_work_emails') and st.session_state.non_work_emails:
+            st.markdown("---")
+            col_header1, col_header2 = st.columns([3, 1])
+            with col_header1:
+                st.markdown("### 🔍 업무용이 아니라고 판단된 메일")
+                st.markdown(f"※ confidence가 높은 메일 {len(st.session_state.non_work_emails)}개입니다.")
+            with col_header2:
+                if st.button("🗑️ 목록 지우기", key="clear_non_work_emails"):
+                    st.session_state.non_work_emails = []
+                    st.session_state.has_non_work_emails = False
+                    # 이메일 캐시도 초기화
+                    from unified_email_service import clear_email_cache
+                    clear_email_cache()
+                    st.rerun()
+            
+            for i, email in enumerate(st.session_state.non_work_emails, 1):
+                with st.expander(f"📧 {i}. {email.get('subject', '제목 없음')} (신뢰도: {email.get('confidence', 0):.2f})"):
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        st.markdown(f"**발신자:** {email.get('sender', 'N/A')}")
+                        st.markdown(f"**수신일:** {email.get('received_date', 'N/A')}")
+                        st.markdown(f"**판단 근거:** {email.get('reason', 'N/A')}")
+                        st.markdown(f"**우선순위:** {email.get('priority', 'N/A')}")
+                        st.markdown(f"**제안 라벨:** {', '.join(email.get('suggested_labels', []))}")
+                    
+                    with col2:
+                        st.markdown(f"**신뢰도:** {email.get('confidence', 0):.2f}")
+                        st.markdown(f"**티켓 타입:** {email.get('ticket_type', 'N/A')}")
+                        
+                        if st.button(f"정정", key=f"chat_correction_{i}", type="primary"):
+                            try:
+                                from specialist_agents import create_ticketing_agent
+                                
+                                ticketing_agent = create_ticketing_agent()
+                                correction_result = ticketing_agent.execute(
+                                    f"correction_tool을 사용해서 다음 메일을 정정해주세요: "
+                                    f"email_id={email.get('id')}, "
+                                    f"email_subject='{email.get('subject')}', "
+                                    f"email_sender='{email.get('sender')}', "
+                                    f"email_body='{email.get('body')}'"
+                                )
+                                
+                                st.success("✅ 정정 완료!")
+                                st.info(correction_result)
+                                
+                                # non_work_emails에서 해당 메일 제거
+                                if hasattr(st.session_state, 'non_work_emails') and st.session_state.non_work_emails:
+                                    st.session_state.non_work_emails = [
+                                        e for e in st.session_state.non_work_emails 
+                                        if e.get('id') != email.get('id')
+                                    ]
+                                    
+                                    # 모든 메일이 정정된 경우 목록 초기화
+                                    if not st.session_state.non_work_emails:
+                                        st.session_state.has_non_work_emails = False
+                                
+                                # 세션 상태 업데이트
+                                st.session_state.refresh_trigger += 1
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"❌ 정정 실패: {str(e)}")
+                    
+                    # 메일 내용 미리보기
+                    st.markdown("**내용 미리보기:**")
+                    st.text_area("메일 내용", email.get('body', 'N/A'), height=100, key=f"preview_{i}", label_visibility="collapsed")
+            
+            st.markdown("---")
+        
         # 대화 기록 표시
         for i, message in enumerate(chatbot.get_conversation_history()):
             with st.expander(f"💬 대화 {i+1} - {message['timestamp'][:19]}"):
                 st.markdown(f"**👤 사용자:** {message['user']}")
-                st.markdown(f"**🤖 어시스턴트:** {message['assistant']}")
+                
+                # 어시스턴트 응답 표시 (non_work_emails가 포함된 경우 특별 처리)
+                assistant_response = message['assistant']
+                if "업무용이 아니라고 판단된 메일" in assistant_response:
+                    # non_work_emails가 포함된 응답인 경우 마크다운으로 렌더링
+                    st.markdown(assistant_response)
+                else:
+                    st.markdown(f"**🤖 어시스턴트:** {assistant_response}")
                 
                 if message.get('tools_used'):
                     st.markdown(f"**🛠️ 사용된 도구:** {', '.join(message['tools_used'])}")
@@ -418,15 +567,10 @@ def display_ticket_management():
     
     # 정정 UI 표시 (non_work_emails가 있는 경우)
     if hasattr(st.session_state, 'has_non_work_emails') and st.session_state.has_non_work_emails:
-        # 실제 non_work_emails 데이터를 가져와서 표시
-        try:
-            from unified_email_service import process_emails_with_ticket_logic
-            result = process_emails_with_ticket_logic("gmail", "안 읽은 메일을 바탕으로 티켓을 생성해줘")
-            non_work_emails = result.get('non_work_emails', [])
-            if non_work_emails:
-                display_correction_ui(non_work_emails)
-        except Exception as e:
-            st.error(f"정정 UI 로드 실패: {str(e)}")
+        # 세션 상태에 저장된 non_work_emails 데이터 사용 (중복 실행 방지)
+        non_work_emails = st.session_state.get('non_work_emails', [])
+        if non_work_emails:
+            display_correction_ui(non_work_emails)
     
     
     # 대량 AI 추천 결과 표시

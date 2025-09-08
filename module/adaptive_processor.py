@@ -49,6 +49,8 @@ class AdaptiveFileProcessor:
                 processed_pages = self._process_pptx_adaptive(file_path)
             elif doc_type == DocumentType.XLSX:
                 processed_pages = self._process_xlsx_adaptive(file_path)
+            elif doc_type == DocumentType.XML:
+                processed_pages = self.text_processor._process_xml_file(file_path)
             else:
                 raise ValueError(f"지원하지 않는 파일 타입: {doc_type}")
             

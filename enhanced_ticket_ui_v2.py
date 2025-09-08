@@ -31,8 +31,17 @@ if 'selected_ticket' not in st.session_state:
     st.session_state.selected_ticket = None
 if 'refresh_trigger' not in st.session_state:
     st.session_state.refresh_trigger = 0
+# mem0_memory는 메인 앱에서 초기화됨
 if 'mem0_memory' not in st.session_state:
-    st.session_state.mem0_memory = create_mem0_memory("ui_user")
+    # 메인 앱에서 초기화된 mem0_memory를 가져옴
+    try:
+        import sys
+        if hasattr(sys.modules['__main__'], 'mem0_memory'):
+            st.session_state.mem0_memory = sys.modules['__main__'].mem0_memory
+        else:
+            st.session_state.mem0_memory = None
+    except:
+        st.session_state.mem0_memory = None
 
 def load_tickets_from_db() -> List[Ticket]:
     """데이터베이스에서 티켓을 로드합니다."""
@@ -43,6 +52,46 @@ def load_tickets_from_db() -> List[Ticket]:
     except Exception as e:
         st.error(f"티켓 로드 중 오류: {str(e)}")
         return []
+
+def update_ticket_status(ticket_id: int, new_status: str, old_status: str) -> bool:
+    """티켓 상태를 업데이트합니다."""
+    try:
+        st.info(f"🔄 상태 변경 시도: 티켓 #{ticket_id}, '{old_status}' → '{new_status}'")
+        ticket_manager = SQLiteTicketManager()
+        success = ticket_manager.update_ticket_status(ticket_id, new_status, old_status)
+        if success:
+            st.info(f"📝 데이터베이스에서 티켓 #{ticket_id} 상태를 '{old_status}'에서 '{new_status}'로 변경했습니다.")
+        else:
+            st.warning(f"⚠️ 데이터베이스 업데이트가 실패했습니다.")
+        return success
+    except Exception as e:
+        st.error(f"상태 업데이트 중 오류: {str(e)}")
+        import traceback
+        st.error(f"상세 오류: {traceback.format_exc()}")
+        return False
+
+def record_status_change_to_mem0(ticket: Ticket, old_status: str, new_status: str):
+    """상태 변경을 mem0에 기록합니다."""
+    try:
+        # 상태 변경 이벤트 생성
+        status_change_event = f"티켓 #{ticket.ticket_id} 상태 변경: '{old_status}' → '{new_status}'"
+        
+        # mem0에 이벤트 기록
+        if st.session_state.mem0_memory:
+            add_ticket_event(
+                memory=st.session_state.mem0_memory,
+                event_type="status_change",
+                description=status_change_event,
+                ticket_id=str(ticket.ticket_id),
+            message_id=ticket.message_id,
+            old_value=old_status,
+            new_value=new_status
+        )
+        
+        st.info(f"🧠 mem0에 상태 변경 이벤트를 기록했습니다: {status_change_event}")
+        
+    except Exception as e:
+        st.error(f"mem0 기록 중 오류: {str(e)}")
 
 def display_ticket_button_list(tickets: List[Ticket]):
     """버튼 리스트 형태로 티켓 목록을 표시합니다."""
@@ -107,7 +156,33 @@ def display_ticket_detail(ticket: Ticket):
     with col1:
         st.write(f"**ID:** {ticket.ticket_id}")
         st.write(f"**제목:** {ticket.title}")
-        st.write(f"**상태:** {ticket.status}")
+        
+        # 상태 변경 섹션
+        st.write("**상태:**")
+        current_status = ticket.status
+        status_options = ["pending", "approved", "rejected"]
+        current_index = status_options.index(current_status) if current_status in status_options else 0
+        
+        new_status = st.selectbox(
+            "티켓 상태 변경",
+            options=status_options,
+            index=current_index,
+            key=f"status_select_{ticket.ticket_id}",
+            help="티켓의 상태를 변경하세요. 변경 시 mem0에 기록됩니다."
+        )
+        
+        if new_status != current_status:
+            if st.button("🔄 상태 변경", key=f"change_status_{ticket.ticket_id}", type="primary"):
+                success = update_ticket_status(ticket.ticket_id, new_status, current_status)
+                if success:
+                    st.success(f"✅ 상태가 '{current_status}'에서 '{new_status}'로 변경되었습니다!")
+                    # mem0에 상태 변경 이벤트 기록
+                    record_status_change_to_mem0(ticket, current_status, new_status)
+                    st.session_state.refresh_trigger += 1
+                    st.rerun()
+                else:
+                    st.error("❌ 상태 변경에 실패했습니다.")
+        
         st.write(f"**우선순위:** {ticket.priority}")
         st.write(f"**타입:** {ticket.ticket_type}")
     
@@ -167,7 +242,12 @@ def display_ticket_detail(ticket: Ticket):
                         st.session_state[f"ai_recommendation_{ticket.ticket_id}"] = recommendation
                         st.success("✅ AI 추천이 생성되었습니다!")
                     else:
-                        st.error(f"❌ AI 추천 생성 실패: {recommendation.get('error', '알 수 없는 오류')}")
+                        error_msg = recommendation.get('error', '알 수 없는 오류')
+                        if error_msg == "콘텐츠 필터":
+                            st.warning("⚠️ 콘텐츠 필터: 이 티켓의 내용이 Azure OpenAI 콘텐츠 정책에 의해 필터링되었습니다.")
+                            st.info("💡 키워드 기반 추천을 사용합니다.")
+                        else:
+                            st.error(f"❌ AI 추천 생성 실패: {error_msg}")
     else:
         # 보기 모드
         if ticket.description:
@@ -189,7 +269,12 @@ def display_ticket_detail(ticket: Ticket):
                         st.session_state[f"ai_recommendation_{ticket.ticket_id}"] = recommendation
                         st.success("✅ AI 추천이 생성되었습니다!")
                     else:
-                        st.error(f"❌ AI 추천 생성 실패: {recommendation.get('error', '알 수 없는 오류')}")
+                        error_msg = recommendation.get('error', '알 수 없는 오류')
+                        if error_msg == "콘텐츠 필터":
+                            st.warning("⚠️ 콘텐츠 필터: 이 티켓의 내용이 Azure OpenAI 콘텐츠 정책에 의해 필터링되었습니다.")
+                            st.info("💡 키워드 기반 추천을 사용합니다.")
+                        else:
+                            st.error(f"❌ AI 추천 생성 실패: {error_msg}")
     
     # AI 추천 결과 표시
     recommendation_key = f"ai_recommendation_{ticket.ticket_id}"
@@ -389,7 +474,9 @@ def record_description_change_to_mem0(ticket: Ticket, old_description: str, new_
     """Description 변경을 mem0에 기록합니다."""
     try:
         mem0_memory = st.session_state.mem0_memory
-        
+        if not mem0_memory:
+            return
+            
         event_description = f"사용자가 티켓 #{ticket.ticket_id} '{ticket.title}'의 설명을 수정함"
         add_ticket_event(
             memory=mem0_memory,
@@ -411,7 +498,9 @@ def record_label_change_to_mem0(ticket: Ticket, old_labels: List[str], new_label
     """레이블 변경을 mem0에 기록합니다."""
     try:
         mem0_memory = st.session_state.mem0_memory
-        
+        if not mem0_memory:
+            return
+            
         # 변경사항 분석
         added_labels = [label for label in new_labels if label not in old_labels]
         removed_labels = [label for label in old_labels if label not in new_labels]

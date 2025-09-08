@@ -14,3 +14,6 @@ __pycache__
 /vector_db/
 /logs
 debug_logs_*.txt
+*.log
+whoosh_index/
+*.xls

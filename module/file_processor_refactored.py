@@ -34,7 +34,7 @@ class FileTypeDetector:
     def detect_file_type(file_path: str) -> str:
         """파일 확장자로부터 문서 타입 판별"""
         ext = Path(file_path).suffix.lower()
-        if ext in ['.docx', '.pptx', '.pdf', '.xlsx', '.txt', '.md', '.csv']:
+        if ext in ['.docx', '.pptx', '.pdf', '.xlsx', '.txt', '.md', '.csv', '.xml']:
             return ext[1:]  # .docx -> docx
         else:
             raise FileTypeNotSupportedError(file_path, ext)
@@ -51,6 +51,8 @@ class FileTypeDetector:
                 return FileTypeDetector._analyze_pptx_content(file_path)
             elif doc_type == 'xlsx':
                 return FileTypeDetector._analyze_xlsx_content(file_path)
+            elif doc_type == 'xml':
+                return 'text_based'  # XML은 항상 text-based로 처리
             else:
                 return 'text_based'
         except Exception as e:

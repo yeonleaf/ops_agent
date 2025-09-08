@@ -25,15 +25,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class ViewingAgent:
     """이메일 조회 전문가 에이전트"""
     
-    def __init__(self):
+    def __init__(self, llm_client):
         self.name = "ViewingAgent"
-        self.llm = AzureChatOpenAI(
-            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            temperature=0.1
-        )
+        self.llm = llm_client
         
         # 시스템 프롬프트
         self.system_prompt = """당신은 이메일 조회 전문가입니다. 
@@ -198,15 +192,9 @@ class ViewingAgent:
 class AnalysisAgent:
     """이메일 분석 전문가 에이전트"""
     
-    def __init__(self):
+    def __init__(self, llm_client):
         self.name = "AnalysisAgent"
-        self.llm = AzureChatOpenAI(
-            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            temperature=0.1
-        )
+        self.llm = llm_client
         
         # 시스템 프롬프트
         self.system_prompt = """당신은 이메일 분류 전문가입니다.
@@ -336,15 +324,9 @@ class AnalysisAgent:
 class TicketingAgent:
     """Jira 티켓 처리 전문가 에이전트"""
     
-    def __init__(self):
+    def __init__(self, llm_client):
         self.name = "TicketingAgent"
-        self.llm = AzureChatOpenAI(
-            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            temperature=0.1
-        )
+        self.llm = llm_client
         
         # 시스템 프롬프트
         self.system_prompt = """당신은 Jira 티켓 처리 전문가입니다.
@@ -395,6 +377,7 @@ class TicketingAgent:
                 티켓 생성 및 처리 결과
             """
             try:
+                # Gmail API 중복 호출 방지: process_emails_with_ticket_logic 내부에서 캐싱 처리
                 from unified_email_service import process_emails_with_ticket_logic
                 
                 # 쿼리에서 provider_name 추출
@@ -405,7 +388,17 @@ class TicketingAgent:
                 elif "outlook" in query_lower or "graph" in query_lower:
                     provider_name = "graph"
                 
-                result = process_emails_with_ticket_logic(provider_name, query)
+                # 캐시된 이메일 데이터를 사용하여 티켓 생성 (Gmail API 중복 호출 방지)
+                # mem0_memory를 전역에서 가져오기 시도
+                mem0_memory = None
+                try:
+                    import sys
+                    if hasattr(sys.modules['__main__'], 'mem0_memory'):
+                        mem0_memory = sys.modules['__main__'].mem0_memory
+                except:
+                    pass
+                
+                result = process_emails_with_ticket_logic(provider_name, query, mem0_memory)
                 
                 if result.get('display_mode') == 'tickets':
                     tickets = result.get('tickets', [])
@@ -599,9 +592,9 @@ class TicketingAgent:
                     
                     add_ticket_event(
                         memory=mem0_memory,
-                        event=correction_event,
-                        action_type="user_correction",
-                        ticket_id=new_ticket.ticket_id,
+                        event_type="user_correction",
+                        description=correction_event,
+                        ticket_id=str(new_ticket.ticket_id),
                         message_id=email_id,
                         old_value="no_ticket_created",
                         new_value="ticket_created_by_correction"
@@ -653,20 +646,29 @@ class TicketingAgent:
 
 
 # 에이전트 인스턴스 생성 함수
-def create_viewing_agent() -> ViewingAgent:
+def create_viewing_agent(llm_client) -> ViewingAgent:
     """ViewingAgent 인스턴스 생성"""
-    return ViewingAgent()
+    return ViewingAgent(llm_client)
 
-def create_analysis_agent() -> AnalysisAgent:
+def create_analysis_agent(llm_client) -> AnalysisAgent:
     """AnalysisAgent 인스턴스 생성"""
-    return AnalysisAgent()
+    return AnalysisAgent(llm_client)
 
-def create_ticketing_agent() -> TicketingAgent:
+def create_ticketing_agent(llm_client) -> TicketingAgent:
     """TicketingAgent 인스턴스 생성"""
-    return TicketingAgent()
+    return TicketingAgent(llm_client)
 
 if __name__ == "__main__":
+    # 테스트용 LLM 클라이언트 생성
+    test_llm = AzureChatOpenAI(
+        azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        temperature=0.1
+    )
+    
     # 테스트
-    viewing_agent = create_viewing_agent()
+    viewing_agent = create_viewing_agent(test_llm)
     result = viewing_agent.execute("안 읽은 메일 3개 보여주세요")
     print("ViewingAgent 결과:", result)

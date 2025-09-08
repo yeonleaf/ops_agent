@@ -87,6 +87,8 @@ class TextBasedProcessor(BaseProcessor):
                 return self._process_csv(file_path)
             elif file_ext == '.scds':
                 return self._process_scds(file_path)
+            elif file_ext == '.xml':
+                return self._process_xml(file_path)
             else:
                 raise ContentExtractionError(
                     f"지원하지 않는 파일 형식: {file_ext}", 
@@ -1851,4 +1853,297 @@ class LayoutBasedProcessor(BaseProcessor):
             
         except Exception as e:
             logger.error(f"PDF 텍스트 기반 처리 오류: {e}")
-            raise ContentExtractionError(f"PDF 텍스트 기반 처리 실패: {str(e)}", pdf_path) 
+            raise ContentExtractionError(f"PDF 텍스트 기반 처리 실패: {str(e)}", pdf_path)
+    
+    def _process_xml(self, file_path: str) -> List[Dict[str, Any]]:
+        """
+        XML 파일을 처리하여 JSON 청크 리스트를 반환
+        
+        Args:
+            file_path: XML 파일 경로
+            
+        Returns:
+            XML 파싱 결과를 포함한 청크 리스트
+        """
+        try:
+            import xml.etree.ElementTree as ET
+            import html
+            
+            logger.info(f"XML 파일 처리 시작: {file_path}")
+            
+            # XML 파싱
+            tree = ET.parse(file_path)
+            root = tree.getroot()
+            
+            logger.info(f"XML 루트 요소: {root.tag}")
+            
+            chunks = []
+            
+            # RSS 형식인지 확인
+            if root.tag == 'rss':
+                chunks = self._process_rss_xml(root, file_path)
+            else:
+                # 일반 XML 처리
+                chunks = self._process_generic_xml(root, file_path)
+            
+            if not chunks:
+                logger.warning("처리된 요소가 없음, 전체 XML을 텍스트로 처리")
+                chunks = self._process_xml_as_text(file_path)
+            
+            logger.info(f"XML 처리 완료: {len(chunks)}개 청크 생성")
+            return chunks
+            
+        except ET.ParseError as e:
+            logger.error(f"XML 파싱 오류: {e}")
+            # 파싱 실패 시 텍스트로 처리
+            return self._process_xml_as_text(file_path)
+        except Exception as e:
+            logger.error(f"XML 처리 오류: {e}")
+            raise ContentExtractionError(f"XML 처리 실패: {str(e)}", file_path)
+    
+    def _process_rss_xml(self, root, file_path: str) -> List[Dict[str, Any]]:
+        """RSS XML 처리 (JIRA RSS 특화)"""
+        chunks = []
+        
+        # 채널 정보 추출
+        channel = root.find('channel')
+        if channel is not None:
+            title_elem = channel.find('title')
+            channel_title = title_elem.text if title_elem is not None else "Unknown"
+            
+            logger.info(f"RSS 채널: {channel_title}")
+            
+            # 이슈 정보 추출
+            issue_elem = channel.find('issue')
+            if issue_elem is not None:
+                total_issues = issue_elem.get('total', '0')
+                logger.info(f"총 이슈 수: {total_issues}")
+            
+            # 각 아이템(이슈) 처리
+            items = channel.findall('item')
+            logger.info(f"처리할 아이템 수: {len(items)}")
+            
+            for idx, item in enumerate(items):
+                try:
+                    # 이슈 정보 추출
+                    issue_data = self._extract_jira_issue_data(item)
+                    
+                    if issue_data:
+                        # 구조화된 텍스트 생성
+                        structured_text = self._create_structured_issue_text(issue_data)
+                        
+                        # 청크 생성
+                        metadata = {
+                            "source": "jira_rss_item",
+                            "issue_key": issue_data.get('key', ''),
+                            "issue_type": issue_data.get('type', ''),
+                            "status": issue_data.get('status', ''),
+                            "priority": issue_data.get('priority', ''),
+                            "assignee": issue_data.get('assignee', ''),
+                            "reporter": issue_data.get('reporter', ''),
+                            "created": issue_data.get('created', ''),
+                            "updated": issue_data.get('updated', ''),
+                            "item_index": idx + 1,
+                            "file_type": "xml",
+                            "processing_method": "rss_parser"
+                        }
+                        
+                        chunk = self._create_text_chunk(structured_text, metadata)
+                        chunks.append(chunk)
+                        
+                        if (idx + 1) % 100 == 0:
+                            logger.info(f"{idx + 1}개 이슈 처리 완료...")
+                
+                except Exception as e:
+                    logger.warning(f"아이템 {idx + 1} 처리 오류: {e}")
+                    continue
+        
+        return chunks
+    
+    def _extract_jira_issue_data(self, item) -> Dict[str, str]:
+        """JIRA 이슈 데이터 추출"""
+        import html
+        import re
+        
+        issue_data = {}
+        
+        try:
+            # 기본 정보
+            title_elem = item.find('title')
+            if title_elem is not None:
+                issue_data['title'] = title_elem.text or ''
+            
+            key_elem = item.find('key')
+            if key_elem is not None:
+                issue_data['key'] = key_elem.text or ''
+            
+            summary_elem = item.find('summary')
+            if summary_elem is not None:
+                issue_data['summary'] = summary_elem.text or ''
+            
+            # 설명 (HTML 디코딩)
+            description_elem = item.find('description')
+            if description_elem is not None and description_elem.text:
+                # HTML 엔티티 디코딩
+                description = html.unescape(description_elem.text)
+                # HTML 태그 제거
+                description = re.sub(r'<[^>]+>', '', description)
+                issue_data['description'] = description.strip()
+            
+            # 프로젝트 정보
+            project_elem = item.find('project')
+            if project_elem is not None:
+                issue_data['project'] = project_elem.text or ''
+                issue_data['project_key'] = project_elem.get('key', '')
+            
+            # 이슈 타입
+            type_elem = item.find('type')
+            if type_elem is not None:
+                issue_data['type'] = type_elem.text or ''
+            
+            # 상태
+            status_elem = item.find('status')
+            if status_elem is not None:
+                issue_data['status'] = status_elem.text or ''
+            
+            # 우선순위
+            priority_elem = item.find('priority')
+            if priority_elem is not None:
+                issue_data['priority'] = priority_elem.text or ''
+            
+            # 담당자
+            assignee_elem = item.find('assignee')
+            if assignee_elem is not None:
+                issue_data['assignee'] = assignee_elem.text or ''
+            
+            # 보고자
+            reporter_elem = item.find('reporter')
+            if reporter_elem is not None:
+                issue_data['reporter'] = reporter_elem.text or ''
+            
+            # 날짜 정보
+            created_elem = item.find('created')
+            if created_elem is not None:
+                issue_data['created'] = created_elem.text or ''
+            
+            updated_elem = item.find('updated')
+            if updated_elem is not None:
+                issue_data['updated'] = updated_elem.text or ''
+            
+            resolved_elem = item.find('resolved')
+            if resolved_elem is not None:
+                issue_data['resolved'] = resolved_elem.text or ''
+            
+            # 링크
+            link_elem = item.find('link')
+            if link_elem is not None:
+                issue_data['link'] = link_elem.text or ''
+            
+        except Exception as e:
+            logger.warning(f"이슈 데이터 추출 오류: {e}")
+        
+        return issue_data
+    
+    def _create_structured_issue_text(self, issue_data: Dict[str, str]) -> str:
+        """구조화된 이슈 텍스트 생성"""
+        text_parts = []
+        
+        # 이슈 키와 제목
+        if issue_data.get('key'):
+            text_parts.append(f"이슈 키: {issue_data['key']}")
+        if issue_data.get('title'):
+            text_parts.append(f"제목: {issue_data['title']}")
+        
+        # 요약
+        if issue_data.get('summary'):
+            text_parts.append(f"요약: {issue_data['summary']}")
+        
+        # 설명
+        if issue_data.get('description'):
+            text_parts.append(f"설명: {issue_data['description']}")
+        
+        # 메타데이터
+        metadata_parts = []
+        if issue_data.get('type'):
+            metadata_parts.append(f"타입: {issue_data['type']}")
+        if issue_data.get('status'):
+            metadata_parts.append(f"상태: {issue_data['status']}")
+        if issue_data.get('priority'):
+            metadata_parts.append(f"우선순위: {issue_data['priority']}")
+        if issue_data.get('assignee'):
+            metadata_parts.append(f"담당자: {issue_data['assignee']}")
+        if issue_data.get('reporter'):
+            metadata_parts.append(f"보고자: {issue_data['reporter']}")
+        if issue_data.get('created'):
+            metadata_parts.append(f"생성일: {issue_data['created']}")
+        if issue_data.get('updated'):
+            metadata_parts.append(f"수정일: {issue_data['updated']}")
+        
+        if metadata_parts:
+            text_parts.append("메타데이터: " + ", ".join(metadata_parts))
+        
+        return "\n".join(text_parts)
+    
+    def _process_generic_xml(self, root, file_path: str) -> List[Dict[str, Any]]:
+        """일반 XML 처리"""
+        chunks = []
+        
+        def extract_text_recursive(element, depth: int = 0) -> str:
+            """XML 요소에서 텍스트 재귀적으로 추출"""
+            text_parts = []
+            
+            # 현재 요소의 텍스트
+            if element.text and element.text.strip():
+                text_parts.append(element.text.strip())
+            
+            # 자식 요소들 처리
+            for child in element:
+                child_text = extract_text_recursive(child, depth + 1)
+                if child_text:
+                    text_parts.append(child_text)
+            
+            # 현재 요소의 tail 텍스트
+            if element.tail and element.tail.strip():
+                text_parts.append(element.tail.strip())
+            
+            return " ".join(text_parts)
+        
+        # 루트 요소에서 텍스트 추출
+        full_text = extract_text_recursive(root)
+        
+        if full_text.strip():
+            metadata = {
+                "source": "generic_xml",
+                "root_element": root.tag,
+                "file_type": "xml",
+                "processing_method": "generic_parser"
+            }
+            
+            chunk = self._create_text_chunk(full_text, metadata)
+            chunks.append(chunk)
+        
+        return chunks
+    
+    def _process_xml_as_text(self, file_path: str) -> List[Dict[str, Any]]:
+        """XML을 일반 텍스트로 처리"""
+        try:
+            import html
+            
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # HTML 엔티티 디코딩
+            content = html.unescape(content)
+            
+            metadata = {
+                "source": "xml_as_text",
+                "file_type": "xml",
+                "processing_method": "text_fallback"
+            }
+            
+            chunk = self._create_text_chunk(content, metadata)
+            return [chunk]
+            
+        except Exception as e:
+            logger.error(f"XML 텍스트 처리 오류: {e}")
+            raise ContentExtractionError(f"XML 텍스트 처리 실패: {str(e)}", file_path) 

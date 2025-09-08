@@ -13,6 +13,9 @@ import chromadb
 from chromadb.config import Settings
 import json
 
+# 텍스트 전처리 모듈 import
+from text_preprocessor import preprocess_for_embedding
+
 # 환경 변수 로드
 load_dotenv()
 
@@ -49,8 +52,24 @@ class FileChunk:
     file_type: str  # pptx, docx, pdf, xlsx, txt, md, csv, scds
     elements: List[Dict[str, Any]]  # 요소별 상세 정보
     created_at: str  # 생성 시각
-    file_size: int  # 파일 크기 (bytes)
-    processing_duration: float  # 처리 소요 시간 (초)
+    file_size: int  # 파일 크기 (바이트)
+    processing_duration: float  # 처리 시간 (초)
+
+@dataclass
+class StructuredChunk:
+    """구조적 청크 모델 - Vector DB Collection용"""
+    chunk_id: str  # PK - 고유 청크 ID
+    content: str  # 임베딩할 텍스트 내용
+    chunk_type: str  # 'header', 'comment'
+    ticket_id: str  # 티켓 ID
+    field_name: str  # 필드명
+    field_value: str  # 필드값
+    priority: int  # 우선순위 (1: 높음, 2: 중간, 3: 낮음)
+    file_name: str  # 원본 파일명
+    file_type: str  # 파일 타입
+    metadata: Dict[str, Any]  # 추가 메타데이터
+    created_at: str  # 생성 시각
+    commenter: Optional[str] = None  # 댓글 작성자 (comment 타입일 때만)
 
 class VectorDBManager:
     """Vector DB 관리자 - ChromaDB 사용"""
@@ -115,15 +134,18 @@ class VectorDBManager:
         except Exception as e:
             print(f"⚠️ Vector DB 권한 재설정 실패: {e}")
     
-    def _get_or_create_collection(self):
+    def _get_or_create_collection(self, collection_name: str = None):
         """컬렉션 생성 또는 가져오기"""
+        if collection_name is None:
+            collection_name = self.collection_name
+        
         try:
-            return self.client.get_collection(name=self.collection_name)
+            return self.client.get_collection(name=collection_name)
         except Exception:
             return self.client.create_collection(
-                name=self.collection_name,
+                name=collection_name,
                 metadata={
-                    "description": "Email messages for ticket generation",
+                    "description": f"Collection for {collection_name}",
                     "created_at": datetime.now().isoformat()
                 }
             )
@@ -178,9 +200,12 @@ class VectorDBManager:
             Labels: {', '.join(mail.key_points)}
             """
             
-            # ChromaDB에 저장
+            # 텍스트 전처리 적용
+            preprocessed_document = preprocess_for_embedding(document_text)
+            
+            # ChromaDB에 저장 (전처리된 텍스트)
             self.collection.add(
-                documents=[document_text],
+                documents=[preprocessed_document],
                 metadatas=[metadata],
                 ids=[mail.message_id]
             )
@@ -269,8 +294,11 @@ class VectorDBManager:
     def search_similar_mails(self, query: str, n_results: int = 5) -> List[Mail]:
         """유사한 메일 검색"""
         try:
+            # 쿼리 전처리 적용
+            preprocessed_query = preprocess_for_embedding(query)
+            
             results = self.collection.query(
-                query_texts=[query],
+                query_texts=[preprocessed_query],
                 n_results=n_results,
                 include=["metadatas", "documents", "distances"]
             )
@@ -376,6 +404,93 @@ class VectorDBManager:
             print(f"Vector DB 레이블 업데이트 오류: {e}")
             return False
     
+    def search_similar_file_chunks(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        """유사한 파일 청크 검색 (헤더 테이블 필터링 포함)"""
+        try:
+            # 쿼리 전처리 적용
+            preprocessed_query = preprocess_for_embedding(query)
+            
+            # file_chunks 컬렉션 가져오기
+            file_chunks_collection = self.client.get_collection("file_chunks")
+            
+            # 더 많은 결과를 가져와서 필터링 후 원하는 개수만 반환
+            results = file_chunks_collection.query(
+                query_texts=[preprocessed_query],
+                n_results=n_results * 3,  # 필터링을 위해 3배 더 가져오기
+                include=["metadatas", "documents", "distances"]
+            )
+            
+            file_chunks = []
+            for i, chunk_id in enumerate(results['ids'][0]):
+                metadata = results['metadatas'][0][i]
+                document = results['documents'][0][i]
+                distance = results['distances'][0][i] if results['distances'] else 0.0
+                
+                # 헤더 테이블 필터링 (메타데이터나 짧은 내용 제외)
+                if self._is_header_table_content(document):
+                    print(f"🚫 헤더 테이블 내용 필터링: {document[:50]}...")
+                    continue
+                
+                # 유사도 점수 계산 (거리가 작을수록 유사도 높음)
+                similarity_score = max(0.0, 1.0 - distance)
+                
+                file_chunk = {
+                    "chunk_id": chunk_id,
+                    "file_name": metadata.get("file_name", ""),
+                    "file_type": metadata.get("file_type", ""),
+                    "content": document,
+                    "page_number": metadata.get("page_number", 1),
+                    "element_type": metadata.get("element_type", "text"),
+                    "similarity_score": similarity_score,
+                    "created_at": metadata.get("created_at", "")
+                }
+                file_chunks.append(file_chunk)
+                
+                # 원하는 개수만큼 수집되면 중단
+                if len(file_chunks) >= n_results:
+                    break
+            
+            print(f"✅ 유사 파일 청크 검색 완료: {len(file_chunks)}개 결과 (헤더 테이블 필터링 적용)")
+            return file_chunks
+            
+        except Exception as e:
+            print(f"❌ 유사 파일 청크 검색 실패: {str(e)}")
+            return []
+    
+    def _is_header_table_content(self, document: str) -> bool:
+        """헤더 테이블 내용인지 판단"""
+        if not document or len(document.strip()) < 10:
+            return True
+        
+        # 헤더 테이블 관련 키워드들
+        header_keywords = [
+            "2025-09-07 20:31에서187이슈를 표시",
+            "2025-09-07 20:32에서845이슈를 표시",
+            "2025-09-07 20:26에서672이슈를 표시",
+            "Jira 2025-09-07 20:26",
+            "Jira 9.12.19#9120019-sha1",
+            "에서 672 이슈를 표시",
+            "에서 845 이슈를 표시",
+            "에서 187 이슈를 표시",
+            "Jira 9.12.19",
+            "SK C&C] 조주연에 의해",
+            "Sun Sep 07 20:26:15 KST 2025에서 생성됨",
+            "에서672이슈를 표시",
+            "에서845이슈를 표시",
+            "에서187이슈를 표시"
+        ]
+        
+        # 키워드 중 하나라도 포함되어 있으면 헤더 테이블로 판단
+        for keyword in header_keywords:
+            if keyword in document:
+                return True
+        
+        # 너무 짧은 내용도 제외 (실제 티켓 데이터는 더 길어야 함)
+        if len(document.strip()) < 50:
+            return True
+            
+        return False
+    
     def get_all_mails(self, limit: int = 100) -> List[Mail]:
         """모든 메일 조회 (최근 순)"""
         try:
@@ -448,6 +563,374 @@ class VectorDBManager:
         except Exception as e:
             print(f"컬렉션 초기화 오류: {e}")
             return False
+    
+    def get_file_chunks_count(self) -> int:
+        """파일 청크 개수 조회"""
+        try:
+            collection = self.client.get_collection("file_chunks")
+            count = collection.count()
+            return count
+        except Exception as e:
+            # 컬렉션이 존재하지 않는 경우는 정상적인 상황
+            if "does not exists" in str(e) or "not found" in str(e).lower():
+                return 0
+            print(f"파일 청크 개수 조회 실패: {e}")
+            return 0
+    
+    def get_mails_count(self) -> int:
+        """메일 데이터 개수 조회"""
+        try:
+            collection = self.client.get_collection("mails")
+            count = collection.count()
+            return count
+        except Exception as e:
+            # 컬렉션이 존재하지 않는 경우는 정상적인 상황
+            if "does not exists" in str(e) or "not found" in str(e).lower():
+                return 0
+            print(f"메일 개수 조회 실패: {e}")
+            return 0
+    
+    def add_file_chunk(self, file_chunk: FileChunk, embedding_client=None):
+        """파일 청크를 벡터 DB에 추가 (ChromaDB 기본 임베딩 사용)"""
+        try:
+            # 파일 청크용 별도 Collection 생성 (메일 컬렉션과 분리)
+            try:
+                collection = self.client.get_collection(name="file_chunks")
+            except Exception:
+                # 새 컬렉션 생성 (ChromaDB 기본 임베딩 사용)
+                collection = self.client.create_collection(
+                    name="file_chunks",
+                    metadata={
+                        "hnsw:space": "cosine",
+                        "description": "File chunks for RAG system",
+                        "created_at": datetime.now().isoformat()
+                    }
+                )
+            
+            # 메타데이터 준비
+            metadata = {
+                "chunk_id": file_chunk.chunk_id,
+                "file_name": file_chunk.file_name,
+                "file_hash": file_chunk.file_hash,
+                "architecture": file_chunk.architecture,
+                "processing_method": file_chunk.processing_method,
+                "vision_analysis": file_chunk.vision_analysis,
+                "section_title": file_chunk.section_title,
+                "page_number": file_chunk.page_number,
+                "element_count": file_chunk.element_count,
+                "file_type": file_chunk.file_type,
+                "created_at": file_chunk.created_at
+            }
+            
+            # 텍스트 전처리 적용
+            preprocessed_text = preprocess_for_embedding(file_chunk.text_chunk)
+            
+            # ChromaDB 기본 임베딩 사용 (전처리된 텍스트)
+            collection.add(
+                documents=[preprocessed_text],
+                metadatas=[metadata],
+                ids=[file_chunk.chunk_id]
+            )
+            
+            print(f"✅ 파일 청크 저장 완료: {file_chunk.file_name} (ID: {file_chunk.chunk_id})")
+            
+        except Exception as e:
+            print(f"❌ 파일 청크 저장 실패: {e}")
+            raise e
+    
+    def clear_all_data(self):
+        """모든 데이터 삭제"""
+        try:
+            # 모든 컬렉션 삭제
+            collections = self.client.list_collections()
+            for collection in collections:
+                self.client.delete_collection(collection.name)
+                print(f"✅ 컬렉션 삭제 완료: {collection.name}")
+            
+            print("✅ 모든 벡터 DB 데이터가 삭제되었습니다.")
+            
+        except Exception as e:
+            print(f"❌ 데이터 삭제 실패: {e}")
+            raise e
+    
+    def add_structured_chunk(self, structured_chunk: StructuredChunk) -> bool:
+        """
+        구조적 청크를 Vector DB에 추가
+        
+        Args:
+            structured_chunk: 구조적 청크 객체
+            
+        Returns:
+            성공 여부
+        """
+        try:
+            # 구조적 청크 전용 컬렉션 가져오기
+            collection = self._get_or_create_structured_chunk_collection()
+            
+            # 메타데이터 준비
+            metadata = {
+                "chunk_id": structured_chunk.chunk_id,
+                "chunk_type": structured_chunk.chunk_type,
+                "ticket_id": structured_chunk.ticket_id,
+                "field_name": structured_chunk.field_name,
+                "field_value": structured_chunk.field_value,
+                "priority": structured_chunk.priority,
+                "file_name": structured_chunk.file_name,
+                "file_type": structured_chunk.file_type,
+                "created_at": structured_chunk.created_at,
+                "commenter": structured_chunk.commenter or "",
+                **structured_chunk.metadata
+            }
+            
+            # ChromaDB에 추가
+            collection.add(
+                ids=[structured_chunk.chunk_id],
+                documents=[structured_chunk.content],
+                metadatas=[metadata]
+            )
+            
+            print(f"✅ 구조적 청크 저장 완료: {structured_chunk.ticket_id} - {structured_chunk.field_name}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 구조적 청크 저장 실패: {str(e)}")
+            return False
+    
+    def _get_or_create_structured_chunk_collection(self):
+        """구조적 청크 전용 컬렉션 가져오기 또는 생성"""
+        try:
+            collection = self.client.get_collection("structured_chunks")
+            return collection
+        except:
+            # 컬렉션이 없으면 생성
+            collection = self.client.create_collection(
+                name="structured_chunks",
+                metadata={"description": "구조적 청크 컬렉션"}
+            )
+            print("✅ 구조적 청크 컬렉션 생성 완료")
+            return collection
+    
+    def search_structured_chunks(self, query: str, n_results: int = 5, 
+                                chunk_types: List[str] = None, 
+                                ticket_ids: List[str] = None,
+                                priority_filter: int = None) -> List[Dict[str, Any]]:
+        """
+        구조적 청크 검색
+        
+        Args:
+            query: 검색 쿼리
+            n_results: 반환할 결과 수
+            chunk_types: 검색할 청크 타입 필터
+            ticket_ids: 검색할 티켓 ID 필터
+            priority_filter: 우선순위 필터 (1: 높음, 2: 중간, 3: 낮음)
+            
+        Returns:
+            검색 결과 리스트
+        """
+        try:
+            # 쿼리 전처리 적용
+            preprocessed_query = preprocess_for_embedding(query)
+            
+            collection = self._get_or_create_structured_chunk_collection()
+            
+            # 필터 조건 구성
+            where_conditions = {}
+            if chunk_types:
+                where_conditions["chunk_type"] = {"$in": chunk_types}
+            if ticket_ids:
+                where_conditions["ticket_id"] = {"$in": ticket_ids}
+            if priority_filter:
+                where_conditions["priority"] = {"$lte": priority_filter}
+            
+            # ChromaDB는 단일 조건만 지원하므로 첫 번째 조건만 사용
+            if len(where_conditions) > 1:
+                # 우선순위: chunk_types > ticket_ids > priority_filter
+                if "chunk_type" in where_conditions:
+                    where_conditions = {"chunk_type": where_conditions["chunk_type"]}
+                elif "ticket_id" in where_conditions:
+                    where_conditions = {"ticket_id": where_conditions["ticket_id"]}
+                elif "priority" in where_conditions:
+                    where_conditions = {"priority": where_conditions["priority"]}
+            
+            # 검색 실행 (전처리된 쿼리 사용)
+            results = collection.query(
+                query_texts=[preprocessed_query],
+                n_results=n_results,
+                where=where_conditions if where_conditions else None,
+                include=["metadatas", "documents", "distances"]
+            )
+            
+            structured_chunks = []
+            for i, chunk_id in enumerate(results['ids'][0]):
+                metadata = results['metadatas'][0][i]
+                document = results['documents'][0][i]
+                distance = results['distances'][0][i] if results['distances'] else 0.0
+                
+                # 유사도 점수 계산
+                similarity_score = max(0.0, 1.0 - distance)
+                
+                structured_chunk = {
+                    "chunk_id": chunk_id,
+                    "content": document,
+                    "chunk_type": metadata.get("chunk_type", ""),
+                    "ticket_id": metadata.get("ticket_id", ""),
+                    "field_name": metadata.get("field_name", ""),
+                    "field_value": metadata.get("field_value", ""),
+                    "priority": metadata.get("priority", 3),
+                    "file_name": metadata.get("file_name", ""),
+                    "file_type": metadata.get("file_type", ""),
+                    "similarity_score": similarity_score,
+                    "created_at": metadata.get("created_at", ""),
+                    "metadata": {k: v for k, v in metadata.items() 
+                               if k not in ["chunk_id", "chunk_type", "ticket_id", 
+                                          "field_name", "field_value", "priority", 
+                                          "file_name", "file_type", "created_at"]}
+                }
+                structured_chunks.append(structured_chunk)
+            
+            print(f"✅ 구조적 청크 검색 완료: {len(structured_chunks)}개 결과")
+            return structured_chunks
+            
+        except Exception as e:
+            print(f"❌ 구조적 청크 검색 실패: {str(e)}")
+            return []
+    
+    def get_structured_chunk_stats(self) -> Dict[str, Any]:
+        """구조적 청크 통계 조회"""
+        try:
+            collection = self._get_or_create_structured_chunk_collection()
+            count = collection.count()
+            
+            # 청크 타입별 통계
+            all_chunks = collection.get(include=["metadatas"])
+            chunk_type_stats = {}
+            ticket_stats = {}
+            
+            for metadata in all_chunks['metadatas']:
+                chunk_type = metadata.get('chunk_type', 'unknown')
+                ticket_id = metadata.get('ticket_id', 'unknown')
+                
+                chunk_type_stats[chunk_type] = chunk_type_stats.get(chunk_type, 0) + 1
+                ticket_stats[ticket_id] = ticket_stats.get(ticket_id, 0) + 1
+            
+            return {
+                "total_chunks": count,
+                "chunk_types": chunk_type_stats,
+                "unique_tickets": len(ticket_stats),
+                "tickets": ticket_stats
+            }
+            
+        except Exception as e:
+            print(f"❌ 구조적 청크 통계 조회 실패: {str(e)}")
+            return {"total_chunks": 0, "chunk_types": {}, "unique_tickets": 0, "tickets": {}}
+    
+    # ==================== 하이브리드 검색을 위한 문서 수집 메서드들 ====================
+    
+    def get_all_file_chunks(self) -> List[Dict[str, Any]]:
+        """모든 파일 청크 데이터 반환"""
+        try:
+            # file_chunks 컬렉션에서 모든 데이터 가져오기
+            file_chunks_collection = self._get_or_create_collection("file_chunks")
+            results = file_chunks_collection.get(include=["metadatas", "documents"])
+            
+            file_chunks = []
+            if results and results['documents']:
+                for i, doc in enumerate(results['documents']):
+                    metadata = results['metadatas'][i] if results['metadatas'] else {}
+                    file_chunks.append({
+                        'chunk_id': metadata.get('chunk_id', f'chunk_{i}'),
+                        'file_name': metadata.get('file_name', ''),
+                        'content': doc,
+                        'metadata': metadata,
+                        'similarity_score': 0.0  # 기본값
+                    })
+            
+            return file_chunks
+            
+        except Exception as e:
+            print(f"파일 청크 수집 실패: {e}")
+            return []
+    
+    def get_all_mails(self) -> List[Dict[str, Any]]:
+        """모든 메일 데이터 반환"""
+        try:
+            # mail_collection에서 모든 데이터 가져오기
+            results = self.collection.get(include=["metadatas", "documents"])
+            
+            mails = []
+            if results and results['documents']:
+                for i, doc in enumerate(results['documents']):
+                    metadata = results['metadatas'][i] if results['metadatas'] else {}
+                    mails.append({
+                        'message_id': metadata.get('message_id', f'mail_{i}'),
+                        'subject': metadata.get('subject', ''),
+                        'sender': metadata.get('sender', ''),
+                        'content': doc,
+                        'metadata': metadata,
+                        'similarity_score': 0.0  # 기본값
+                    })
+            
+            return mails
+            
+        except Exception as e:
+            print(f"메일 수집 실패: {e}")
+            return []
+    
+    def get_all_structured_chunks(self) -> List[Dict[str, Any]]:
+        """모든 구조적 청크 데이터 반환"""
+        try:
+            # structured_chunks 컬렉션에서 모든 데이터 가져오기
+            structured_collection = self._get_or_create_collection("structured_chunks")
+            results = structured_collection.get(include=["metadatas", "documents"])
+            
+            structured_chunks = []
+            if results and results['documents']:
+                for i, doc in enumerate(results['documents']):
+                    metadata = results['metadatas'][i] if results['metadatas'] else {}
+                    structured_chunks.append({
+                        'chunk_id': metadata.get('chunk_id', f'structured_{i}'),
+                        'ticket_id': metadata.get('ticket_id', ''),
+                        'chunk_type': metadata.get('chunk_type', ''),
+                        'content': doc,
+                        'metadata': metadata,
+                        'similarity_score': 0.0  # 기본값
+                    })
+            
+            return structured_chunks
+            
+        except Exception as e:
+            print(f"구조적 청크 수집 실패: {e}")
+            return []
+    
+    def get_all_documents_for_hybrid_search(self) -> List[Dict[str, Any]]:
+        """하이브리드 검색을 위한 모든 문서 통합 반환"""
+        try:
+            all_documents = []
+            
+            # 파일 청크 추가
+            file_chunks = self.get_all_file_chunks()
+            for chunk in file_chunks:
+                chunk['source_type'] = 'file_chunk'
+                all_documents.append(chunk)
+            
+            # 메일 추가
+            mails = self.get_all_mails()
+            for mail in mails:
+                mail['source_type'] = 'mail'
+                all_documents.append(mail)
+            
+            # 구조적 청크 추가
+            structured_chunks = self.get_all_structured_chunks()
+            for chunk in structured_chunks:
+                chunk['source_type'] = 'structured_chunk'
+                all_documents.append(chunk)
+            
+            print(f"✅ 하이브리드 검색용 문서 수집 완료: {len(all_documents)}개")
+            return all_documents
+            
+        except Exception as e:
+            print(f"하이브리드 검색용 문서 수집 실패: {e}")
+            return []
 
 class UserActionVectorDBManager:
     """사용자 액션 저장용 Vector DB 관리자 - ChromaDB 사용 (장기 기억)"""
@@ -508,8 +991,11 @@ class UserActionVectorDBManager:
     def search_similar_actions(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
         """유사한 과거 액션들을 검색 (AI 결정 + 사용자 피드백 모두 포함)"""
         try:
+            # 쿼리 전처리 적용
+            preprocessed_query = preprocess_for_embedding(query)
+            
             results = self.collection.query(
-                query_texts=[query],
+                query_texts=[preprocessed_query],
                 n_results=n_results,
                 include=["metadatas", "documents", "distances"]
             )
@@ -702,13 +1188,16 @@ class SystemInfoVectorDBManager:
                              file_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """유사한 청크 검색"""
         try:
+            # 쿼리 전처리 적용
+            preprocessed_query = preprocess_for_embedding(query)
+            
             # 검색 조건 설정
             where_filter = {}
             if file_type:
                 where_filter["file_type"] = file_type
             
             results = self.collection.query(
-                query_texts=[query],
+                query_texts=[preprocessed_query],
                 n_results=n_results,
                 where=where_filter if where_filter else None,
                 include=["metadatas", "documents", "distances"]
@@ -887,8 +1376,11 @@ class JiraInfoVectorDBManager:
     def search_similar_issues(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
         """유사한 JIRA 이슈 검색"""
         try:
+            # 쿼리 전처리 적용
+            preprocessed_query = preprocess_for_embedding(query)
+            
             results = self.collection.query(
-                query_texts=[query],
+                query_texts=[preprocessed_query],
                 n_results=n_results,
                 include=["metadatas", "documents", "distances"]
             )
@@ -1144,3 +1636,4 @@ class AIRecommendationEngine:
         except Exception as e:
             print(f"AI 추천 생성 오류: {e}")
             return f"❌ AI 추천 생성 중 오류가 발생했습니다: {str(e)}"
+    

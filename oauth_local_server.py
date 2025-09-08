@@ -14,8 +14,10 @@ from urllib.parse import parse_qs, urlparse
 class OAuthHandler(http.server.BaseHTTPRequestHandler):
     """OAuth 리디렉션을 처리하는 HTTP 핸들러"""
     
+    # 클래스 변수로 인증 코드 저장
+    auth_code = None
+    
     def __init__(self, *args, **kwargs):
-        self.auth_code = None
         super().__init__(*args, **kwargs)
     
     def do_GET(self):
@@ -30,8 +32,8 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
             
             # 인증 코드 추출
             if 'code' in query_params:
-                self.auth_code = query_params['code'][0]
-                print(f"✅ 인증 코드 추출: {self.auth_code}")
+                OAuthHandler.auth_code = query_params['code'][0]
+                print(f"✅ 인증 코드 추출: {OAuthHandler.auth_code}")
                 
                 # 성공 페이지 응답
                 self.send_response(200)
@@ -54,7 +56,7 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
                 <body>
                     <div class="success">✅ OAuth 인증 성공!</div>
                     <p>인증 코드가 생성되었습니다.</p>
-                    <div class="code">{self.auth_code}</div>
+                    <div class="code">{OAuthHandler.auth_code}</div>
                     <p>이제 메인 앱에서 자동으로 토큰이 처리됩니다.</p>
                     <div class="info">이 창은 닫아도 됩니다.</div>
                 </body>
@@ -128,6 +130,7 @@ class OAuthLocalServer:
         self.port = port
         self.server = None
         self.auth_code = None
+        self.handler_instance = None
     
     def start(self):
         """서버 시작"""
@@ -153,8 +156,8 @@ class OAuthLocalServer:
                     time.sleep(0.1)
                 
                 # 인증 코드 반환
-                if hasattr(handler, 'auth_code') and handler.auth_code:
-                    self.auth_code = handler.auth_code
+                if OAuthHandler.auth_code:
+                    self.auth_code = OAuthHandler.auth_code
                     return self.auth_code
                 
         except Exception as e:
