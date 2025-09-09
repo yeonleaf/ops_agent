@@ -25,6 +25,7 @@ class JiraChunk:
     # 기본 식별자
     chunk_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     ticket_id: str = ""  # 원본 티켓 ID (예: T-001)
+    parent_ticket_id: str = ""  # 부모 티켓 ID (다중 벡터 표현용)
     
     # 청크 타입 및 내용
     chunk_type: JiraChunkType = JiraChunkType.SUMMARY
@@ -60,13 +61,41 @@ class JiraChunk:
     # 추가 메타데이터
     metadata: Dict[str, Any] = field(default_factory=dict)
     
+    def create_expanded_content(self) -> str:
+        """문서 확장을 적용한 임베딩용 텍스트 생성 (개선된 버전)"""
+        # 청크 타입에 따른 필드명 매핑
+        field_type_mapping = {
+            JiraChunkType.SUMMARY: "요약",
+            JiraChunkType.DESCRIPTION: "설명", 
+            JiraChunkType.COMMENT: "댓글",
+            JiraChunkType.METADATA: "메타데이터"
+        }
+        
+        chunk_field_type = field_type_mapping.get(self.chunk_type, "내용")
+        
+        # 개선된 문서 확장 템플릿 - 더 자연스러운 문장 형태
+        if self.chunk_type == JiraChunkType.SUMMARY:
+            expanded_content = f"제목: {self.ticket_summary}. 요약: {self.content}."
+        elif self.chunk_type == JiraChunkType.DESCRIPTION:
+            expanded_content = f"제목: {self.ticket_summary}. 설명: {self.content}."
+        elif self.chunk_type == JiraChunkType.COMMENT:
+            expanded_content = f"제목: {self.ticket_summary}. 댓글: {self.content}."
+        elif self.chunk_type == JiraChunkType.METADATA:
+            expanded_content = f"제목: {self.ticket_summary}. 메타데이터: {self.content}."
+        else:
+            expanded_content = f"제목: {self.ticket_summary}. {chunk_field_type}: {self.content}."
+        
+        return expanded_content
+    
     def to_vector_db_dict(self) -> Dict[str, Any]:
         """Vector DB 저장용 딕셔너리로 변환"""
         return {
             "chunk_id": self.chunk_id,
             "ticket_id": self.ticket_id,
+            "parent_ticket_id": self.parent_ticket_id,
             "chunk_type": self.chunk_type.value,
             "content": self.content,
+            "expanded_content": self.create_expanded_content(),  # 문서 확장된 내용 추가
             "field_name": self.field_name,
             "field_value": self.field_value,
             "comment_author": self.comment_author,

@@ -27,16 +27,17 @@ logger = logging.getLogger(__name__)
 class JiraChunkProcessor:
     """Jira CSV 데이터를 전문화된 청크로 처리하는 프로세서"""
     
-    def __init__(self, enable_text_cleaning: bool = True):
+    def __init__(self, enable_text_cleaning: bool = False):
         """
-        초기화
+        초기화 (커스텀 전처리 제거됨)
         
         Args:
-            enable_text_cleaning: 텍스트 정제 기능 사용 여부
+            enable_text_cleaning: 텍스트 정제 기능 사용 여부 (기본값: False, 전처리 제거됨)
         """
-        self.enable_text_cleaning = enable_text_cleaning
-        self.text_cleaner = JiraTextCleaner() if enable_text_cleaning else None
-        logger.info(f"Jira 청크 프로세서 초기화 완료 (텍스트 정제: {enable_text_cleaning})")
+        # 커스텀 전처리 제거: 항상 False로 설정
+        self.enable_text_cleaning = False
+        self.text_cleaner = None
+        logger.info(f"Jira 청크 프로세서 초기화 완료 (커스텀 전처리 제거됨, 원문 그대로 사용)")
     
     def process_csv_file(self, csv_file_path: str) -> List[JiraTicketChunks]:
         """
@@ -164,7 +165,8 @@ class JiraChunkProcessor:
             cleaned_content = summary
         
         # 임베딩용 전처리 적용
-        cleaned_content = preprocess_for_embedding(cleaned_content)
+        # 커스텀 전처리 제거: 원문 그대로 사용
+        # cleaned_content = preprocess_for_embedding(cleaned_content)
         
         if not cleaned_content:
             return None
@@ -175,7 +177,8 @@ class JiraChunkProcessor:
             ticket_data.get('Priority', 'Medium')
         )
         
-        chunk = JiraChunk(
+        # 임시 청크 객체 생성 (문서 확장을 위해)
+        temp_chunk = JiraChunk(
             ticket_id=ticket_data.get('Key', ''),
             chunk_type=JiraChunkType.SUMMARY,
             content=cleaned_content,
@@ -198,6 +201,34 @@ class JiraChunkProcessor:
             }
         )
         
+        # 문서 확장 적용
+        expanded_content = temp_chunk.create_expanded_content()
+        
+        # 최종 청크 생성 (확장된 내용으로)
+        chunk = JiraChunk(
+            ticket_id=ticket_data.get('Key', ''),
+            chunk_type=JiraChunkType.SUMMARY,
+            content=expanded_content,  # 문서 확장된 내용 사용
+            field_name='Summary',
+            field_value=summary,
+            ticket_summary=summary,
+            ticket_status=ticket_data.get('Status', ''),
+            ticket_priority=ticket_data.get('Priority', ''),
+            ticket_type=ticket_data.get('Issue Type', ''),
+            ticket_assignee=ticket_data.get('Assignee', ''),
+            ticket_reporter=ticket_data.get('Reporter', ''),
+            ticket_created=ticket_data.get('Created', ''),
+            ticket_updated=ticket_data.get('Updated', ''),
+            priority_score=priority_score,
+            file_name=file_name,
+            metadata={
+                'original_field': 'Summary',
+                'text_cleaned': self.enable_text_cleaning,
+                'chunk_category': 'ticket_summary',
+                'document_expansion': True
+            }
+        )
+        
         return chunk
     
     def _create_description_chunk(self, ticket_data: Dict[str, str], file_name: str) -> Optional[JiraChunk]:
@@ -213,7 +244,8 @@ class JiraChunkProcessor:
             cleaned_content = description
         
         # 임베딩용 전처리 적용
-        cleaned_content = preprocess_for_embedding(cleaned_content)
+        # 커스텀 전처리 제거: 원문 그대로 사용
+        # cleaned_content = preprocess_for_embedding(cleaned_content)
         
         if not cleaned_content:
             return None
@@ -224,7 +256,8 @@ class JiraChunkProcessor:
             ticket_data.get('Priority', 'Medium')
         )
         
-        chunk = JiraChunk(
+        # 임시 청크 객체 생성 (문서 확장을 위해)
+        temp_chunk = JiraChunk(
             ticket_id=ticket_data.get('Key', ''),
             chunk_type=JiraChunkType.DESCRIPTION,
             content=cleaned_content,
@@ -244,6 +277,34 @@ class JiraChunkProcessor:
                 'original_field': 'Description',
                 'text_cleaned': self.enable_text_cleaning,
                 'chunk_category': 'ticket_description'
+            }
+        )
+        
+        # 문서 확장 적용
+        expanded_content = temp_chunk.create_expanded_content()
+        
+        # 최종 청크 생성 (확장된 내용으로)
+        chunk = JiraChunk(
+            ticket_id=ticket_data.get('Key', ''),
+            chunk_type=JiraChunkType.DESCRIPTION,
+            content=expanded_content,  # 문서 확장된 내용 사용
+            field_name='Description',
+            field_value=description,
+            ticket_summary=ticket_data.get('Summary', ''),
+            ticket_status=ticket_data.get('Status', ''),
+            ticket_priority=ticket_data.get('Priority', ''),
+            ticket_type=ticket_data.get('Issue Type', ''),
+            ticket_assignee=ticket_data.get('Assignee', ''),
+            ticket_reporter=ticket_data.get('Reporter', ''),
+            ticket_created=ticket_data.get('Created', ''),
+            ticket_updated=ticket_data.get('Updated', ''),
+            priority_score=priority_score,
+            file_name=file_name,
+            metadata={
+                'original_field': 'Description',
+                'text_cleaned': self.enable_text_cleaning,
+                'chunk_category': 'ticket_description',
+                'document_expansion': True
             }
         )
         
@@ -268,7 +329,8 @@ class JiraChunkProcessor:
                 cleaned_content = comment_text
             
             # 임베딩용 전처리 적용
-            cleaned_content = preprocess_for_embedding(cleaned_content)
+            # 커스텀 전처리 제거: 원문 그대로 사용
+        # cleaned_content = preprocess_for_embedding(cleaned_content)
             
             if not cleaned_content:
                 continue
@@ -282,7 +344,8 @@ class JiraChunkProcessor:
                 ticket_data.get('Priority', 'Medium')
             )
             
-            chunk = JiraChunk(
+            # 임시 청크 객체 생성 (문서 확장을 위해)
+            temp_chunk = JiraChunk(
                 ticket_id=ticket_data.get('Key', ''),
                 chunk_type=JiraChunkType.COMMENT,
                 content=cleaned_content,
@@ -305,6 +368,37 @@ class JiraChunkProcessor:
                     'original_field': comment_field,
                     'text_cleaned': self.enable_text_cleaning,
                     'chunk_category': 'ticket_comment'
+                }
+            )
+            
+            # 문서 확장 적용
+            expanded_content = temp_chunk.create_expanded_content()
+            
+            # 최종 청크 생성 (확장된 내용으로)
+            chunk = JiraChunk(
+                ticket_id=ticket_data.get('Key', ''),
+                chunk_type=JiraChunkType.COMMENT,
+                content=expanded_content,  # 문서 확장된 내용 사용
+                field_name=comment_field,
+                field_value=comment_text,
+                comment_author=comment_author,
+                comment_date=ticket_data.get('Updated', ''),  # 댓글 날짜는 Updated 필드 사용
+                comment_id=f"{ticket_data.get('Key', '')}_{comment_field}",
+                ticket_summary=ticket_data.get('Summary', ''),
+                ticket_status=ticket_data.get('Status', ''),
+                ticket_priority=ticket_data.get('Priority', ''),
+                ticket_type=ticket_data.get('Issue Type', ''),
+                ticket_assignee=ticket_data.get('Assignee', ''),
+                ticket_reporter=ticket_data.get('Reporter', ''),
+                ticket_created=ticket_data.get('Created', ''),
+                ticket_updated=ticket_data.get('Updated', ''),
+                priority_score=priority_score,
+                file_name=file_name,
+                metadata={
+                    'original_field': comment_field,
+                    'text_cleaned': self.enable_text_cleaning,
+                    'chunk_category': 'ticket_comment',
+                    'document_expansion': True
                 }
             )
             
@@ -335,7 +429,8 @@ class JiraChunkProcessor:
             cleaned_content = metadata_content
         
         # 임베딩용 전처리 적용
-        cleaned_content = preprocess_for_embedding(cleaned_content)
+        # 커스텀 전처리 제거: 원문 그대로 사용
+        # cleaned_content = preprocess_for_embedding(cleaned_content)
         
         if not cleaned_content:
             return None
@@ -346,7 +441,8 @@ class JiraChunkProcessor:
             ticket_data.get('Priority', 'Medium')
         )
         
-        chunk = JiraChunk(
+        # 임시 청크 객체 생성 (문서 확장을 위해)
+        temp_chunk = JiraChunk(
             ticket_id=ticket_data.get('Key', ''),
             chunk_type=JiraChunkType.METADATA,
             content=cleaned_content,
@@ -366,6 +462,34 @@ class JiraChunkProcessor:
                 'original_fields': metadata_fields,
                 'text_cleaned': self.enable_text_cleaning,
                 'chunk_category': 'ticket_metadata'
+            }
+        )
+        
+        # 문서 확장 적용
+        expanded_content = temp_chunk.create_expanded_content()
+        
+        # 최종 청크 생성 (확장된 내용으로)
+        chunk = JiraChunk(
+            ticket_id=ticket_data.get('Key', ''),
+            chunk_type=JiraChunkType.METADATA,
+            content=expanded_content,  # 문서 확장된 내용 사용
+            field_name='Metadata',
+            field_value=metadata_content,
+            ticket_summary=ticket_data.get('Summary', ''),
+            ticket_status=ticket_data.get('Status', ''),
+            ticket_priority=ticket_data.get('Priority', ''),
+            ticket_type=ticket_data.get('Issue Type', ''),
+            ticket_assignee=ticket_data.get('Assignee', ''),
+            ticket_reporter=ticket_data.get('Reporter', ''),
+            ticket_created=ticket_data.get('Created', ''),
+            ticket_updated=ticket_data.get('Updated', ''),
+            priority_score=priority_score,
+            file_name=file_name,
+            metadata={
+                'original_fields': metadata_fields,
+                'text_cleaned': self.enable_text_cleaning,
+                'chunk_category': 'ticket_metadata',
+                'document_expansion': True
             }
         )
         

@@ -173,14 +173,19 @@ def log_test_case(log_file, test_case_num: int, ticket: Dict[str, Any], question
     log_file.write(f"🎯 정답 티켓: {ticket_id} ({ticket_summary})\n")
     log_file.write(f"📝 티켓 설명: {ticket_description}\n")
     log_file.write(f"🧠 생성된 질문: {question}\n")
-    log_file.write(f"🔍 RAG 검색 결과 (Top {len(rag_results)}):\n")
+    log_file.write(f"🔍 RAG 검색 결과 (Top {len(rag_results)}) - 질문과의 유사도 기준 (0.0=완전다름, 1.0=완전동일):\n")
     
     for i, result in enumerate(rag_results, 1):
         result_id = result.get('id', 'Unknown')
         result_content = result.get('content', 'No Content')
         result_score = result.get('score', 0.0)
+        raw_score = result.get('raw_score', result_score)
         
-        log_file.write(f"\n   {i}. ID: {result_id} (유사도: {result_score:.3f})\n")
+        # 원본 점수와 정규화된 유사도 모두 표시
+        if raw_score != result_score:
+            log_file.write(f"\n   {i}. ID: {result_id} (질문과의 유사도: {result_score:.3f}, 원본점수: {raw_score:.3f})\n")
+        else:
+            log_file.write(f"\n   {i}. ID: {result_id} (질문과의 유사도: {result_score:.3f})\n")
         log_file.write(f"      내용:\n")
         
         # 내용을 여러 줄로 나누어 표시

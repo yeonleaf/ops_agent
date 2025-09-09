@@ -203,28 +203,36 @@ text_preprocessor = TextPreprocessor()
 
 def preprocess_for_embedding(text: str) -> str:
     """
-    임베딩용 텍스트 전처리 (편의 함수)
+    임베딩용 텍스트 전처리 (커스텀 전처리 제거됨)
     
     Args:
         text: 원본 텍스트
         
     Returns:
-        전처리된 깨끗한 텍스트
+        원문 그대로 반환 (전처리 없음)
     """
-    return text_preprocessor.preprocess_for_embedding(text)
+    # 커스텀 전처리 제거: 원문 그대로 반환
+    return text.strip() if text else ""
+    
+    # 기존 전처리 코드 (주석 처리됨)
+    # return text_preprocessor.preprocess_for_embedding(text)
 
 
 def preprocess_batch_for_embedding(texts: list) -> list:
     """
-    여러 텍스트를 일괄 전처리 (편의 함수)
+    여러 텍스트를 일괄 전처리 (커스텀 전처리 제거됨)
     
     Args:
         texts: 텍스트 리스트
         
     Returns:
-        전처리된 텍스트 리스트
+        원문 그대로 반환 (전처리 없음)
     """
-    return text_preprocessor.preprocess_batch(texts)
+    # 커스텀 전처리 제거: 원문 그대로 반환
+    return [text.strip() if text else "" for text in texts]
+    
+    # 기존 전처리 코드 (주석 처리됨)
+    # return text_preprocessor.preprocess_batch(texts)
 
 
 def main():

@@ -27,13 +27,12 @@ from generate_golden_set import (
 )
 
 # RAG 관련 모듈들 import
-from vector_db_models import VectorDBManager
-from ticket_ai_recommender import TicketAIRecommender
+from multi_vector_cross_encoder_rag import MultiVectorCrossEncoderRAG
 
 # ==================== 실제 RAG 검색 함수 ====================
 def search_rag(query: str) -> List[Dict[str, Any]]:
     """
-    실제 RAG 시스템에서 검색을 수행하는 함수
+    Multi-Vector + Cross-Encoder RAG 시스템에서 검색을 수행하는 함수
     
     Args:
         query: 검색 쿼리
@@ -42,39 +41,38 @@ def search_rag(query: str) -> List[Dict[str, Any]]:
         List[Dict]: 검색 결과 리스트 (id, content, score 포함)
     """
     try:
-        # VectorDBManager 초기화
-        vector_db = VectorDBManager()
+        # Multi-Vector Cross-Encoder RAG 시스템 초기화
+        rag = MultiVectorCrossEncoderRAG()
         
-        # 통합 검색 실행 (메일 + 파일 청크)
-        recommender = TicketAIRecommender()
-        similar_content = recommender.get_integrated_similar_content(
-            query, 
-            email_limit=2, 
-            chunk_limit=1
+        # 검색 실행
+        similar_content = rag.search(
+            query=query,
+            n_candidates=50,  # 1단계 후보 수
+            top_k=10         # 최종 결과 수
         )
         
         # 결과를 표준 형식으로 변환
         results = []
         for i, item in enumerate(similar_content):
-            # Retrieve then Re-rank 결과인 경우 rerank_score 사용, 그 외에는 similarity_score 사용
-            if item.get("source") == "retrieve_rerank_whoosh":
-                metadata = item.get('metadata', {})
-                score = metadata.get('rerank_score', item.get('similarity_score', 0.0))
-            else:
-                score = item.get('similarity_score', 0.0)
+            # Cross-Encoder 점수 사용
+            raw_score = item.get('similarity_score', 0.0)
+            
+            # Cross-Encoder 점수는 이미 0~1 범위로 정규화됨
+            similarity_score = max(0.0, min(1.0, raw_score))
             
             result = {
-                "id": item.get("message_id", item.get("chunk_id", f"ITEM-{i}")),
-                "content": "",
-                "score": score
+                "id": item.get("id", f"ITEM-{i}"),
+                "content": item.get("content", ""),
+                "score": similarity_score,
+                "raw_score": raw_score,  # 원본 점수도 보관
+                "similarity_to_query": similarity_score  # 질문과의 유사도 명시
             }
             
-            # Retrieve then Re-rank 검색 결과인 경우 (Vector + Whoosh + CohereRerank)
-            if item.get("source") == "retrieve_rerank_whoosh":
+            # Multi-Vector Cross-Encoder 검색 결과인 경우
+            if item.get("source") == "multi_vector_cross_encoder":
                 content = item.get('content', 'No Content')
                 metadata = item.get('metadata', {})
-                source_type = metadata.get('source_type', 'unknown')
-                extracted_keywords = item.get('extracted_keywords', [])
+                ticket_id = item.get('id', 'Unknown')
                 
                 # 내용이 길면 적절히 잘라서 표시
                 if len(content) > 200:
@@ -82,13 +80,10 @@ def search_rag(query: str) -> List[Dict[str, Any]]:
                 else:
                     content_preview = content
                 
-                # 추출된 키워드 정보 추가
-                keyword_info = f" (키워드: {', '.join(extracted_keywords)})" if extracted_keywords else ""
-                
-                # Retrieve then Re-rank 검색 결과 표시
-                result["content"] = f"[Retrieve then Re-rank Whoosh] {source_type}{keyword_info}\n내용: {content_preview}"
+                # Multi-Vector Cross-Encoder 검색 결과 표시
+                result["content"] = f"[Multi-Vector Cross-Encoder] 티켓: {ticket_id}\n내용: {content_preview}"
             
-            # QueryExpansion 결과인 경우 (file_chunk, mail 등)
+            # 기타 결과인 경우 (file_chunk, mail 등)
             elif item.get("source") in ["file_chunk", "mail", "structured_chunk"]:
                 content = item.get('content', 'No Content')
                 metadata = item.get('metadata', {})
