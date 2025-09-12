@@ -524,51 +524,165 @@ class GmailProvider(EmailProvider):
 def refresh_gmail_token() -> Dict[str, Any]:
     """DB에 저장된 refresh_token으로 access_token 재발급"""
     try:
-        from auth_client import auth_client
+        print("🔄 refresh_gmail_token 시작")
+        print("🍪 auth_client import 시도")
+        try:
+            from auth_client import auth_client
+            print("🍪 auth_client import 성공")
+        except Exception as import_error:
+            print(f"❌ auth_client import 실패: {import_error}")
+            return {"success": False, "message": f"auth_client import 실패: {str(import_error)}"}
         
         # 사용자가 로그인되어 있는지 확인
-        if not auth_client.is_logged_in():
+        print("🍪 auth_client.is_logged_in() 호출 시작")
+        try:
+            is_logged_in = auth_client.is_logged_in()
+            print(f"🍪 로그인 상태: {is_logged_in}")
+        except Exception as login_error:
+            print(f"❌ 로그인 상태 확인 중 오류: {login_error}")
+            return {"success": False, "message": f"로그인 상태 확인 실패: {str(login_error)}"}
+        
+        if not is_logged_in:
+            print("❌ 사용자가 로그인되지 않음")
             return {"success": False, "message": "사용자가 로그인되지 않음"}
         
-        # DB에서 Google 연동 정보 조회
-        result = auth_client.get_google_integration()
-        if not result.get("success") or not result.get("has_token"):
-            return {"success": False, "message": "DB에 Google 토큰이 없음"}
+        # 현재 사용자 정보 가져오기
+        print("🍪 auth_client.get_current_user() 호출 시작")
+        try:
+            user_info = auth_client.get_current_user()
+            print(f"🍪 사용자 정보: {user_info}")
+            print(f"🍪 사용자 정보 타입: {type(user_info)}")
+        except Exception as user_error:
+            print(f"❌ 사용자 정보 조회 중 오류: {user_error}")
+            return {"success": False, "message": f"사용자 정보 조회 실패: {str(user_error)}"}
         
-        # DB에서 복호화된 refresh_token 가져오기
-        refresh_token = result.get("refresh_token")
+        if not user_info or 'email' not in user_info or 'user_id' not in user_info:
+            print("❌ 사용자 정보를 가져올 수 없음")
+            print(f"🍪 user_info: {user_info}")
+            print(f"🍪 email 키 존재: {'email' in user_info if user_info else False}")
+            print(f"🍪 user_id 키 존재: {'user_id' in user_info if user_info else False}")
+            return {"success": False, "message": "사용자 정보를 가져올 수 없음"}
+        
+        # DB에서 직접 Google 연동 정보 조회
+        print(f"🔍 DB에서 사용자 조회: {user_info['email']}")
+        try:
+            from database_models import DatabaseManager
+            print("🍪 DatabaseManager import 성공")
+            db_manager = DatabaseManager()
+            print("🍪 DatabaseManager 인스턴스 생성 성공")
+            user = db_manager.get_user_by_email(user_info['email'])
+            print(f"🍪 DB 사용자 정보: {user}")
+            print(f"🍪 사용자 정보 타입: {type(user)}")
+            if user:
+                print(f"🍪 사용자 ID: {user.id}")
+                print(f"🍪 사용자 이메일: {user.email}")
+                print(f"🍪 google_refresh_token: {user.google_refresh_token}")
+            else:
+                print("❌ DB에서 사용자 정보를 찾을 수 없음")
+        except Exception as db_error:
+            print(f"❌ DB 조회 중 오류: {db_error}")
+            return {"success": False, "message": f"DB 조회 실패: {str(db_error)}"}
+        
+        if not user or not user.google_refresh_token:  # google_refresh_token이 없음
+            print("❌ DB에 Google 토큰이 없음")
+            print("ℹ️ Gmail 기능을 사용하려면 OAuth 인증이 필요합니다.")
+            print("ℹ️ 사이드바의 'Gmail 로그인' 버튼을 클릭하세요.")
+            return {"success": False, "message": "DB에 Google 토큰이 없음", "needs_oauth": True}
+        
+        # 토큰 가져오기 (POC 모드: 암호화 비활성화)
+        print("🔓 POC 모드: 토큰을 그대로 사용")
+        print(f"🍪 저장된 토큰 (처음 50자): {user.google_refresh_token[:50] if user.google_refresh_token else 'None'}")
+        
+        # POC 모드에서는 토큰을 그대로 사용
+        refresh_token = user.google_refresh_token
+        print(f"🍪 사용할 refresh_token: {refresh_token[:20]}..." if refresh_token else "None")
+        
         if not refresh_token:
+            print("❌ DB에서 refresh_token을 가져올 수 없음")
             return {"success": False, "message": "DB에서 refresh_token을 가져올 수 없음"}
         
         # Google OAuth2 클라이언트 설정
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
         
+        print(f"🔑 OAuth 설정 확인:")
+        print(f"  - CLIENT_ID: {client_id[:10]}..." if client_id else "  - CLIENT_ID: None")
+        print(f"  - CLIENT_SECRET: {'설정됨' if client_secret else 'None'}")
+        print(f"  - REFRESH_TOKEN 길이: {len(refresh_token) if refresh_token else 0}")
+        
         if not all([client_id, client_secret, refresh_token]):
+            print("❌ OAuth 설정이 불완전함")
             return {"success": False, "message": "Gmail OAuth 설정이 불완전함"}
         
         # refresh_token으로 access_token 재발급
-        credentials = Credentials(
-            token=None,  # access_token은 None으로 시작
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret
-        )
+        print("🔄 Google Credentials 객체 생성 중...")
+        try:
+            credentials = Credentials(
+                token=None,  # access_token은 None으로 시작
+                refresh_token=refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret
+            )
+            print("✅ Credentials 객체 생성 성공")
+        except Exception as cred_error:
+            print(f"❌ Credentials 객체 생성 실패: {cred_error}")
+            return {"success": False, "message": f"Credentials 생성 실패: {str(cred_error)}"}
         
         # 토큰 갱신
-        credentials.refresh(Request())
-        
-        # 새로운 refresh_token을 DB에 저장
+        print("🔄 토큰 갱신 시도...")
         try:
-            from auth_client import auth_client
-            # 현재 사용자 이메일 가져오기
-            user_info = auth_client.get_current_user()
-            if user_info and 'email' in user_info:
-                # 새로운 refresh_token을 DB에 저장
-                update_result = auth_client.update_google_integration(credentials.refresh_token)
-                if not update_result.get("success"):
-                    print(f"⚠️ 새로운 refresh_token DB 저장 실패: {update_result.get('message')}")
+            from google.auth.transport.requests import Request
+            request = Request()
+            print("📡 Google API로 토큰 갱신 요청 전송...")
+            credentials.refresh(request)
+            print("✅ 토큰 갱신 성공!")
+            print(f"🎯 새로운 access_token: {credentials.token[:20]}..." if credentials.token else "None")
+            print(f"🎯 새로운 refresh_token: {credentials.refresh_token[:20]}..." if credentials.refresh_token else "None")
+        except Exception as refresh_error:
+            print(f"❌ 토큰 갱신 실패: {refresh_error}")
+            print(f"❌ 에러 타입: {type(refresh_error).__name__}")
+            
+            # 더 구체적인 에러 정보
+            if hasattr(refresh_error, 'response'):
+                print(f"📡 HTTP 응답 상태: {refresh_error.response.status_code if refresh_error.response else 'None'}")
+                if refresh_error.response:
+                    try:
+                        error_details = refresh_error.response.json()
+                        print(f"📡 에러 상세: {error_details}")
+                    except:
+                        print(f"📡 에러 텍스트: {refresh_error.response.text}")
+            
+            # invalid_grant 에러인 경우 토큰 만료로 처리
+            if 'invalid_grant' in str(refresh_error).lower():
+                print("🔄 토큰 만료 감지: 재인증 필요")
+                
+                # 만료된 토큰을 DB에서 제거
+                try:
+                    from fastmcp_server import db_manager
+                    db_manager.update_user_google_token(user[0], None)  # user[0]는 user_id
+                    print("🗑️ 만료된 refresh_token을 DB에서 제거했습니다")
+                except Exception as cleanup_error:
+                    print(f"⚠️ 토큰 정리 중 오류: {cleanup_error}")
+                
+                print("ℹ️ Gmail 기능을 사용하려면 OAuth 재인증이 필요합니다.")
+                print("ℹ️ 사이드바의 'Gmail 로그인' 버튼을 클릭하세요.")
+                
+                return {
+                    "success": False, 
+                    "message": "refresh_token이 만료되어 OAuth 재인증이 필요합니다",
+                    "needs_oauth": True,
+                    "error_type": "token_expired"
+                }
+            
+            return {"success": False, "message": f"토큰 갱신 실패: {str(refresh_error)}"}
+        
+        # 새로운 refresh_token을 DB에 저장 (POC: 암호화 비활성화)
+        try:
+            from fastmcp_server import db_manager
+            # POC 모드: 토큰을 평문으로 저장
+            db_manager.update_user_google_token(user[0], credentials.refresh_token)
+            print(f"✅ 새로운 refresh_token이 DB에 저장되었습니다 (평문)")
         except Exception as e:
             print(f"⚠️ refresh_token DB 저장 중 오류: {e}")
         

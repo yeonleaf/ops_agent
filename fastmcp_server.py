@@ -10,6 +10,7 @@ import requests
 import secrets
 import hashlib
 import json
+import base64
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
@@ -171,8 +172,8 @@ class DatabaseManager:
         conn.commit()
         conn.close()
     
-    def update_user_google_token(self, user_id: int, encrypted_token: str):
-        """사용자 Google 토큰 업데이트"""
+    def update_user_google_token(self, user_id: int, encrypted_token: str = None):
+        """사용자 Google 토큰 업데이트 (None이면 토큰 삭제)"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
@@ -193,15 +194,25 @@ class TokenEncryption:
             # 새로운 키 생성
             self.key = Fernet.generate_key().decode()
             print(f"⚠️ 새로운 암호화 키가 생성되었습니다. ENCRYPTION_KEY={self.key}")
-        self.fernet = Fernet(self.key.encode())
+        
+        logging.info(f"🔐 암호화 키 정보: 길이={len(self.key)}, 시작={self.key[:10]}...")
+        
+        try:
+            self.fernet = Fernet(self.key.encode())
+            logging.info("✅ Fernet 객체 생성 성공")
+        except Exception as e:
+            logging.error(f"❌ Fernet 객체 생성 실패: {e}")
+            raise
     
     def encrypt_token(self, token: str) -> str:
-        """토큰 암호화"""
-        return self.fernet.encrypt(token.encode()).decode()
+        """토큰 암호화 (POC용 비활성화)"""
+        logging.info("🔓 POC 모드: 토큰 암호화 비활성화")
+        return token  # 암호화하지 않고 그대로 반환
     
     def decrypt_token(self, encrypted_token: str) -> str:
-        """토큰 복호화"""
-        return self.fernet.decrypt(encrypted_token.encode()).decode()
+        """토큰 복호화 (POC용 비활성화)"""
+        logging.info("🔓 POC 모드: 토큰 복호화 비활성화")
+        return encrypted_token  # 복호화하지 않고 그대로 반환
 
 token_encryption = TokenEncryption()
 
@@ -364,17 +375,32 @@ async def get_google_integration(current_user: dict = Depends(get_current_user))
     try:
         user = db_manager.get_user_by_email(current_user["email"])
         if not user or not user[3]:  # google_refresh_token이 없음
-            return {"success": False, "message": "Google 연동 정보가 없습니다"}
+            return {"success": False, "message": "Google 연동 정보가 없습니다", "needs_reauth": True}
+        
+        # 저장된 토큰 정보 확인
+        stored_token = user[3]
+        logging.info(f"🗄️ 저장된 토큰 정보: 길이={len(stored_token)}, 시작={stored_token[:30]}...")
         
         # 토큰 복호화
-        decrypted_token = token_encryption.decrypt_token(user[3])
-        
-        return {
-            "success": True,
-            "message": "Google 연동 정보가 있습니다",
-            "has_token": True,
-            "refresh_token": decrypted_token
-        }
+        try:
+            decrypted_token = token_encryption.decrypt_token(stored_token)
+            logging.info(f"✅ 토큰 복호화 성공: {user[1]}")
+            
+            return {
+                "success": True,
+                "message": "Google 연동 정보가 있습니다",
+                "has_token": True,
+                "refresh_token": decrypted_token
+            }
+        except Exception as e:
+            logging.error(f"❌ 토큰 복호화 실패: {user[1]} - {str(e)}")
+            # 토큰이 손상된 경우 재인증 필요
+            return {
+                "success": False, 
+                "message": f"토큰이 손상되어 재인증이 필요합니다: {str(e)}",
+                "needs_reauth": True,
+                "corrupted_token": True
+            }
     except Exception as e:
         return {"success": False, "message": f"Google 연동 정보 조회 실패: {str(e)}"}
 
@@ -419,6 +445,20 @@ async def update_google_token_by_email(request: GoogleTokenByEmailRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Google 연동 정보 업데이트 실패: {str(e)}")
+
+@auth_app.delete("/user/integrations/google")
+async def delete_google_integration(current_user: dict = Depends(get_current_user)):
+    """Google 연동 정보 삭제 (손상된 토큰 정리용)"""
+    try:
+        # 사용자의 Google 토큰을 NULL로 설정
+        db_manager.update_user_google_token(current_user["user_id"], None)
+        
+        return {
+            "success": True,
+            "message": "Google 연동 정보가 삭제되었습니다. 재인증을 진행해주세요."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Google 연동 정보 삭제 실패: {str(e)}")
 
 # OAuth 콜백 서버 설정
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
@@ -1395,6 +1435,63 @@ def logout_user() -> Dict[str, Any]:
         }
 
 @mcp.tool()
+def check_encryption_key() -> Dict[str, Any]:
+    """암호화 키 상태를 확인합니다."""
+    try:
+        encryption_key = os.getenv("ENCRYPTION_KEY")
+        return {
+            "success": True,
+            "has_encryption_key": bool(encryption_key),
+            "key_length": len(encryption_key) if encryption_key else 0,
+            "message": "ENCRYPTION_KEY가 설정되어 있습니다" if encryption_key else "ENCRYPTION_KEY가 설정되지 않았습니다"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"암호화 키 확인 실패: {str(e)}"
+        }
+
+@mcp.tool()
+def reset_corrupted_tokens() -> Dict[str, Any]:
+    """손상된 토큰들을 정리합니다."""
+    try:
+        # 모든 사용자의 Google 토큰을 확인하고 손상된 것들을 정리
+        import sqlite3
+        conn = sqlite3.connect("tickets.db")
+        cursor = conn.cursor()
+        
+        # Google 토큰이 있는 모든 사용자 조회
+        cursor.execute("SELECT id, email, google_refresh_token FROM users WHERE google_refresh_token IS NOT NULL")
+        users_with_tokens = cursor.fetchall()
+        
+        corrupted_count = 0
+        for user_id, email, encrypted_token in users_with_tokens:
+            try:
+                # 토큰 복호화 시도
+                token_encryption.decrypt_token(encrypted_token)
+                logging.info(f"✅ {email}: 토큰 정상")
+            except Exception as e:
+                # 손상된 토큰 삭제
+                cursor.execute("UPDATE users SET google_refresh_token = NULL WHERE id = ?", (user_id,))
+                corrupted_count += 1
+                logging.warning(f"🗑️ {email}: 손상된 토큰 삭제")
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            "success": True,
+            "message": f"토큰 정리 완료: {corrupted_count}개의 손상된 토큰을 삭제했습니다",
+            "corrupted_tokens_removed": corrupted_count,
+            "total_tokens_checked": len(users_with_tokens)
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"토큰 정리 실패: {str(e)}"
+        }
+
+@mcp.tool()
 def get_server_status() -> Dict[str, Any]:
     """
     FastMCP 서버의 상태를 확인합니다.
@@ -1464,6 +1561,8 @@ def run_fastmcp_server():
     logging.info("  - set_user_email_context")
     logging.info("  - get_user_email_context")
     logging.info("  - logout_user")
+    logging.info("🔐 암호화 도구들:")
+    logging.info("  - check_encryption_key")
     logging.info("🔐 OAuth 인증 도구들:")
     logging.info("  - oauth_login_gmail")
     logging.info("  - oauth_login_microsoft")
