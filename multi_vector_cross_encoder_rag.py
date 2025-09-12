@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.config import Settings
 from cross_encoder_reranker import MultiVectorReranker
+from chromadb_singleton import get_chromadb_client, get_chromadb_collection
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,16 +42,13 @@ class MultiVectorCrossEncoderRAG:
         self._init_reranker()
     
     def _connect_chromadb(self):
-        """ChromaDB 연결"""
+        """ChromaDB 연결 (싱글톤 사용)"""
         try:
-            self.chroma_client = chromadb.PersistentClient(
-                path='./vector_db',
-                settings=Settings(anonymized_telemetry=False)
-            )
-            self.collection = self.chroma_client.get_collection(self.collection_name)
-            logger.info(f"✅ ChromaDB 연결 완료: {self.collection_name}")
+            self.chroma_client = get_chromadb_client()
+            self.collection = get_chromadb_collection(self.collection_name, create_if_not_exists=True)
+            logger.info(f"✅ ChromaDB 싱글톤 연결 완료: {self.collection_name}")
         except Exception as e:
-            logger.error(f"❌ ChromaDB 연결 실패: {e}")
+            logger.error(f"❌ ChromaDB 싱글톤 연결 실패: {e}")
             raise e
     
     def _init_reranker(self):

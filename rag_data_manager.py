@@ -324,6 +324,28 @@ def clear_all_data():
         print(f"❌ 데이터 삭제 실패: {e}")
         return False
 
+def reset_chromadb():
+    """ChromaDB 강제 재설정 (충돌 해결용)"""
+    try:
+        print("🔄 ChromaDB 재설정을 시작합니다...")
+        
+        # VectorDBManager 인스턴스 생성 (충돌 방지)
+        vector_db = VectorDBManager()
+        
+        # 강제 재설정 실행
+        success = vector_db.force_reset_chromadb()
+        
+        if success:
+            print("✅ ChromaDB 재설정이 완료되었습니다!")
+            return True
+        else:
+            print("❌ ChromaDB 재설정에 실패했습니다.")
+            return False
+            
+    except Exception as e:
+        print(f"❌ ChromaDB 재설정 중 오류 발생: {e}")
+        return False
+
 def create_rag_manager_tab():
     """RAG 데이터 관리자 탭 생성"""
     import streamlit as st
@@ -376,8 +398,21 @@ def create_rag_manager_tab():
             help="이메일에서 추출된 데이터"
         )
         
-        # 데이터 삭제 섹션
-        with st.expander("⚠️ 전체 데이터 삭제", expanded=False):
+        # 데이터 관리 섹션
+        with st.expander("🔧 데이터베이스 관리", expanded=False):
+            st.markdown("**ChromaDB 충돌 해결**")
+            st.info("ChromaDB 인스턴스 충돌이 발생한 경우 아래 버튼을 사용하세요.")
+            
+            if st.button("🔄 ChromaDB 재설정", type="secondary"):
+                with st.spinner("ChromaDB를 재설정하는 중..."):
+                    if reset_chromadb():
+                        st.success("✅ ChromaDB 재설정이 완료되었습니다!")
+                        st.rerun()  # 페이지 새로고침
+                    else:
+                        st.error("❌ ChromaDB 재설정에 실패했습니다.")
+            
+            st.markdown("---")
+            st.markdown("**전체 데이터 삭제**")
             st.warning("이 작업은 되돌릴 수 없습니다!")
             
             if st.button("🗑️ 모든 데이터 삭제", type="secondary"):

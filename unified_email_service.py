@@ -157,9 +157,25 @@ def _apply_filters_to_emails(emails: List[EmailMessage], filters: Dict[str, Any]
 class UnifiedEmailService:
     """통합 이메일 서비스 로직을 담당하는 클래스"""
     
-    def __init__(self, provider_name: str = None):
+    def __init__(self, provider_name: str = None, access_token: str = None):
+        """초기화 - OAuth2 액세스 토큰 필수"""
         self.provider_name = provider_name or get_default_provider()
-        self.provider = create_provider(self.provider_name)
+        self.access_token = access_token
+        
+        if not access_token:
+            print("⚠️ OAuth2 인증이 필요합니다. 액세스 토큰을 제공하거나 OAuth 서버를 사용하세요.")
+            print("💡 OAuth 서버 사용: http://localhost:8000/auth/login/gmail")
+        
+        self.provider = create_provider(self.provider_name, access_token=access_token)
+        
+        # OAuth2 액세스 토큰이 있으면 인증 시도
+        if access_token:
+            print(f"🔐 UnifiedEmailService에서 Gmail 인증 시도: {access_token[:20]}...")
+            if not self.provider.authenticate():
+                print("❌ Gmail 인증 실패")
+            else:
+                print("✅ Gmail 인증 성공")
+        
         # 분류기는 필요할 때만 초기화하여 리소스 절약
         self.classifier = None
 
@@ -225,10 +241,10 @@ class UnifiedEmailService:
             gmail_query = self._build_gmail_query(filters or {})
             logging.info(f"Gmail API 쿼리 구성: {gmail_query}")
             
-            # Gmail API 클라이언트 가져오기
-            gmail_client = get_gmail_client()
+            # 이미 인증된 Gmail API 클라이언트 사용
+            gmail_client = self.provider
             
-            if not gmail_client.authenticate():
+            if not gmail_client.is_authenticated:
                 logging.error("Gmail API 인증 실패")
                 return []
             
@@ -237,7 +253,8 @@ class UnifiedEmailService:
             logging.info(f"Gmail API maxResults 설정: {max_results}")
             
             # Gmail API에서 필터링된 메일 가져오기
-            gmail_emails = gmail_client.get_emails_with_query(gmail_query, max_results=max_results)
+            search_result = gmail_client.search_emails(gmail_query, max_results=max_results)
+            gmail_emails = search_result.messages
             
             if not gmail_emails:
                 logging.info("조건에 맞는 메일이 없습니다.")
@@ -251,7 +268,9 @@ class UnifiedEmailService:
             for gmail_data in gmail_emails:
                 try:
                     # 메일 본문에서 HTML 태그 제거 (간단한 정리)
-                    body = gmail_data.get('body', '')
+                    # EmailMessage 객체를 딕셔너리로 변환
+                    email_dict = gmail_data.model_dump() if hasattr(gmail_data, 'model_dump') else gmail_data
+                    body = email_dict.get('body', '')
                     if body:
                         # HTML 태그 제거 (간단한 방법)
                         import re
@@ -259,15 +278,15 @@ class UnifiedEmailService:
                         body = re.sub(r'\s+', ' ', body).strip()
                     
                     # Gmail API 데이터 상태 로깅
-                    gmail_unread = gmail_data.get('unread', False)
+                    gmail_unread = email_dict.get('unread', False)
                     calculated_is_read = not gmail_unread
-                    logging.info(f"메일 {gmail_data['id']}: Gmail unread={gmail_unread}, 계산된 is_read={calculated_is_read}")
+                    logging.info(f"메일 {email_dict.get('id', 'N/A')}: Gmail unread={gmail_unread}, 계산된 is_read={calculated_is_read}")
                     
                     # EmailMessage 생성
                     email_msg = EmailMessage(
-                        id=gmail_data['id'],  # Gmail의 실제 message_id
-                        subject=gmail_data.get('subject', '제목 없음'),
-                        sender=gmail_data.get('from', '발신자 없음'),
+                        id=email_dict.get('id', 'unknown'),  # Gmail의 실제 message_id
+                        subject=email_dict.get('subject', '제목 없음'),
+                        sender=email_dict.get('from', '발신자 없음'),
                         body=body,
                         received_date=datetime.now(),  # 실제 날짜 파싱 필요
                         is_read=calculated_is_read,
@@ -281,7 +300,7 @@ class UnifiedEmailService:
                     logging.info(f"메일 {gmail_data['id']} VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)")
                     
                 except Exception as e:
-                    logging.error(f"메일 변환 오류 (ID: {gmail_data.get('id', 'N/A')}): {str(e)}")
+                    logging.error(f"메일 변환 오류 (ID: {email_dict.get('id', 'N/A')}): {str(e)}")
                     continue
             
             # Gmail API에서 이미 maxResults로 제한했으므로 추가 제한 불필요
@@ -315,7 +334,9 @@ class UnifiedEmailService:
             for gmail_data in gmail_emails:
                 try:
                     # 메일 본문에서 HTML 태그 제거 (간단한 정리)
-                    body = gmail_data.get('body', '')
+                    # EmailMessage 객체를 딕셔너리로 변환
+                    email_dict = gmail_data.model_dump() if hasattr(gmail_data, 'model_dump') else gmail_data
+                    body = email_dict.get('body', '')
                     if body:
                         # HTML 태그 제거 (간단한 방법)
                         import re
@@ -323,15 +344,15 @@ class UnifiedEmailService:
                         body = re.sub(r'\s+', ' ', body).strip()
                     
                     # Gmail API 데이터 상태 로깅
-                    gmail_unread = gmail_data.get('unread', False)
+                    gmail_unread = email_dict.get('unread', False)
                     calculated_is_read = not gmail_unread
-                    logging.info(f"메일 {gmail_data['id']}: Gmail unread={gmail_unread}, 계산된 is_read={calculated_is_read}")
+                    logging.info(f"메일 {email_dict.get('id', 'N/A')}: Gmail unread={gmail_unread}, 계산된 is_read={calculated_is_read}")
                     
                     # EmailMessage 생성
                     email_msg = EmailMessage(
-                        id=gmail_data['id'],  # Gmail의 실제 message_id
-                        subject=gmail_data.get('subject', '제목 없음'),
-                        sender=gmail_data.get('from', '발신자 없음'),
+                        id=email_dict.get('id', 'unknown'),  # Gmail의 실제 message_id
+                        subject=email_dict.get('subject', '제목 없음'),
+                        sender=email_dict.get('from', '발신자 없음'),
                         body=body,
                         received_date=datetime.now(),  # 실제 날짜 파싱 필요
                         is_read=calculated_is_read,
@@ -624,7 +645,7 @@ def get_previous_ticket_statuses(mem0_memory=None):
             "sender_status_stats": {}
         }
 
-def process_emails_with_ticket_logic(provider_name: str, user_query: str = None, mem0_memory=None) -> Dict[str, Any]:
+def process_emails_with_ticket_logic(provider_name: str, user_query: str = None, mem0_memory=None, access_token: str = None) -> Dict[str, Any]:
     """안 읽은 메일을 가져와서 업무용 메일만 필터링하고, 유사 메일 검색을 통해 레이블을 생성한 후 티켓을 생성합니다."""
     try:
         import logging
@@ -657,7 +678,7 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
             logging.info("🔍 1단계: 안 읽은 메일 가져오기 시작...")
             try:
                 logging.info(f"🔍 UnifiedEmailService({provider_name}) 생성 시도...")
-                service = UnifiedEmailService(provider_name)
+                service = UnifiedEmailService(provider_name, access_token=access_token)
                 logging.info(f"🔍 서비스 생성 완료: {service}")
                 
                 # 안 읽은 메일 필터 설정

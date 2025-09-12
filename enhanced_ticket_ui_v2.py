@@ -14,15 +14,23 @@ import json
 from vector_db_models import VectorDBManager
 from sqlite_ticket_models import SQLiteTicketManager, Ticket
 from mem0_memory_adapter import create_mem0_memory, add_ticket_event
-from ticket_ai_recommender import get_ticket_ai_recommendation
+# ticket_ai_recommender는 lazy import로 처리
+def get_ticket_ai_recommendation(*args, **kwargs):
+    """AI 추천 기능 (lazy import)"""
+    try:
+        from ticket_ai_recommender import get_ticket_ai_recommendation as _get_recommendation
+        return _get_recommendation(*args, **kwargs)
+    except (ImportError, KeyError, Exception) as e:
+        print(f"⚠️ ticket_ai_recommender 사용 불가: {e}")
+        return {"recommendation": "AI 추천 기능을 사용할 수 없습니다.", "confidence": 0.0}
 
-# 페이지 설정
-st.set_page_config(
-    page_title="Enhanced Ticket Management v2",
-    page_icon="🎫",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# 페이지 설정 (메인 앱에서만 사용)
+# st.set_page_config(
+#     page_title="Enhanced Ticket Management v2",
+#     page_icon="🎫",
+#     layout="wide",
+#     initial_sidebar_state="expanded"
+# )
 
 # 세션 상태 초기화
 if 'tickets' not in st.session_state:
@@ -575,5 +583,6 @@ def main():
         st.session_state.tickets = tickets
         display_ticket_button_list(tickets)
 
-if __name__ == "__main__":
-    main()
+# 메인 앱에서 import할 때는 실행하지 않음
+# if __name__ == "__main__":
+#     main()

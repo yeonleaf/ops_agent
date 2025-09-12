@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Tuple
 from sentence_transformers import CrossEncoder
 import chromadb
 from chromadb.config import Settings
+from chromadb_singleton import get_chromadb_client, get_chromadb_collection
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -70,21 +71,13 @@ class MultiVectorReranker:
             raise e
     
     def _connect_chromadb(self):
-        """ChromaDB 연결"""
+        """ChromaDB 연결 (싱글톤 사용)"""
         try:
-            self.chroma_client = chromadb.PersistentClient(
-                path='./vector_db',
-                settings=Settings(anonymized_telemetry=False)
-            )
-            # 기존 컬렉션의 임베딩 함수를 사용하여 연결
-            from clean_korean_embedding import CleanKoreanEmbeddingFunction
-            embedding_function = CleanKoreanEmbeddingFunction()
-            
-            # 컬렉션 연결 (임베딩 함수 없이)
-            self.collection = self.chroma_client.get_collection('jira_multi_vector_chunks')
-            logger.info("✅ ChromaDB 연결 완료")
+            self.chroma_client = get_chromadb_client()
+            self.collection = get_chromadb_collection('jira_multi_vector_chunks', create_if_not_exists=True)
+            logger.info("✅ ChromaDB 싱글톤 연결 완료")
         except Exception as e:
-            logger.error(f"❌ ChromaDB 연결 실패: {e}")
+            logger.error(f"❌ ChromaDB 싱글톤 연결 실패: {e}")
             raise e
     
     def _cleanup_memory(self):

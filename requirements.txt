@@ -34,4 +34,14 @@ chromadb>=0.4.0
 
 # Cohere Re-ranking을 위한 패키지들
 langchain-cohere>=0.1.0
-cohere>=4.0.0 
+cohere>=4.0.0
+
+# 쿠키 관리를 위한 패키지
+streamlit-cookies-manager>=0.2.0
+
+# 사용자 인증을 위한 패키지들
+fastapi>=0.104.0
+uvicorn>=0.24.0
+bcrypt>=4.0.0
+cryptography>=41.0.0
+email-validator>=2.0.0 

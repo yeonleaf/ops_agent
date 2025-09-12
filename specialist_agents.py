@@ -61,12 +61,13 @@ class ViewingAgent:
     
     def _create_view_emails_tool(self) -> Tool:
         """이메일 조회 도구 생성"""
-        def view_emails_tool(query: str) -> str:
+        def view_emails_tool(query: str, cookies: str = "") -> str:
             """
             이메일을 조회하고 목록을 반환합니다.
             
             Args:
                 query: 사용자 쿼리 (예: "안 읽은 메일 3개", "gmail에서 읽지 않은 메일")
+                cookies: OAuth 토큰이 포함된 쿠키 문자열 (우선 사용)
             
             Returns:
                 조회된 이메일 목록
@@ -84,6 +85,85 @@ class ViewingAgent:
                     provider_name = "gmail"
                 elif "outlook" in query_lower or "graph" in query_lower:
                     provider_name = "graph"
+                
+                # 1. 먼저 전달받은 토큰 확인 (우선순위)
+                access_token = None
+                
+                if cookies and provider_name == "gmail":
+                    print("🍪 전달받은 토큰에서 Gmail access_token 추출 시도")
+                    try:
+                        # 쿠키에서 gmail_access_token 추출
+                        for cookie in cookies.split(';'):
+                            if 'gmail_access_token=' in cookie:
+                                access_token = cookie.split('gmail_access_token=')[1].strip()
+                                print(f"🍪 전달받은 토큰에서 추출된 access_token: {access_token[:20]}...")
+                                break
+                    except Exception as e:
+                        print(f"🍪 전달받은 토큰에서 추출 실패: {e}")
+                
+                # 2. 전달받은 토큰이 없으면 DB에서 확인
+                if not access_token and provider_name == "gmail":
+                    print("🍪 전달받은 토큰이 없음 - DB에서 Gmail 연동 정보 확인")
+                    try:
+                        from auth_client import auth_client
+                        from gmail_provider import refresh_gmail_token
+                        
+                        # 사용자가 로그인되어 있는지 확인
+                        if auth_client.is_logged_in():
+                            print("🍪 사용자가 로그인됨 - DB에서 Google 연동 정보 확인")
+                            result = auth_client.get_google_integration()
+                            if result.get("success") and result.get("has_token"):
+                                print("🍪 DB에 Google 토큰이 저장되어 있음 - refresh_token으로 access_token 재발급 시도")
+                                
+                                # refresh_token으로 access_token 재발급 시도
+                                refresh_result = refresh_gmail_token()
+                                if refresh_result.get("success"):
+                                    access_token = refresh_result.get("access_token")
+                                    print(f"🍪 DB에서 재발급된 access_token: {access_token[:20]}...")
+                                else:
+                                    print("🍪 DB 토큰으로 access_token 재발급 실패")
+                            else:
+                                print("🍪 DB에 Google 토큰이 없음")
+                        else:
+                            print("🍪 사용자가 로그인되지 않음")
+                    except Exception as e:
+                        print(f"🍪 DB 토큰 확인 실패: {e}")
+                
+                if not access_token:
+                    print("🍪 view_emails_tool에서 토큰을 찾을 수 없음")
+                
+                # OAuth 인증이 필요한 경우 먼저 확인
+                try:
+                    # 테스트용으로 이메일 서비스 초기화 시도
+                    from unified_email_service import UnifiedEmailService
+                    test_service = UnifiedEmailService(provider_name=provider_name, access_token=access_token)
+                except ValueError as e:
+                    # OAuth 인증이 필요한 경우
+                    oauth_links = {
+                        "gmail": "http://localhost:8000/auth/login/gmail",
+                        "graph": "http://localhost:8000/auth/login/microsoft"
+                    }
+                    
+                    auth_link = oauth_links.get(provider_name, oauth_links["gmail"])
+                    
+                    return f"""
+🔐 **이메일 계정 인증이 필요합니다**
+
+{provider_name.upper()} 계정에 접근하려면 OAuth2 인증을 완료해야 합니다.
+
+**인증 방법:**
+1. 아래 링크를 클릭하여 인증을 진행하세요
+2. Google/Microsoft 계정으로 로그인
+3. 권한 승인 후 자동으로 돌아옵니다
+
+**🔗 인증 링크:** {auth_link}
+
+**또는 브라우저에서 직접 접속:**
+- Gmail: http://localhost:8000/auth/login/gmail
+- Outlook: http://localhost:8000/auth/login/microsoft
+
+인증이 완료되면 다시 이메일 조회를 요청해주세요! 📧
+                    """
                 
                 # 쿼리 분석하여 filters 설정
                 if "안 읽은" in query_lower or "unread" in query_lower:
@@ -126,7 +206,9 @@ class ViewingAgent:
                 else:
                     filters['limit'] = 10  # 기본값
                 
-                emails = get_raw_emails(provider_name, filters)
+                # UnifiedEmailService를 사용하여 이메일 가져오기
+                service = UnifiedEmailService(provider_name=provider_name, access_token=access_token)
+                emails = service.fetch_emails(filters)
                 
                 if not emails:
                     return "조건에 맞는 이메일을 찾을 수 없습니다."
@@ -171,7 +253,7 @@ class ViewingAgent:
         
         return create_openai_tools_agent(self.llm, self.tools, prompt)
     
-    def execute(self, query: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def execute(self, query: str, context: Optional[Dict[str, Any]] = None, cookies: str = "") -> str:
         """에이전트 실행"""
         try:
             logging.info(f"🔍 {self.name} 실행: {query}")
@@ -181,8 +263,36 @@ class ViewingAgent:
                 enhanced_query = f"{query}\n\n컨텍스트 정보: {context}"
             else:
                 enhanced_query = query
+            
+            # 쿠키를 도구에 전달하기 위해 컨텍스트에 추가
+            if cookies:
+                enhanced_query += f"\n\n쿠키 정보: {cookies}"
+            
+            # 쿠키가 있으면 view_emails_tool을 직접 호출
+            if cookies and "안 읽은 메일" in query:
+                print(f"🍪 ViewingAgent에서 직접 view_emails_tool 호출: {cookies[:100]}...")
+                try:
+                    # view_emails_tool을 직접 호출
+                    view_emails_tool_func = None
+                    for tool in self.tools:
+                        if tool.name == "view_emails_tool":
+                            view_emails_tool_func = tool.func
+                            break
+                    
+                    if view_emails_tool_func:
+                        result = view_emails_tool_func(query, cookies)
+                        return result
+                    else:
+                        print("🍪 view_emails_tool을 찾을 수 없음")
+                except Exception as e:
+                    print(f"🍪 직접 호출 실패: {e}")
+            
+            # 도구 호출 시 쿠키 전달을 위한 컨텍스트 설정
+            invoke_context = {"input": enhanced_query}
+            if cookies:
+                invoke_context["cookies"] = cookies
                 
-            result = self.agent_executor.invoke({"input": enhanced_query})
+            result = self.agent_executor.invoke(invoke_context)
             return result.get("output", "처리 결과를 가져올 수 없습니다.")
         except Exception as e:
             logging.error(f"❌ {self.name} 실행 실패: {str(e)}")
@@ -303,7 +413,7 @@ class AnalysisAgent:
         
         return create_openai_tools_agent(self.llm, self.tools, prompt)
     
-    def execute(self, query: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def execute(self, query: str, context: Optional[Dict[str, Any]] = None, cookies: str = "") -> str:
         """에이전트 실행"""
         try:
             logging.info(f"📊 {self.name} 실행: {query}")
@@ -398,7 +508,18 @@ class TicketingAgent:
                 except:
                     pass
                 
-                result = process_emails_with_ticket_logic(provider_name, query, mem0_memory)
+                # 토큰 추출 (쿠키에서)
+                access_token = None
+                if cookies:
+                    cookie_dict = {}
+                    for cookie in cookies.split(';'):
+                        if '=' in cookie:
+                            key, value = cookie.strip().split('=', 1)
+                            cookie_dict[key] = value
+                    access_token = cookie_dict.get("gmail_access_token")
+                    print(f"🍪 TicketAgent에서 토큰 추출: {'성공' if access_token else '실패'}")
+                
+                result = process_emails_with_ticket_logic(provider_name, query, mem0_memory, access_token)
                 
                 if result.get('display_mode') == 'tickets':
                     tickets = result.get('tickets', [])

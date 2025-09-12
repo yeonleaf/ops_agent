@@ -20,21 +20,28 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
-# MultiQueryRetriever import
+# Multi-Vector + Cross-Encoder RAG import
+try:
+    from multi_vector_cross_encoder_rag import MultiVectorCrossEncoderRAG
+    MULTI_VECTOR_RAG_AVAILABLE = True
+except ImportError:
+    MULTI_VECTOR_RAG_AVAILABLE = False
+
+# MultiQueryRetriever import (fallback)
 try:
     from multi_query_retriever import create_multi_query_search_manager
     MULTI_QUERY_AVAILABLE = True
 except ImportError:
     MULTI_QUERY_AVAILABLE = False
 
-# QueryExpansionRetriever import
+# QueryExpansionRetriever import (fallback)
 try:
     from query_expansion_retriever import create_query_expansion_retriever
     QUERY_EXPANSION_AVAILABLE = True
 except ImportError:
     QUERY_EXPANSION_AVAILABLE = False
 
-# HybridSearchRetriever import
+# HybridSearchRetriever import (fallback)
 try:
     from retrieve_rerank_retriever_whoosh import create_retrieve_rerank_retriever_whoosh
     HYBRID_SEARCH_AVAILABLE = True
@@ -46,6 +53,7 @@ class TicketAIRecommender:
     
     def __init__(self):
         self.client = None
+        self.multi_vector_rag = None
         self.multi_query_search_manager = None
         self.query_expansion_retriever = None
         self.retrieve_rerank_retriever = None
@@ -53,6 +61,11 @@ class TicketAIRecommender:
         if OPENAI_AVAILABLE:
             self._init_azure_openai()
         
+        # Multi-Vector + Cross-Encoder RAG 우선 초기화
+        if MULTI_VECTOR_RAG_AVAILABLE:
+            self._init_multi_vector_rag()
+        
+        # 폴백 검색 시스템들
         if MULTI_QUERY_AVAILABLE:
             self._init_multi_query_search()
         
@@ -74,6 +87,15 @@ class TicketAIRecommender:
         except Exception as e:
             print(f"❌ Azure OpenAI 클라이언트 초기화 실패: {str(e)}")
             self.client = None
+    
+    def _init_multi_vector_rag(self):
+        """Multi-Vector + Cross-Encoder RAG 시스템 초기화"""
+        try:
+            self.multi_vector_rag = MultiVectorCrossEncoderRAG()
+            print("✅ Multi-Vector + Cross-Encoder RAG 시스템 초기화 완료")
+        except Exception as e:
+            print(f"❌ Multi-Vector + Cross-Encoder RAG 시스템 초기화 실패: {str(e)}")
+            self.multi_vector_rag = None
     
     def _init_multi_query_search(self):
         """MultiQuery 검색 관리자 초기화"""
@@ -107,6 +129,51 @@ class TicketAIRecommender:
         except Exception as e:
             print(f"❌ 하이브리드 검색 관리자 초기화 실패: {str(e)}")
             self.retrieve_rerank_retriever = None
+    
+    def get_similar_tickets_with_rag(self, ticket_description: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Multi-Vector + Cross-Encoder RAG를 사용한 유사 티켓 검색"""
+        try:
+            if not self.multi_vector_rag:
+                print("⚠️ Multi-Vector RAG 사용 불가, 폴백 검색으로 전환")
+                return self.get_similar_emails(ticket_description, limit)
+            
+            print(f"🔍 Multi-Vector + Cross-Encoder RAG 검색 시작: '{ticket_description}'")
+            
+            # Multi-Vector + Cross-Encoder RAG 검색
+            results = self.multi_vector_rag.search(
+                query=ticket_description,
+                n_candidates=30,  # 1단계 후보 수
+                top_k=limit       # 최종 결과 수
+            )
+            
+            if not results:
+                print("⚠️ RAG 검색 결과 없음, 폴백 검색으로 전환")
+                return self.get_similar_emails(ticket_description, limit)
+            
+            print(f"✅ Multi-Vector + Cross-Encoder RAG 검색 완료: {len(results)}개 결과")
+            
+            # 결과를 기존 형식으로 변환
+            formatted_results = []
+            for result in results:
+                formatted_results.append({
+                    "id": result.get("id", ""),
+                    "content": result.get("content", ""),
+                    "source": "multi_vector_rag",
+                    "similarity_score": result.get("similarity_score", 0.0),
+                    "metadata": result.get("metadata", {}),
+                    "search_type": "multi_vector_cross_encoder",
+                    "ticket_id": result.get("metadata", {}).get("ticket_id", ""),
+                    "parent_ticket_id": result.get("metadata", {}).get("parent_ticket_id", ""),
+                    "chunk_type": result.get("metadata", {}).get("chunk_type", ""),
+                    "cross_encoder_score": result.get("metadata", {}).get("cross_encoder_score", 0.0)
+                })
+            
+            return formatted_results
+            
+        except Exception as e:
+            print(f"❌ Multi-Vector RAG 검색 실패: {str(e)}")
+            print("🔄 폴백 검색으로 전환...")
+            return self.get_similar_emails(ticket_description, limit)
     
     def get_similar_emails(self, ticket_description: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Vector DB에서 유사한 메일들을 검색 (QueryExpansion 우선 적용)"""
@@ -235,9 +302,20 @@ class TicketAIRecommender:
             return []
     
     def get_integrated_similar_content(self, ticket_description: str, email_limit: int = 3, chunk_limit: int = 2) -> List[Dict[str, Any]]:
-        """하이브리드 검색 + QueryExpansion + 구조적 청킹 + MultiQuery + Cohere Re-ranking을 활용한 압축 검색으로 유사한 콘텐츠 검색"""
+        """Multi-Vector + Cross-Encoder RAG 우선, 폴백으로 하이브리드 검색을 활용한 유사한 콘텐츠 검색"""
         try:
-            # Retrieve then Re-rank 검색 우선 시도 (Vector + BM25 + CohereRerank)
+            # Multi-Vector + Cross-Encoder RAG 우선 시도
+            if self.multi_vector_rag:
+                print(f"🔍 Multi-Vector + Cross-Encoder RAG 통합 검색 시작: '{ticket_description}'")
+                rag_results = self.get_similar_tickets_with_rag(ticket_description, limit=5)
+                
+                if rag_results:
+                    print(f"✅ Multi-Vector + Cross-Encoder RAG 검색 완료: {len(rag_results)}개 결과")
+                    return rag_results
+                else:
+                    print("⚠️ Multi-Vector RAG 결과 없음, 폴백 검색으로 전환")
+            
+            # 폴백: Retrieve then Re-rank 검색 시도 (Vector + BM25 + CohereRerank)
             if self.retrieve_rerank_retriever:
                 print(f"🔍 Retrieve then Re-rank 검색 시작: '{ticket_description}'")
                 hybrid_results = self.retrieve_rerank_retriever.search(
@@ -526,14 +604,29 @@ class TicketAIRecommender:
 - 핵심 포인트: {', '.join(original_mail.get('key_points', []))}
 """
         
-        # 유사 콘텐츠 정보 (메일 + 파일 청크)
+        # 유사 콘텐츠 정보 (RAG 검색 결과 + 메일 + 파일 청크)
         similar_info = ""
         if similar_content:
             similar_info = "\n=== 유사한 사례들 ===\n"
             
-            # 메일과 파일 청크를 분리하여 표시
+            # RAG 검색 결과, 메일, 파일 청크를 분리하여 표시
+            rag_results = [item for item in similar_content if item.get('source') == 'multi_vector_rag']
             emails = [item for item in similar_content if item.get('source_type') == 'email']
             file_chunks = [item for item in similar_content if item.get('source_type') == 'file_chunk']
+            
+            # RAG 검색 결과 정보 (우선 표시)
+            if rag_results:
+                similar_info += "\n🎯 AI 검색 결과 (Multi-Vector + Cross-Encoder):\n"
+                for i, result in enumerate(rag_results[:3], 1):  # 상위 3개 사용
+                    content_preview = result.get('content', '')[:300] + "..." if len(result.get('content', '')) > 300 else result.get('content', '')
+                    similar_info += f"""
+검색 결과 {i}:
+- 티켓 ID: {result.get('ticket_id', 'N/A')}
+- 청크 타입: {result.get('chunk_type', 'N/A')}
+- Cross-Encoder 점수: {result.get('cross_encoder_score', 0.0):.4f}
+- 내용: {content_preview}
+- 유사도: {result.get('similarity_score', 0.0):.2f}
+"""
             
             # 유사 메일 정보
             if emails:
@@ -571,15 +664,17 @@ class TicketAIRecommender:
 {similar_info}
 
 === 요청사항 ===
-위 티켓 정보와 유사한 사례들(메일 및 관련 문서)을 분석하여, 이 티켓을 효율적으로 처리하기 위한 구체적인 방안을 제시해주세요.
+위 티켓 정보와 AI 검색 결과(유사한 티켓 사례들)를 분석하여, 이 티켓을 효율적으로 처리하기 위한 구체적인 방안을 제시해주세요.
 
-다음 항목들을 포함하여 답변해주세요:
+**특히 AI 검색 결과에서 찾은 유사한 티켓들의 처리 방식을 참고하여** 다음 항목들을 포함하여 답변해주세요:
+
 1. **즉시 처리 방안**: 우선적으로 해야 할 작업들
-2. **단계별 처리 계획**: 체계적인 처리 순서
+2. **단계별 처리 계획**: 체계적인 처리 순서 (유사 사례 참고)
 3. **주의사항**: 처리 시 고려해야 할 점들
 4. **예상 소요시간**: 각 단계별 예상 시간
 5. **관련 부서/담당자**: 연락이 필요한 부서나 담당자
 6. **참고 문서**: 관련 문서나 자료 활용 방안
+7. **유사 사례 활용**: AI 검색 결과의 유사한 티켓 처리 방식을 어떻게 적용할 수 있는지
 
 답변은 구체적이고 실행 가능한 내용으로 작성해주세요.
 """
@@ -663,7 +758,7 @@ def get_ticket_ai_recommendation(ticket_id: int) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     # 테스트 코드
-    print("🧪 티켓 AI 추천 시스템 테스트")
+    print("🧪 티켓 AI 추천 시스템 테스트 (Multi-Vector + Cross-Encoder RAG 통합)")
     
     # 첫 번째 티켓으로 테스트
     try:
@@ -675,11 +770,19 @@ if __name__ == "__main__":
             test_ticket_id = tickets[0].ticket_id
             print(f"📋 테스트 티켓 ID: {test_ticket_id}")
             
+            # RAG 시스템 상태 확인
+            recommender = TicketAIRecommender()
+            if recommender.multi_vector_rag:
+                print("✅ Multi-Vector + Cross-Encoder RAG 시스템 활성화")
+            else:
+                print("⚠️ Multi-Vector RAG 시스템 비활성화, 폴백 모드")
+            
             recommendation = get_ticket_ai_recommendation(test_ticket_id)
             
             if recommendation.get("success"):
                 print("✅ AI 추천 생성 성공!")
                 print(f"📝 추천 내용:\n{recommendation.get('recommendation', 'N/A')}")
+                print(f"🔍 유사 콘텐츠 수: {recommendation.get('similar_content_count', 0)}개")
             else:
                 print(f"❌ AI 추천 생성 실패: {recommendation.get('error', 'N/A')}")
         else:

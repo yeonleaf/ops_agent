@@ -12,6 +12,7 @@ from datetime import datetime
 import chromadb
 from chromadb.config import Settings
 import json
+from chromadb_singleton import get_chromadb_client, get_chromadb_collection, reset_chromadb_singleton
 
 # 텍스트 전처리 모듈 import
 from text_preprocessor import preprocess_for_embedding
@@ -75,20 +76,23 @@ class VectorDBManager:
     """Vector DB 관리자 - ChromaDB 사용"""
     
     def __init__(self, db_path: str = "./vector_db"):
-        """ChromaDB 클라이언트 초기화"""
-        # Vector DB 폴더가 없으면 생성하고 권한 설정
-        import os
-        if not os.path.exists(db_path):
-            os.makedirs(db_path, mode=0o755, exist_ok=True)
-            print(f"✅ Vector DB 폴더 생성 및 권한 설정: {db_path}")
+        """ChromaDB 클라이언트 초기화 (싱글톤 사용)"""
+        self.db_path = db_path
         
-        self.client = chromadb.PersistentClient(
-            path=db_path,
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True
-            )
-        )
+        # 싱글톤 클라이언트 사용
+        try:
+            self.client = get_chromadb_client()
+            print("✅ ChromaDB 싱글톤 클라이언트 사용")
+        except Exception as e:
+            print(f"⚠️ ChromaDB 싱글톤 클라이언트 실패, 재설정 시도: {e}")
+            try:
+                reset_chromadb_singleton()
+                self.client = get_chromadb_client()
+                print("✅ ChromaDB 싱글톤 재설정 후 성공")
+            except Exception as e2:
+                print(f"❌ ChromaDB 싱글톤 재설정 실패: {e2}")
+                raise e2
+        
         self.collection_name = "mail_collection"
         self.collection = self._get_or_create_collection()
         
@@ -562,6 +566,50 @@ class VectorDBManager:
             return True
         except Exception as e:
             print(f"컬렉션 초기화 오류: {e}")
+            return False
+    
+    def force_reset_chromadb(self):
+        """ChromaDB 강제 재설정 (충돌 해결용)"""
+        try:
+            import shutil
+            import os
+            
+            # 현재 클라이언트 정리
+            try:
+                self.client = None
+            except:
+                pass
+            
+            # vector_db 디렉토리 백업 후 삭제
+            vector_db_path = "./vector_db"
+            backup_path = "./vector_db_backup"
+            
+            if os.path.exists(vector_db_path):
+                if os.path.exists(backup_path):
+                    shutil.rmtree(backup_path)
+                shutil.move(vector_db_path, backup_path)
+                print(f"✅ 기존 vector_db를 {backup_path}로 백업했습니다.")
+            
+            # 새로운 디렉토리 생성
+            os.makedirs(vector_db_path, mode=0o755, exist_ok=True)
+            
+            # 새로운 클라이언트 생성
+            self.client = chromadb.PersistentClient(
+                path=vector_db_path,
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
+            )
+            
+            # 컬렉션 재생성
+            self.collection = self._get_or_create_collection()
+            
+            print("✅ ChromaDB 강제 재설정 완료!")
+            return True
+            
+        except Exception as e:
+            print(f"❌ ChromaDB 강제 재설정 실패: {e}")
             return False
     
     def get_file_chunks_count(self) -> int:

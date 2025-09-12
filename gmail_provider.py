@@ -42,18 +42,50 @@ class GmailProvider(EmailProvider):
             'https://www.googleapis.com/auth/gmail.readonly'
         ]
     
-    def authenticate(self) -> bool:
-        """Gmail API 인증"""
+    def authenticate(self, cookies: str = None) -> bool:
+        """Gmail API 인증 - OAuth2 액세스 토큰 필수"""
         try:
-            # Credentials 객체 생성
-            self.creds = Credentials(
-                None,  # access_token은 자동 갱신됨
-                refresh_token=self.config.refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=self.config.client_id,
-                client_secret=self.config.client_secret,
-                scopes=self.scopes
-            )
+            access_token = None
+            
+            # 1. 설정에서 토큰 확인 (우선순위)
+            if self.config.access_token:
+                access_token = self.config.access_token
+                print(f"⚙️ 설정에서 Gmail 토큰 사용: {access_token[:20]}...")
+            
+            # 2. 쿠키에서 토큰 추출 시도 (백업)
+            elif cookies:
+                cookie_dict = {}
+                for cookie in cookies.split(';'):
+                    if '=' in cookie:
+                        key, value = cookie.strip().split('=', 1)
+                        cookie_dict[key] = value
+                
+                access_token = cookie_dict.get("gmail_access_token")
+                print(f"🍪 쿠키에서 Gmail 토큰 추출: {'성공' if access_token else '실패'}")
+            
+            # 3. 토큰이 있으면 인증 시도
+            if access_token:
+                self.creds = Credentials(token=access_token)
+                self.service = build('gmail', 'v1', credentials=self.creds)
+                self.is_authenticated = True
+                print(f"✅ Gmail API 인증 성공 (토큰: {access_token[:20]}...)")
+                return True
+            
+            # 레거시 refresh_token 방식 (경고와 함께)
+            if self.config.refresh_token:
+                print("⚠️ 레거시 refresh_token 방식 사용 중. OAuth2 서버 사용을 권장합니다.")
+                self.creds = Credentials(
+                    None,  # access_token은 자동 갱신됨
+                    refresh_token=self.config.refresh_token,
+                    token_uri="https://oauth2.googleapis.com/token",
+                    client_id=self.config.client_id,
+                    client_secret=self.config.client_secret,
+                    scopes=self.scopes
+                )
+            else:
+                print("❌ OAuth2 인증이 필요합니다. 액세스 토큰을 제공하거나 OAuth 서버를 사용하세요.")
+                print("💡 OAuth 서버 사용: http://localhost:8000/auth/login/gmail")
+                return False
             
             # 토큰 갱신
             if self.creds.expired:
@@ -95,6 +127,46 @@ class GmailProvider(EmailProvider):
             return email_messages
             
         except HttpError as error:
+            # 토큰 만료 시 refresh 시도
+            if error.resp.status == 401:  # Unauthorized
+                print("🍪 Gmail API 토큰 만료 - refresh 시도")
+                try:
+                    from auth_client import auth_client
+                    from gmail_provider import refresh_gmail_token
+                    
+                    # DB에서 refresh_token으로 새로운 access_token 발급
+                    refresh_result = refresh_gmail_token()
+                    if refresh_result.get("success"):
+                        print("🍪 토큰 refresh 성공 - 재시도")
+                        # 새로운 토큰으로 재인증
+                        self.access_token = refresh_result.get("access_token")
+                        self.is_authenticated = False  # 재인증 필요
+                        
+                        if self.authenticate():
+                            # 재시도
+                            results = self.service.users().messages().list(
+                                userId='me',
+                                labelIds=['UNREAD'],
+                                maxResults=max_results
+                            ).execute()
+                            
+                            messages = results.get('messages', [])
+                            email_messages = []
+                            
+                            for message in messages:
+                                email_data = self.get_email_by_id(message['id'])
+                                if email_data:
+                                    email_messages.append(email_data)
+                            
+                            self.last_sync = datetime.now()
+                            return email_messages
+                        else:
+                            print("🍪 토큰 refresh 후 재인증 실패")
+                    else:
+                        print("🍪 토큰 refresh 실패")
+                except Exception as refresh_error:
+                    print(f"🍪 토큰 refresh 중 오류: {refresh_error}")
+            
             st.error(f"Gmail API 오류: {error}")
             return []
         except Exception as e:
@@ -131,6 +203,51 @@ class GmailProvider(EmailProvider):
             )
             
         except HttpError as error:
+            # 토큰 만료 시 refresh 시도
+            if error.resp.status == 401:  # Unauthorized
+                print("🍪 Gmail API 토큰 만료 - refresh 시도")
+                try:
+                    from auth_client import auth_client
+                    from gmail_provider import refresh_gmail_token
+                    
+                    # DB에서 refresh_token으로 새로운 access_token 발급
+                    refresh_result = refresh_gmail_token()
+                    if refresh_result.get("success"):
+                        print("🍪 토큰 refresh 성공 - 재시도")
+                        # 새로운 토큰으로 재인증
+                        self.access_token = refresh_result.get("access_token")
+                        self.is_authenticated = False  # 재인증 필요
+                        
+                        if self.authenticate():
+                            # 재시도
+                            results = self.service.users().messages().list(
+                                userId='me',
+                                q=query,
+                                maxResults=max_results
+                            ).execute()
+                            
+                            messages = results.get('messages', [])
+                            email_messages = []
+                            
+                            for message in messages:
+                                email_data = self.get_email_by_id(message['id'])
+                                if email_data:
+                                    email_messages.append(email_data)
+                            
+                            self.last_sync = datetime.now()
+                            
+                            return EmailSearchResult(
+                                messages=email_messages,
+                                total_count=len(email_messages),
+                                next_page_token=results.get('nextPageToken')
+                            )
+                        else:
+                            print("🍪 토큰 refresh 후 재인증 실패")
+                    else:
+                        print("🍪 토큰 refresh 실패")
+                except Exception as refresh_error:
+                    print(f"🍪 토큰 refresh 중 오류: {refresh_error}")
+            
             st.error(f"Gmail 검색 오류: {error}")
             return EmailSearchResult()
         except Exception as e:
@@ -212,6 +329,100 @@ class GmailProvider(EmailProvider):
                 raw_data=message
             )
             
+        except HttpError as error:
+            # 토큰 만료 시 refresh 시도
+            if error.resp.status == 401:  # Unauthorized
+                print("🍪 Gmail API 토큰 만료 - refresh 시도")
+                try:
+                    from auth_client import auth_client
+                    from gmail_provider import refresh_gmail_token
+                    
+                    # DB에서 refresh_token으로 새로운 access_token 발급
+                    refresh_result = refresh_gmail_token()
+                    if refresh_result.get("success"):
+                        print("🍪 토큰 refresh 성공 - 재시도")
+                        # 새로운 토큰으로 재인증
+                        self.access_token = refresh_result.get("access_token")
+                        self.is_authenticated = False  # 재인증 필요
+                        
+                        if self.authenticate():
+                            # 재시도
+                            message = self.service.users().messages().get(
+                                userId='me',
+                                id=email_id,
+                                format='full'
+                            ).execute()
+                            
+                            # 헤더 정보 추출
+                            headers = message['payload']['headers']
+                            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '제목 없음')
+                            sender = next((h['value'] for h in headers if h['name'] == 'From'), '발신자 없음')
+                            date = next((h['value'] for h in headers if h['name'] == 'Date'), '')
+                            to = next((h['value'] for h in headers if h['name'] == 'To'), '')
+                            cc = next((h['value'] for h in headers if h['name'] == 'Cc'), '')
+                            
+                            # 메일 본문 추출
+                            body = self._extract_email_body(message['payload'])
+                            
+                            # 라벨 정보
+                            labels = message.get('labelIds', [])
+                            
+                            # 우선순위 결정
+                            priority = EmailPriority.NORMAL
+                            if 'IMPORTANT' in labels:
+                                priority = EmailPriority.HIGH
+                            elif 'CATEGORY_PROMOTIONS' in labels:
+                                priority = EmailPriority.LOW
+                            
+                            # 상태 결정
+                            status = EmailStatus.UNREAD if 'UNREAD' in labels else EmailStatus.READ
+                            
+                            # 발신자 정보 파싱
+                            sender_email = self._extract_email_address(sender)
+                            sender_name = self._extract_name_from_email(sender)
+                            
+                            # 수신자 정보 파싱
+                            recipients = [self._extract_email_address(addr.strip()) for addr in to.split(',') if addr.strip()]
+                            cc_list = [self._extract_email_address(addr.strip()) for addr in cc.split(',') if addr.strip()]
+                            
+                            # 첨부파일 확인
+                            has_attachments = 'parts' in message['payload'] and any(
+                                part.get('filename') for part in message['payload']['parts']
+                            )
+                            attachment_count = len([
+                                part for part in message['payload'].get('parts', [])
+                                if part.get('filename')
+                            ]) if 'parts' in message['payload'] else 0
+                            
+                            return EmailMessage(
+                                id=email_id,
+                                message_id=message.get('threadId'),
+                                sender=sender_email,
+                                sender_name=sender_name,
+                                recipients=recipients,
+                                cc=cc_list,
+                                subject=subject,
+                                body=body,
+                                received_date=self._parse_datetime(date),
+                                is_read='UNREAD' not in labels,
+                                is_important='IMPORTANT' in labels,
+                                is_starred='STARRED' in labels,
+                                labels=labels,
+                                has_attachments=has_attachments,
+                                attachment_count=attachment_count,
+                                priority=priority,
+                                status=status,
+                                raw_data=message
+                            )
+                        else:
+                            print("🍪 토큰 refresh 후 재인증 실패")
+                    else:
+                        print("🍪 토큰 refresh 실패")
+                except Exception as refresh_error:
+                    print(f"🍪 토큰 refresh 중 오류: {refresh_error}")
+            
+            st.error(f"Gmail API 오류: {error}")
+            return None
         except Exception as e:
             st.error(f"메일 상세 정보 가져오기 실패: {str(e)}")
             return None
@@ -307,4 +518,66 @@ class GmailProvider(EmailProvider):
             return "메일 내용을 읽을 수 없습니다."
             
         except Exception as e:
-            return f"메일 내용 추출 실패: {str(e)}" 
+            return f"메일 내용 추출 실패: {str(e)}"
+
+
+def refresh_gmail_token() -> Dict[str, Any]:
+    """DB에 저장된 refresh_token으로 access_token 재발급"""
+    try:
+        from auth_client import auth_client
+        
+        # 사용자가 로그인되어 있는지 확인
+        if not auth_client.is_logged_in():
+            return {"success": False, "message": "사용자가 로그인되지 않음"}
+        
+        # DB에서 Google 연동 정보 조회
+        result = auth_client.get_google_integration()
+        if not result.get("success") or not result.get("has_token"):
+            return {"success": False, "message": "DB에 Google 토큰이 없음"}
+        
+        # DB에서 복호화된 refresh_token 가져오기
+        refresh_token = result.get("refresh_token")
+        if not refresh_token:
+            return {"success": False, "message": "DB에서 refresh_token을 가져올 수 없음"}
+        
+        # Google OAuth2 클라이언트 설정
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        
+        if not all([client_id, client_secret, refresh_token]):
+            return {"success": False, "message": "Gmail OAuth 설정이 불완전함"}
+        
+        # refresh_token으로 access_token 재발급
+        credentials = Credentials(
+            token=None,  # access_token은 None으로 시작
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret
+        )
+        
+        # 토큰 갱신
+        credentials.refresh(Request())
+        
+        # 새로운 refresh_token을 DB에 저장
+        try:
+            from auth_client import auth_client
+            # 현재 사용자 이메일 가져오기
+            user_info = auth_client.get_current_user()
+            if user_info and 'email' in user_info:
+                # 새로운 refresh_token을 DB에 저장
+                update_result = auth_client.update_google_integration(credentials.refresh_token)
+                if not update_result.get("success"):
+                    print(f"⚠️ 새로운 refresh_token DB 저장 실패: {update_result.get('message')}")
+        except Exception as e:
+            print(f"⚠️ refresh_token DB 저장 중 오류: {e}")
+        
+        return {
+            "success": True,
+            "access_token": credentials.token,
+            "refresh_token": credentials.refresh_token,
+            "expires_in": 3600  # 1시간
+        }
+        
+    except Exception as e:
+        return {"success": False, "message": f"토큰 재발급 실패: {str(e)}"} 

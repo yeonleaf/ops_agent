@@ -92,13 +92,14 @@ class EmailProvider(ABC):
             return match.group(1).strip()
         return None
 
-def create_provider(provider_name: str = None) -> EmailProvider:
+def create_provider(provider_name: str = None, access_token: str = None) -> EmailProvider:
     """
-    이메일 제공자 팩토리 함수
+    이메일 제공자 팩토리 함수 - OAuth2 액세스 토큰 필수
     
     Args:
         provider_name: 제공자 이름 ('gmail', 'graph', None)
                       None인 경우 환경변수에서 자동 감지
+        access_token: OAuth2 액세스 토큰 (필수)
     
     Returns:
         EmailProvider 인스턴스
@@ -115,13 +116,17 @@ def create_provider(provider_name: str = None) -> EmailProvider:
     if provider_name == 'gmail':
         config = EmailProviderConfig(
             provider_type='gmail',
-            client_id=os.getenv('GMAIL_CLIENT_ID'),
-            client_secret=os.getenv('GMAIL_CLIENT_SECRET'),
-            refresh_token=os.getenv('GMAIL_REFRESH_TOKEN')
+            client_id=os.getenv('GOOGLE_CLIENT_ID'),  # OAuth2 서버용 변수명 사용
+            client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),  # OAuth2 서버용 변수명 사용
+            access_token=access_token,  # OAuth2 액세스 토큰 사용
+            refresh_token=os.getenv('GMAIL_REFRESH_TOKEN')  # 레거시 지원
         )
         
-        if not all([config.client_id, config.client_secret, config.refresh_token]):
-            raise ValueError("Gmail 설정이 누락되었습니다. GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN을 확인해주세요.")
+        # OAuth2 액세스 토큰이 없으면 강제 차단
+        if not access_token and not config.refresh_token:
+            print("❌ OAuth2 인증이 필요합니다. 액세스 토큰을 제공하거나 OAuth 서버를 사용하세요.")
+            print("💡 OAuth 서버 사용: http://localhost:8000/auth/login/gmail")
+            raise ValueError("OAuth2 인증이 필요합니다. 액세스 토큰을 제공하거나 OAuth 서버를 사용하세요.")
         
         from gmail_provider import GmailProvider
         return GmailProvider(config)

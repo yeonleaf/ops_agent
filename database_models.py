@@ -55,6 +55,17 @@ class TicketEvent:
     created_at: str
 
 @dataclass
+class User:
+    """사용자 데이터 모델 (RDB용)"""
+    id: Optional[int]
+    email: str
+    password_hash: str
+    google_refresh_token: Optional[str] = None
+    jira_endpoint: Optional[str] = None
+    jira_api_token: Optional[str] = None
+    created_at: Optional[str] = None
+
+@dataclass
 class UserAction:
     """사용자 액션 데이터 모델 (RDB용) - 장기 기억용"""
     action_id: Optional[int]
@@ -124,6 +135,19 @@ class DatabaseManager:
                 )
             """)
             
+            # users 테이블 생성
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
+                    google_refresh_token TEXT NULL,
+                    jira_endpoint VARCHAR(255) NULL,
+                    jira_api_token TEXT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             # user_actions 테이블 생성 (장기 기억용)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_actions (
@@ -165,6 +189,11 @@ class DatabaseManager:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_user_actions_action_type 
                 ON user_actions(action_type)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_users_email 
+                ON users(email)
             """)
             
             conn.commit()
@@ -473,6 +502,113 @@ class DatabaseManager:
                     updated_at=row[11]
                 ))
             return tickets
+    
+    # === 사용자 관련 메서드들 ===
+    
+    def insert_user(self, user: User) -> int:
+        """사용자 삽입"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO users (
+                    email, password_hash, google_refresh_token, 
+                    jira_endpoint, jira_api_token, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                user.email, user.password_hash, user.google_refresh_token,
+                user.jira_endpoint, user.jira_api_token, 
+                user.created_at or datetime.now().isoformat()
+            ))
+            
+            user_id = cursor.lastrowid
+            conn.commit()
+            return user_id
+    
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """이메일로 사용자 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, email, password_hash, google_refresh_token,
+                       jira_endpoint, jira_api_token, created_at
+                FROM users WHERE email = ?
+            """, (email,))
+            
+            row = cursor.fetchone()
+            if row:
+                return User(
+                    id=row[0],
+                    email=row[1],
+                    password_hash=row[2],
+                    google_refresh_token=row[3],
+                    jira_endpoint=row[4],
+                    jira_api_token=row[5],
+                    created_at=row[6]
+                )
+            return None
+    
+    def get_user_by_id(self, user_id: int) -> Optional[User]:
+        """ID로 사용자 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, email, password_hash, google_refresh_token,
+                       jira_endpoint, jira_api_token, created_at
+                FROM users WHERE id = ?
+            """, (user_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                return User(
+                    id=row[0],
+                    email=row[1],
+                    password_hash=row[2],
+                    google_refresh_token=row[3],
+                    jira_endpoint=row[4],
+                    jira_api_token=row[5],
+                    created_at=row[6]
+                )
+            return None
+    
+    def update_user_google_token(self, user_id: int, google_refresh_token: str):
+        """사용자의 Google Refresh Token 업데이트"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE users SET google_refresh_token = ? WHERE id = ?
+            """, (google_refresh_token, user_id))
+            
+            conn.commit()
+    
+    def update_user_jira_info(self, user_id: int, jira_endpoint: str, jira_api_token: str):
+        """사용자의 Jira 정보 업데이트"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE users SET jira_endpoint = ?, jira_api_token = ? WHERE id = ?
+            """, (jira_endpoint, jira_api_token, user_id))
+            
+            conn.commit()
+    
+    def user_exists(self, email: str) -> bool:
+        """이메일로 사용자 존재 여부 확인"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM users WHERE email = ?", (email,))
+            count = cursor.fetchone()[0]
+            return count > 0
 
 class MailParser:
     """메일 파싱 및 구조화 클래스"""

@@ -70,22 +70,29 @@ class GmailAPIClient:
         self._cache[cache_key] = (datetime.now(), data)
         print(f"💾 캐시에 데이터 저장: {cache_key[:8]}...")
         
-    def authenticate(self, force_refresh: bool = False):
-        """Gmail API 인증 - 자동 토큰 갱신 포함"""
+    def authenticate(self, force_refresh: bool = False, access_token: str = None):
+        """Gmail API 인증 - OAuth2 액세스 토큰 필수"""
         try:
-            # 저장된 토큰 파일 확인
+            # OAuth2 액세스 토큰이 제공된 경우
+            if access_token:
+                print("✅ OAuth2 액세스 토큰 사용")
+                self.creds = Credentials(token=access_token)
+                return self._build_service()
+            
+            # 저장된 토큰 파일 확인 (레거시 지원)
             if not force_refresh and self._load_saved_tokens():
                 if self._is_token_valid():
                     print("✅ 저장된 토큰 사용")
                     return self._build_service()
             
-            # 환경변수에서 인증 정보 가져오기
+            # 환경변수에서 인증 정보 가져오기 (레거시 지원)
             client_id = os.getenv('GMAIL_CLIENT_ID')
             client_secret = os.getenv('GMAIL_CLIENT_SECRET')
             refresh_token = os.getenv('GMAIL_REFRESH_TOKEN')
             
             if not all([client_id, client_secret, refresh_token]):
-                print("❌ Gmail 인증 정보가 .env 파일에 설정되지 않았습니다.")
+                print("❌ OAuth2 인증이 필요합니다. 액세스 토큰을 제공하거나 OAuth 서버를 사용하세요.")
+                print("💡 OAuth 서버 사용: http://localhost:8000/auth/login/gmail")
                 return False
             
             # Credentials 객체 생성
