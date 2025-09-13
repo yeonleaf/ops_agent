@@ -96,9 +96,9 @@ class JiraConnector:
         load_dotenv()
         
         # 환경 변수에서 Jira 설정 읽기
-        self.url = url or os.getenv('JIRA_API_ENDPOINT', '').replace('/rest/api/2/', '')
-        self.email = email or os.getenv('JIRA_USER_EMAIL')
-        self.token = token or os.getenv('JIRA_API_TOKEN')
+        self.url = url or os.getenv('JIRA_ENDPOINT', '').replace('/rest/api/3/', '').replace('/rest/api/2/', '')
+        self.email = email or os.getenv('JIRA_ACCOUNT')
+        self.token = token or os.getenv('JIRA_TOKEN')
         
         # 설정 검증
         if not all([self.url, self.email, self.token]):
@@ -952,6 +952,126 @@ class JiraConnector:
                 "sync_duration": sync_duration,
                 "tickets_processed": processed_count,
                 "total_tickets_found": len(tickets) if tickets else 0
+            }
+    
+    def create_jira_issue(self, ticket_data: Dict[str, Any], project_key: str = None) -> Dict[str, Any]:
+        """
+        Jira에 새 이슈 생성
+        
+        Args:
+            ticket_data: 티켓 데이터 (summary, description 등)
+            project_key: Jira 프로젝트 키 (없으면 첫 번째 프로젝트 사용)
+            
+        Returns:
+            생성 결과 (성공/실패, 생성된 이슈 키 등)
+        """
+        try:
+            logger.info(f"🎫 Jira 이슈 생성 시작: {ticket_data.get('summary', 'Unknown')}")
+            
+            # 프로젝트 키가 없으면 첫 번째 프로젝트 사용
+            if not project_key:
+                projects = self.jira.projects()
+                if not projects:
+                    return {"success": False, "error": "접근 가능한 Jira 프로젝트가 없습니다."}
+                project_key = projects[0].key
+                logger.info(f"📁 기본 프로젝트 사용: {project_key}")
+            
+            # 프로젝트별 이슈 타입 조회
+            project = self.jira.project(project_key)
+            
+            # 프로젝트에서 사용 가능한 이슈 타입 확인
+            createmeta = self.jira.createmeta(projectKeys=project_key, expand='projects.issuetypes.fields')
+            project_issue_types = []
+            
+            if createmeta.get('projects'):
+                for proj in createmeta['projects']:
+                    if proj['key'] == project_key:
+                        project_issue_types = proj.get('issuetypes', [])
+                        break
+            
+            logger.info(f"📋 프로젝트 {project_key}에서 사용 가능한 이슈 타입: {[it['name'] for it in project_issue_types]}")
+            
+            # Task, Story, Bug, Epic 순으로 사용 가능한 이슈 타입 찾기
+            preferred_types = ['Task', 'Story', 'Bug', 'Epic']
+            issue_type = None
+            
+            for pref_type in preferred_types:
+                for it in project_issue_types:
+                    if it['name'] == pref_type and not it.get('subtask', False):
+                        issue_type = it
+                        break
+                if issue_type:
+                    break
+            
+            if not issue_type and project_issue_types:
+                # 서브태스크가 아닌 첫 번째 이슈 타입 사용
+                for it in project_issue_types:
+                    if not it.get('subtask', False):
+                        issue_type = it
+                        break
+            
+            if not issue_type:
+                return {"success": False, "error": "사용 가능한 이슈 타입이 없습니다."}
+            
+            logger.info(f"📋 이슈 타입: {issue_type['name']}")
+            
+            # 이슈 필드 준비
+            issue_dict = {
+                'project': {'key': project_key},
+                'summary': ticket_data.get('title', 'Unknown Issue'),
+                'description': ticket_data.get('description', ''),
+                'issuetype': {'id': issue_type['id']},
+                'labels': ticket_data.get('labels', [])
+            }
+            
+            # Start Date 설정 (duedate 필드 사용)
+            if ticket_data.get('start_date'):
+                try:
+                    from datetime import datetime
+                    # ISO 형식의 날짜를 Jira 형식(YYYY-MM-DD)으로 변환
+                    if isinstance(ticket_data['start_date'], str):
+                        start_date_obj = datetime.fromisoformat(ticket_data['start_date'].replace('Z', '+00:00'))
+                        issue_dict['duedate'] = start_date_obj.strftime('%Y-%m-%d')
+                        logger.info(f"📅 Jira 이슈 시작일 설정: {issue_dict['duedate']}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 시작일 설정 실패: {e}")
+                    
+            # 사용자 정의 필드로 실제 시작일 설정 시도 (선택사항)
+            # 대부분의 Jira 인스턴스에서 customfield_xxxxx 형태로 시작일 필드가 있을 수 있음
+            
+            # 우선순위 설정 (선택사항)
+            if ticket_data.get('priority'):
+                priorities = self.jira.priorities()
+                for priority in priorities:
+                    if priority.name.lower() == ticket_data['priority'].lower():
+                        issue_dict['priority'] = {'name': priority.name}
+                        break
+            
+            # Jira 이슈 생성
+            new_issue = self.jira.create_issue(fields=issue_dict)
+            
+            logger.info(f"✅ Jira 이슈 생성 성공: {new_issue.key}")
+            
+            return {
+                "success": True,
+                "issue_key": new_issue.key,
+                "issue_url": f"{self.url}/browse/{new_issue.key}",
+                "message": f"Jira 이슈 생성 완료: {new_issue.key}"
+            }
+            
+        except JIRAError as e:
+            logger.error(f"❌ Jira 이슈 생성 실패: {e}")
+            return {
+                "success": False,
+                "error": f"Jira API 오류: {str(e)}",
+                "message": "Jira 이슈 생성에 실패했습니다."
+            }
+        except Exception as e:
+            logger.error(f"❌ 이슈 생성 중 예상치 못한 오류: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "이슈 생성 중 오류가 발생했습니다."
             }
     
     def close(self):

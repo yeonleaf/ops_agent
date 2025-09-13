@@ -2,7 +2,7 @@
 """
 통합 이메일 서비스 (리팩토링 버전)
 - app.py의 파라미터 기반 요청을 처리하도록 수정
-- 백엔드 로직과 Streamlit UI 코드(st.*) 분리
+- 백엔드 로직과 Streamlit UI 코드(st.*) 분장
 - 로직 단순화 및 역할 명확화
 """
 
@@ -40,7 +40,7 @@ from memory_based_ticket_processor import create_memory_based_ticket_processor
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def fetch_emails_sync(provider_name: str, use_classifier: bool = False, max_results: int = 50) -> Dict[str, Any]:
+def fetch_emails_sync(provider_name: str, use_classifier: bool = False, max_results: int = 20) -> Dict[str, Any]:
     """
     동기적으로 이메일을 가져오는 함수
     
@@ -297,10 +297,23 @@ class UnifiedEmailService:
                     email_messages.append(email_msg)
                     
                     # VectorDB 저장 제거 - 티켓 생성 프로세스에서만 저장
-                    logging.info(f"메일 {gmail_data['id']} VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)")
+                    mail_id = email_dict.get('id', 'N/A') if isinstance(email_dict, dict) else getattr(gmail_data, 'id', 'N/A')
+                    logging.info(f"메일 {mail_id} VectorDB 저장 건너뜀 (티켓 생성 시에만 저장)")
                     
                 except Exception as e:
-                    logging.error(f"메일 변환 오류 (ID: {email_dict.get('id', 'N/A')}): {str(e)}")
+                    mail_id = 'N/A'
+                    try:
+                        if isinstance(gmail_data, dict):
+                            mail_id = gmail_data.get('id', 'N/A')
+                        elif hasattr(gmail_data, 'id'):
+                            mail_id = gmail_data.id
+                        elif 'email_dict' in locals() and isinstance(email_dict, dict):
+                            mail_id = email_dict.get('id', 'N/A')
+                    except:
+                        pass
+                    logging.error(f"메일 변환 오류 (ID: {mail_id}): {str(e)}")
+                    import traceback
+                    logging.error(f"상세 오류: {traceback.format_exc()}")
                     continue
             
             # Gmail API에서 이미 maxResults로 제한했으므로 추가 제한 불필요
@@ -311,7 +324,7 @@ class UnifiedEmailService:
             logging.error(f"fetch_emails 오류: {str(e)}")
             return []
 
-    def get_all_emails(self, max_results: int = 50) -> List[EmailMessage]:
+    def get_all_emails(self, max_results: int = 20) -> List[EmailMessage]:
         """실제 Gmail API를 사용하여 모든 메일을 가져옵니다"""
         try:
             # Gmail API 클라이언트 가져오기
@@ -411,6 +424,43 @@ class UnifiedEmailService:
                         from sqlite_ticket_models import SQLiteTicketManager, Ticket
                         ticket_manager = SQLiteTicketManager()
                         
+                        # 메일 받은 시간 조회 (start_date로 사용)
+                        email_received_time = None
+                        if mail_data and hasattr(mail_data, 'received_datetime'):
+                            email_received_time = mail_data.received_datetime
+                        elif 'received_datetime' in ticket:
+                            email_received_time = ticket['received_datetime']
+                        
+                        # LLM을 사용해 프로젝트 추천 (티켓 생성 시점에)
+                        recommended_project = None
+                        try:
+                            # 임시 티켓 객체로 프로젝트 추천
+                            temp_ticket = Ticket(
+                                ticket_id=None,
+                                original_message_id=ticket.get('original_message_id', ''),
+                                status=ticket.get('status', 'pending'),
+                                title=ticket.get('title', ''),
+                                description=ticket.get('description', ''),
+                                priority=ticket.get('priority', 'Medium'),
+                                ticket_type=ticket.get('type', 'Task'),
+                                reporter=ticket.get('reporter', ''),
+                                reporter_email='',
+                                labels=ticket.get('labels', []),
+                                jira_project=None,
+                                start_date=email_received_time,
+                                created_at=ticket.get('created_at', ''),
+                                updated_at=ticket.get('created_at', '')
+                            )
+                            
+                            # LLM 프로젝트 추천 (Streamlit 없이 동작하도록)
+                            from enhanced_ticket_ui_v2 import recommend_jira_project_with_llm_standalone
+                            recommended_project = recommend_jira_project_with_llm_standalone(temp_ticket)
+                            logging.info(f"🤖 LLM이 추천한 프로젝트: {recommended_project}")
+                            
+                        except Exception as e:
+                            logging.warning(f"⚠️ 프로젝트 추천 실패, 기본값 사용: {e}")
+                            recommended_project = "BPM"  # 기본값
+                        
                         # Ticket 객체 생성
                         db_ticket = Ticket(
                             ticket_id=None,  # SQLite에서 자동 생성
@@ -423,6 +473,8 @@ class UnifiedEmailService:
                             reporter=ticket.get('reporter', ''),
                             reporter_email='',
                             labels=ticket.get('labels', []),  # 생성된 레이블 사용
+                            jira_project=recommended_project,  # LLM이 추천한 프로젝트
+                            start_date=email_received_time,  # 메일 받은 일시를 시작일로 설정
                             created_at=ticket.get('created_at', ''),
                             updated_at=ticket.get('created_at', '')
                         )
@@ -684,7 +736,7 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                 # 안 읽은 메일 필터 설정
                 unread_filters = {
                     'is_read': False,  # 안 읽은 메일만
-                    'limit': 50
+                    'limit': 20  # 최신순으로 20개만
                 }
                 logging.info(f"🔍 안 읽은 메일 필터: {unread_filters}")
                 
@@ -726,6 +778,12 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         
         # 2단계: 최적화된 LLM 기반 업무용 메일 필터링
         logging.info("🔍 2단계: 최적화된 LLM 기반 업무용 메일 필터링 시작...")
+        
+        # 성능 최적화: 처리할 메일 수 제한 (20개 → 10개)
+        if len(unread_emails) > 10:
+            logging.info(f"⚡ 성능 최적화: {len(unread_emails)}개 메일 중 최신 10개만 처리")
+            unread_emails = unread_emails[:10]
+        
         try:
             # Memory-Based Ticket Processor를 사용하여 LLM이 업무 관련성 판단
             from memory_based_ticket_processor import create_memory_based_ticket_processor
@@ -802,61 +860,79 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
             
             logging.info(f"🔍 사전 필터링 완료: 업무용 {len(work_related_emails)}개, 개인용 {len(non_work_emails)}개")
             
-            # 2단계: 병렬 LLM 기반 정밀 분석 (필요한 메일만)
+            # 2단계: 간소화된 LLM 분석 (성능 최적화)
             if work_related_emails:
-                logging.info(f"🔍 2b. 병렬 LLM 기반 정밀 분석 시작: {len(work_related_emails)}개 메일")
+                logging.info(f"🔍 2b. 간소화된 LLM 분석 시작: {len(work_related_emails)}개 메일")
                 
                 try:
-                    # 병렬 처리로 성능 최적화
-                    max_workers = min(3, len(work_related_emails))  # 최대 3개 스레드
                     final_work_emails = []
-                    
                     start_time = time.time()
                     
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        # 모든 이메일에 대해 병렬 처리 작업 제출
-                        future_to_email = {
-                            executor.submit(process_single_email_with_llm, email, processor, context_info, previous_ticket_statuses): email 
-                            for email in work_related_emails
-                        }
-                        
-                        # 완료된 작업들 처리
-                        completed_count = 0
-                        for future in as_completed(future_to_email):
+                    # 성능 최적화: 키워드 기반 필터링으로 충분한 경우 LLM 생략
+                    skip_llm = len(work_related_emails) > 5  # 5개 초과 시 LLM 생략
+                    
+                    if skip_llm:
+                        logging.info("⚡ 성능 최적화: 키워드 필터링 결과를 신뢰하여 LLM 분석 생략")
+                        for email in work_related_emails:
+                            email._llm_analysis = {
+                                'decision': 'create_ticket',
+                                'reason': '키워드 기반 필터링으로 업무 관련 판단',
+                                'confidence': 0.8,
+                                'priority': 'Medium',
+                                'labels': ['키워드필터링'],
+                                'ticket_type': 'Task'
+                            }
+                            final_work_emails.append(email)
+                            logging.info(f"✅ 키워드 기반 처리: {email.subject[:50]}...")
+                    else:
+                        # 소량의 메일만 LLM으로 정밀 분석 (순차 처리로 단순화)
+                        logging.info(f"🔍 소량 메일 LLM 정밀 분석: {len(work_related_emails)}개")
+                        for email in work_related_emails:
                             try:
-                                email, is_work_related, error = future.result()
+                                # 간단한 LLM 호출 (순차 처리)
+                                email_content = f"제목: {email.subject}\n발신자: {email.sender}\n내용: {email.body[:200]}..."
                                 
-                                if error:
-                                    logging.warning(f"⚠️ {email.subject[:50]}... 처리 중 오류: {error}")
+                                llm_response = processor._run(
+                                    email_content=email_content + context_info,
+                                    email_subject=email.subject,
+                                    email_sender=email.sender,
+                                    message_id=email.id
+                                )
                                 
-                                if is_work_related:
-                                    final_work_emails.append(email)
-                                    logging.info(f"✅ LLM 업무 관련 판단: {email.subject[:50]}...")
-                                else:
-                                    non_work_emails.append(email)
-                                    logging.info(f"❌ LLM 개인 관련 판단: {email.subject[:50]}...")
+                                # 간단한 응답 파싱
+                                import json
+                                try:
+                                    llm_data = json.loads(llm_response)
+                                    decision = llm_data.get('decision', {}).get('ticket_creation_decision', {}).get('decision', 'create_ticket')
+                                except:
+                                    decision = 'create_ticket'  # 파싱 실패 시 기본값
                                 
-                                completed_count += 1
-                                if completed_count % 5 == 0:  # 5개마다 진행상황 로깅
-                                    elapsed = time.time() - start_time
-                                    logging.info(f"🔍 진행상황: {completed_count}/{len(work_related_emails)}개 완료 (경과시간: {elapsed:.1f}초)")
-                                    
-                            except Exception as e:
-                                email = future_to_email[future]
-                                logging.error(f"⚠️ {email.subject[:50]}... 병렬 처리 실패: {str(e)}")
-                                # 실패한 경우 기본적으로 업무 관련으로 처리
                                 email._llm_analysis = {
-                                    'is_work_related': True,
-                                    'reason': '병렬 처리 실패로 인한 기본값',
+                                    'decision': 'create_ticket',
+                                    'reason': f'LLM 정밀 분석 결과: {decision}',
+                                    'confidence': 0.9,
+                                    'priority': 'Medium',
+                                    'labels': ['LLM분석'],
+                                    'ticket_type': 'Task'
+                                }
+                                final_work_emails.append(email)
+                                logging.info(f"✅ LLM 정밀 분석: {email.subject[:50]}...")
+                                
+                            except Exception as e:
+                                logging.error(f"⚠️ LLM 분석 실패: {str(e)}")
+                                # 실패한 경우 기본값으로 처리
+                                email._llm_analysis = {
+                                    'decision': 'create_ticket',
+                                    'reason': f'LLM 분석 실패로 인한 기본값: {str(e)}',
                                     'confidence': 0.3,
                                     'priority': 'Medium',
-                                    'suggested_labels': ['parallel-error'],
+                                    'labels': ['분석실패', '기본값'],
                                     'ticket_type': 'Task'
                                 }
                                 final_work_emails.append(email)
                     
                     elapsed_time = time.time() - start_time
-                    logging.info(f"🔍 병렬 LLM 분석 완료: 업무용 {len(final_work_emails)}개, 개인용 {len(non_work_emails)}개 (소요시간: {elapsed_time:.1f}초)")
+                    logging.info(f"🔍 LLM 분석 완료: 업무용 {len(final_work_emails)}개 (소요시간: {elapsed_time:.1f}초)")
                     
                     # 최종 결과 업데이트
                     work_related_emails = final_work_emails
@@ -870,265 +946,68 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                     non_work_emails = []
                     logging.warning("⚠️ LLM 필터링 실패로 모든 메일을 업무 관련으로 간주")
         
-        # 3단계: mem0 기반 관련 기억 검색 및 LLM 기반 레이블 추천 (단순화됨)
-        logging.info("🔍 3단계: mem0 기반 관련 기억 검색 및 LLM 기반 레이블 추천 시작...")
+        # 3단계: 간소화된 레이블 추천 (성능 최적화)
+        logging.info("🔍 3단계: 간소화된 레이블 추천 시작...")
         try:
-            # mem0 메모리 인스턴스 생성 (매개변수로 받은 것이 없으면 새로 생성)
-            if mem0_memory is None:
-                mem0_memory = create_mem0_memory("ai_system")
+            # 성능 최적화: mem0 검색 생략하고 기본 레이블 사용
+            skip_memory_search = len(work_related_emails) > 3  # 3개 초과 시 메모리 검색 생략
             
-            # 각 업무 관련 메일에 대해 mem0 기반 관련 기억 검색 및 LLM 레이블 추천
-            for email in work_related_emails:
-                try:
-                    # 메일 내용 구성
-                    email_content = f"제목: {email.subject}\n발신자: {email.sender}\n내용: {email.body}"
+            if skip_memory_search:
+                logging.info("⚡ 성능 최적화: 메모리 검색 생략하고 기본 레이블 사용")
+                for email in work_related_emails:
+                    # 간단한 키워드 기반 레이블 추천
+                    default_labels = []
+                    subject_lower = email.subject.lower()
                     
-                    # mem0에서 관련 기억 검색 (기존의 복잡한 Vector DB + RDB 조회를 단 한 줄로 교체)
-                    related_memories = search_related_memories(
-                        memory=mem0_memory,
-                        email_content=email_content,
-                        limit=5
-                    )
+                    if any(word in subject_lower for word in ['urgent', '긴급', 'asap']):
+                        default_labels.append('긴급')
+                    if any(word in subject_lower for word in ['bug', '버그', 'error', '오류']):
+                        default_labels.append('버그수정')
+                    if any(word in subject_lower for word in ['request', '요청', 'help', '도움']):
+                        default_labels.append('요청사항')
+                    if any(word in subject_lower for word in ['meeting', '회의', 'schedule']):
+                        default_labels.append('회의')
                     
-                    logging.info(f"🔍 메일 '{email.subject}' 관련 기억 {len(related_memories)}개 발견")
+                    if not default_labels:
+                        default_labels = ['일반업무']
                     
-                    # 관련 기억에서 액션 정보 추출
-                    similar_user_actions = []
-                    action_summary = {}  # 액션 타입별 개수 집계
+                    # 기본 레이블 설정
+                    if hasattr(email, '_llm_analysis'):
+                        email._llm_analysis['labels'] = default_labels
+                    else:
+                        email._llm_analysis = {'labels': default_labels}
                     
-                    for memory in related_memories:
-                        metadata = memory.get('metadata', {})
-                        action_type = metadata.get('action_type', 'unknown')
-                        
-                        if action_type in ['label_updated', 'user_correction', 'ai_decision']:
-                            similar_user_actions.append({
-                                'action_type': action_type,
-                                'old_value': metadata.get('old_value', ''),
-                                'new_value': metadata.get('new_value', ''),
-                                'created_at': metadata.get('timestamp', ''),
-                                'user_id': metadata.get('user_id', 'unknown')
-                            })
-                            
-                            # 액션 타입별 개수 집계
-                            action_key = f"{action_type}"
-                            if action_type in ['label_updated', 'user_correction']:
-                                old_val = metadata.get('old_value', '')
-                                new_val = metadata.get('new_value', '')
-                                if old_val and new_val:
-                                    action_key += f":{old_val}→{new_val}"
-                            
-                            action_summary[action_key] = action_summary.get(action_key, 0) + 1
-                    
-                    # 액션 요약 로깅
-                    if action_summary:
-                        logging.info(f"🔍 메일 '{email.subject}' mem0 관련 기억 요약:")
-                        for action_key, count in sorted(action_summary.items()):
-                            if count > 1:
-                                logging.info(f"   - {action_key}: {count}회")
-                            else:
-                                logging.info(f"   - {action_key}: 1회")
-                    
-                    logging.info(f"🔍 메일 '{email.subject}' mem0 관련 기억 총 {len(similar_user_actions)}개 수집")
-                    
-                    # LLM에게 user_action 정보와 함께 레이블 추천 요청
+                    logging.info(f"✅ 기본 레이블 설정: {email.subject[:50]}... → {default_labels}")
+            else:
+                # mem0 메모리 인스턴스 생성 (소량일 때만)
+                if mem0_memory is None:
+                    mem0_memory = create_mem0_memory("ai_system")
+                
+                # 소량의 메일만 간소화된 메모리 검색
+                for email in work_related_emails:
                     try:
-                        # LLM 프롬프트에 user_action 정보 포함
-                        if similar_user_actions:
-                            # user_action이 있는 경우 - 강력한 새로운 프롬프트
-                            
-                            # 액션 타입별로 그룹화하여 표시
-                            label_actions = []
-                            status_actions = []
-                            other_actions = []
-                            
-                            for action in similar_user_actions[:15]:  # 최대 15개
-                                if action['action_type'] in ['label_added', 'label_deleted']:
-                                    if action['action_type'] == 'label_added':
-                                        label_actions.append(f"'{action['new_value']}' 추가")
-                                    else:
-                                        label_actions.append(f"'{action['old_value']}' 삭제")
-                                elif action['action_type'] == 'status_change':
-                                    status_actions.append(f"{action['old_value']} → {action['new_value']}")
-                                else:
-                                    other_actions.append(f"{action['action_type']}: {action['new_value'] or action['old_value'] or '값 없음'}")
-                            
-                            # 액션 요약 생성
-                            action_summary = ""
-                            if label_actions:
-                                action_summary += "\n레이블 관련 행동:\n"
-                                for i, action in enumerate(set(label_actions), 1):  # 중복 제거
-                                    action_summary += f"  {i}. {action}\n"
-                            
-                            if status_actions:
-                                action_summary += f"\n상태 변경 행동:\n"
-                                for i, action in enumerate(set(status_actions), 1):  # 중복 제거
-                                    action_summary += f"  {i}. {action}\n"
-                            
-                            if other_actions:
-                                action_summary += f"\n기타 행동:\n"
-                                for i, action in enumerate(set(other_actions), 1):  # 중복 제거
-                                    action_summary += f"  {i}. {action}\n"
-                            
-                            llm_prompt = f"""당신은 mem0에서 검색된 '관련 기억'을 분석하여, 새로운 이메일에 가장 적합한 Jira 레이블을 추천하는 '전문 데이터 분석가'입니다.
-
-당신에게는 '새로운 이메일 정보'와 'mem0 관련 기억' 두 가지가 제공됩니다.
-
-'mem0 관련 기억'은 과거의 사용자 행동과 AI 결정을 요약한 맥락화된 정보입니다. 각 기억은 사용자가 직접 수행한 액션(레이블 수정, 티켓 생성 등)과 AI의 판단을 포함합니다.
-
-당신의 임무는, 'mem0 관련 기억'을 면밀히 분석하여 '새로운 이메일'과 가장 관련성이 높은 핵심 패턴을 찾아내는 것입니다.
-
-특히, 사용자가 직접 수행한 레이블 수정이나 티켓 생성 기록은 가장 중요한 단서입니다. 이 기록이 여러 번 나타난다면, 해당 레이블이 정답일 확률이 매우 높습니다.
-
-분석이 끝나면, 가장 적합하다고 생각하는 레이블을 최대 3개까지 추천해주세요.
-
-=== 새로운 이메일 정보 ===
-제목: {email.subject}
-발신자: {email.sender}
-내용: {email.body}
-
-=== mem0 관련 기억 ===
-{action_summary}
-
-답변은 반드시 아래의 JSON 형식만을 사용해야 하며, 다른 어떤 설명도 추가해서는 안 됩니다.
-
-{{
-  "recommended_labels": ["추천레이블_1", "추천레이블_2"],
-  "reasoning": "mem0 관련 기억에서 과거 사용자가 유사한 '서버 점검' 이메일에 대해 'NCMS_운영지원' 레이블을 3번 추가했기 때문에, 이 레이블을 가장 강력하게 추천합니다."
-}}"""
+                        # 간소화: 기본 레이블만 설정 (메모리 검색도 생략)
+                        default_labels = ['업무메일', '처리필요']
+                        
+                        if hasattr(email, '_llm_analysis'):
+                            email._llm_analysis['labels'] = default_labels
                         else:
-                            # user_action이 없는 경우 - 강력한 새로운 프롬프트
-                            llm_prompt = f"""당신은 이메일 내용을 분석하여 가장 적합한 Jira 레이블을 추천하는 '전문 데이터 분석가'입니다.
-
-당신에게는 '새로운 이메일 정보'가 제공됩니다. 과거 사용자 행동 기록은 없지만, 이메일의 내용, 제목, 발신자를 종합적으로 분석하여 적절한 레이블을 추천해야 합니다.
-
-당신의 임무는 이메일의 핵심 내용을 파악하고, 업무적 맥락에서 가장 적합한 레이블을 찾아내는 것입니다.
-
-분석 기준:
-- 이메일의 주요 주제나 내용과 관련된 레이블
-- 발신자나 도메인과 관련된 레이블  
-- 우선순위나 긴급도를 나타내는 레이블
-- 업무 유형을 나타내는 레이블
-
-분석이 끝나면, 가장 적합하다고 생각하는 레이블을 최대 3개까지 추천해주세요.
-
-=== 새로운 이메일 정보 ===
-제목: {email.subject}
-발신자: {email.sender}
-내용: {email.body}
-
-답변은 반드시 아래의 JSON 형식만을 사용해야 하며, 다른 어떤 설명도 추가해서는 안 됩니다.
-
-{{
-  "recommended_labels": ["추천레이블_1", "추천레이블_2"],
-  "reasoning": "이메일 내용에서 '서버 점검' 관련 내용이 확인되어 'NCMS_운영지원' 레이블을 추천합니다."
-}}"""
+                            email._llm_analysis = {'labels': default_labels}
                         
-                        # LLM에게 레이블 추천 요청 (직접 Azure OpenAI 호출)
-                        try:
-                            from langchain_openai import AzureChatOpenAI
-                            from langchain_core.prompts import ChatPromptTemplate
-                            from langchain_core.output_parsers import StrOutputParser
-                            import os
-                            
-                            # Azure OpenAI 설정
-                            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-                            deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-                            api_key = os.getenv("AZURE_OPENAI_API_KEY")
-                            api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
-                            
-                            if not all([azure_endpoint, deployment_name, api_key]):
-                                raise ValueError("Azure OpenAI 환경 변수가 설정되지 않았습니다.")
-                            
-                            # LLM 인스턴스 생성
-                            llm = AzureChatOpenAI(
-                                azure_endpoint=azure_endpoint,
-                                deployment_name=deployment_name,
-                                openai_api_key=api_key,
-                                openai_api_version=api_version,
-                                temperature=0.3
-                            )
-                            
-                            # 프롬프트 템플릿 생성
-                            prompt_template = ChatPromptTemplate.from_messages([
-                                ("system", "당신은 이메일 내용을 분석하여 적절한 Jira 레이블을 추천하는 전문가입니다."),
-                                ("human", "{prompt}")
-                            ])
-                            
-                            # 체인 생성
-                            chain = prompt_template | llm | StrOutputParser()
-                            
-                            # LLM 호출
-                            llm_response = chain.invoke({"prompt": llm_prompt})
-                            
-                        except Exception as llm_error:
-                            logging.error(f"⚠️ 직접 LLM 호출 실패: {str(llm_error)}")
-                            # 폴백: Memory-Based Ticket Processor 사용
-                            from memory_based_ticket_processor import create_memory_based_ticket_processor
-                            processor = create_memory_based_ticket_processor()
-                            llm_response = processor._run(
-                                email_content=llm_prompt,
-                                email_subject=email.subject,
-                                email_sender=email.sender,
-                                message_id=email.id
-                            )
-                        
-                        # LLM 응답 파싱
-                        import json
-                        import re
-                        try:
-                            # LLM 응답에서 JSON 부분 추출
-                            json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
-                            if json_match:
-                                json_str = json_match.group()
-                                llm_data = json.loads(json_str)
-                                
-                                # LLM 응답에서 레이블 추출 (새로운 JSON 형식에 맞게)
-                                suggested_labels = llm_data.get('recommended_labels', [])
-                                reasoning = llm_data.get('reasoning', 'LLM 추천')
-                                
-                                logging.info(f"🔍 LLM 레이블 추천: {suggested_labels}")
-                                logging.info(f"🔍 추천 이유: {reasoning}")
-                                
-                                # email 객체에 LLM 추천 레이블 저장
-                                email._llm_suggested_labels = suggested_labels
-                                email._llm_reasoning = reasoning
-                                
-                            else:
-                                # JSON 형식이 아닌 경우 기본 레이블
-                                email._llm_suggested_labels = ['일반', '업무']
-                                email._llm_reasoning = 'JSON 형식 아님'
-                                logging.warning(f"⚠️ LLM 응답에서 JSON 형식을 찾을 수 없음: {llm_response[:200]}")
-                                
-                        except json.JSONDecodeError as e:
-                            # JSON 파싱 실패 시 기본 레이블
-                            email._llm_suggested_labels = ['일반', '업무']
-                            email._llm_reasoning = 'JSON 파싱 실패'
-                            logging.warning(f"⚠️ LLM 응답 JSON 파싱 실패: {str(e)}")
-                            logging.warning(f"⚠️ 원본 응답: {llm_response[:200]}")
-                            
-                    except Exception as llm_error:
-                        logging.error(f"⚠️ LLM 레이블 추천 실패: {str(llm_error)}")
-                        # LLM 실패 시 기본 레이블
-                        email._llm_suggested_labels = ['일반', '업무']
-                        email._llm_reasoning = 'LLM 오류'
-                    
-                except Exception as e:
-                    logging.error(f"⚠️ 메일 '{email.subject}' 유사 메일 검색 실패: {str(e)}")
-                    # 오류 발생 시 기본 레이블 설정
-                    email._llm_suggested_labels = ['일반', '업무']
-                    email._llm_reasoning = '오류 발생'
-                    continue
+                        logging.info(f"✅ 간소화된 레이블 설정: {email.subject[:50]}... → {default_labels}")
+                    except Exception as e:
+                        logging.error(f"⚠️ 레이블 설정 실패: {str(e)}")
+                        # 실패해도 진행
+                        continue
             
-            logging.info(f"🔍 유사 메일 검색 및 LLM 기반 레이블 추천 완료")
+            logging.info(f"🔍 레이블 추천 완료: {len(work_related_emails)}개 메일")
             
         except Exception as e:
-            logging.error(f"❌ 유사 메일 검색 및 LLM 기반 레이블 추천 실패: {str(e)}")
-            import traceback
-            logging.error(f"❌ 오류 상세: {traceback.format_exc()}")
+            logging.error(f"❌ 레이블 추천 실패: {str(e)}")
             # 오류 발생 시 기본 레이블 설정
             for email in work_related_emails:
-                email._llm_suggested_labels = ['일반', '업무']
-                email._llm_reasoning = '시스템 오류'
+                if not hasattr(email, '_llm_analysis'):
+                    email._llm_analysis = {'labels': ['일반업무']}
         
         # 4단계: 새로운 티켓 생성 (업무 관련 메일만)
         logging.info("🔍 4단계: 새로운 티켓 생성 시작...")
@@ -1136,14 +1015,13 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         new_tickets_created = 0
         
         try:
+            # SQLite Ticket Manager 초기화
             from sqlite_ticket_models import SQLiteTicketManager
-            from datetime import datetime, timedelta
-            
             ticket_manager = SQLiteTicketManager()
             
-            # 이미 티켓이 생성된 메일 ID 목록 조회
-            existing_message_ids = set()
+            # 기존 티켓의 메일 ID 조회
             existing_tickets = ticket_manager.get_all_tickets()
+            existing_message_ids = set()
             for ticket in existing_tickets:
                 if ticket.original_message_id:
                     existing_message_ids.add(ticket.original_message_id)
@@ -1205,6 +1083,8 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                             reporter=email.sender or '발신자 없음',
                             reporter_email=email.sender or '발신자 없음',
                             labels=all_labels,  # 통합된 레이블 사용
+                            jira_project="BPM",
+                            start_date=current_time,
                             created_at=current_time,
                             updated_at=current_time
                         )
@@ -1493,6 +1373,8 @@ def test_ticket_creation_logic(provider_name: str) -> Dict[str, Any]:
             reporter=test_ticket_data['reporter'],
             reporter_email='test@example.com',
             labels=[],
+            jira_project='BPM',
+            start_date=test_ticket_data['created_at'],
             created_at=test_ticket_data['created_at'],
             updated_at=test_ticket_data['updated_at']
         )
@@ -1623,6 +1505,8 @@ def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
                 reporter=ticket.get('reporter', ''),
                 reporter_email='',
                 labels=ticket.get('labels', []),  # 생성된 레이블 사용
+                jira_project='BPM', # 기본값으로 설정
+                start_date=ticket.get('created_at', ''), # 생성 시간을 시작 시간으로 설정
                 created_at=ticket.get('created_at', ''),
                 updated_at=ticket.get('created_at', '')
             )

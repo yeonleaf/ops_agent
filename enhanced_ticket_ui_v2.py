@@ -11,6 +11,7 @@ import sqlite3
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import json
+import threading
 from vector_db_models import VectorDBManager
 from sqlite_ticket_models import SQLiteTicketManager, Ticket
 from mem0_memory_adapter import create_mem0_memory, add_ticket_event
@@ -69,6 +70,10 @@ def update_ticket_status(ticket_id: int, new_status: str, old_status: str) -> bo
         success = ticket_manager.update_ticket_status(ticket_id, new_status, old_status)
         if success:
             st.info(f"📝 데이터베이스에서 티켓 #{ticket_id} 상태를 '{old_status}'에서 '{new_status}'로 변경했습니다.")
+            
+            # pending -> accept 상태 변경 시 Jira 업로드
+            if old_status.lower() == 'pending' and new_status.lower() == 'accept':
+                upload_to_jira_async(ticket_id)
         else:
             st.warning(f"⚠️ 데이터베이스 업데이트가 실패했습니다.")
         return success
@@ -199,6 +204,65 @@ def display_ticket_detail(ticket: Ticket):
         st.write(f"**수정일:** {ticket.updated_at}")
         st.write(f"**담당자:** {ticket.reporter}")
         st.write(f"**이메일:** {ticket.reporter_email}")
+        
+        # Jira 프로젝트 섹션
+        st.write("**Jira 프로젝트:**")
+        current_project = ticket.jira_project or ""
+        
+        # 프로젝트가 설정되지 않은 경우 LLM 추천
+        if not current_project:
+            with st.spinner("🤖 LLM이 적합한 프로젝트를 추천하는 중..."):
+                recommended_project = recommend_jira_project_with_llm(ticket)
+                st.info(f"💡 추천 프로젝트: {recommended_project}")
+                
+                if st.button("✅ 추천 프로젝트 적용", key=f"apply_recommended_project_{ticket.ticket_id}"):
+                    success = update_ticket_jira_project(ticket.ticket_id, recommended_project, current_project)
+                    if success:
+                        st.success(f"✅ 프로젝트가 '{recommended_project}'로 설정되었습니다!")
+                        st.session_state.refresh_trigger += 1
+                        st.rerun()
+                    else:
+                        st.error("❌ 프로젝트 설정에 실패했습니다.")
+        
+        # 사용 가능한 프로젝트 목록 조회
+        available_projects = []
+        try:
+            from jira_connector import JiraConnector
+            with JiraConnector() as jira:
+                projects = jira.jira.projects()
+                available_projects = [p.key for p in projects]
+        except Exception as e:
+            available_projects = ["BPM"]  # 기본값
+        
+        # 프로젝트 변경 UI
+        if current_project in available_projects:
+            current_index = available_projects.index(current_project)
+        else:
+            current_index = 0
+            
+        new_project = st.selectbox(
+            "Jira 프로젝트 변경",
+            options=available_projects,
+            index=current_index,
+            key=f"project_select_{ticket.ticket_id}",
+            help="티켓을 업로드할 Jira 프로젝트를 선택하세요."
+        )
+        
+        if new_project != current_project:
+            if st.button("🔄 프로젝트 변경", key=f"change_project_{ticket.ticket_id}", type="secondary"):
+                success = update_ticket_jira_project(ticket.ticket_id, new_project, current_project)
+                if success:
+                    st.success(f"✅ 프로젝트가 '{current_project or '미설정'}'에서 '{new_project}'로 변경되었습니다!")
+                    st.session_state.refresh_trigger += 1
+                    st.rerun()
+                else:
+                    st.error("❌ 프로젝트 변경에 실패했습니다.")
+        
+        # 시작일 표시
+        if ticket.start_date:
+            st.write(f"**시작일:** {ticket.start_date}")
+        else:
+            st.write("**시작일:** 미설정")
     
     # 설명 섹션
     st.subheader("📝 설명")
@@ -545,6 +609,335 @@ def record_label_change_to_mem0(ticket: Ticket, old_labels: List[str], new_label
         
     except Exception as e:
         print(f"⚠️ mem0 레이블 변경 기록 실패: {str(e)}")
+
+def upload_to_jira_async(ticket_id: int):
+    """백그라운드에서 비동기적으로 Jira에 티켓 업로드"""
+    def _upload_worker():
+        try:
+            # 티켓 정보 조회
+            ticket_manager = SQLiteTicketManager()
+            ticket = ticket_manager.get_ticket_by_id(ticket_id)
+            
+            if not ticket:
+                print(f"❌ 티켓 ID {ticket_id}를 찾을 수 없습니다.")
+                return
+                
+            # Jira 연동 상태 확인
+            from auth_client import auth_client
+            if not auth_client.is_logged_in():
+                print(f"❌ 로그인이 필요합니다.")
+                return
+            
+            # Jira 연동 정보 조회
+            jira_integration = auth_client.get_jira_integration()
+            if not jira_integration.get('success', False) or not jira_integration.get('jira_endpoint'):
+                print(f"❌ Jira 연동 정보가 없습니다. 설정을 확인해주세요.")
+                return
+            
+            print(f"🎫 티켓 #{ticket_id} Jira 업로드 시작...")
+            
+            # Jira 커넥터 초기화 (환경변수에서 자동으로 설정 읽음)
+            from jira_connector import JiraConnector
+            
+            with JiraConnector() as jira:
+                # 티켓 데이터 준비
+                ticket_data = {
+                    'summary': f"[OPS-AGENT] {ticket.title or 'Unknown Title'}",
+                    'description': f"""
+원본 메일 제목: {ticket.title or 'Unknown'}
+받은 사람: {ticket.recipient or 'Unknown'}
+보낸 사람: {ticket.sender or 'Unknown'}
+
+상세 내용:
+{ticket.description or 'No description available'}
+
+Labels: {', '.join(ticket.labels) if ticket.labels else 'None'}
+시작일: {ticket.start_date or 'Not set'}
+생성 시간: {ticket.created_at}
+승인 시간: {datetime.now().isoformat()}
+""",
+                    'priority': 'Medium',  # 기본 우선순위
+                    'start_date': ticket.start_date  # 시작일 필드 추가
+                }
+                
+                # 프로젝트 키 결정
+                project_key = ticket.jira_project or "BPM"  # 기본값
+                
+                # Jira에 이슈 생성
+                result = jira.create_jira_issue(ticket_data, project_key)
+                
+                if result.get('success'):
+                    print(f"✅ 티켓 #{ticket_id} Jira 업로드 성공: {result.get('issue_key')}")
+                    print(f"🔗 Jira URL: {result.get('issue_url')}")
+                    
+                    # 성공 메시지를 Streamlit에 표시 (가능한 경우)
+                    try:
+                        st.success(f"✅ 티켓 #{ticket_id}이(가) Jira에 업로드되었습니다!")
+                        st.info(f"🔗 Jira 이슈: [{result.get('issue_key')}]({result.get('issue_url')})")
+                    except:
+                        pass  # Streamlit 컨텍스트가 없는 경우 무시
+                        
+                else:
+                    error_msg = result.get('error', 'Unknown error')
+                    print(f"❌ 티켓 #{ticket_id} Jira 업로드 실패: {error_msg}")
+                    
+                    # 실패 메시지를 Streamlit에 표시 (가능한 경우)
+                    try:
+                        st.error(f"❌ 티켓 #{ticket_id} Jira 업로드 실패: {error_msg}")
+                    except:
+                        pass  # Streamlit 컨텍스트가 없는 경우 무시
+                        
+        except Exception as e:
+            print(f"❌ Jira 업로드 중 오류 발생: {str(e)}")
+            try:
+                st.error(f"❌ Jira 업로드 중 오류 발생: {str(e)}")
+            except:
+                pass  # Streamlit 컨텍스트가 없는 경우 무시
+    
+    # 백그라운드 스레드에서 실행
+    thread = threading.Thread(target=_upload_worker, daemon=True)
+    thread.start()
+    
+    # 사용자에게 즉시 알림 표시
+    st.info(f"🚀 티켓 #{ticket_id} Jira 업로드를 시작합니다... (백그라운드 처리)")
+
+def recommend_jira_project_with_llm(ticket: Ticket) -> str:
+    """LLM과 mem0를 사용해 티켓에 적합한 Jira 프로젝트를 추천"""
+    try:
+        # 사용 가능한 Jira 프로젝트 목록 조회
+        from jira_connector import JiraConnector
+        
+        available_projects = []
+        try:
+            with JiraConnector() as jira:
+                projects = jira.jira.projects()
+                available_projects = [{"key": p.key, "name": p.name} for p in projects]
+        except Exception as e:
+            print(f"⚠️ Jira 프로젝트 목록 조회 실패: {e}")
+            return "BPM"  # 기본값
+        
+        if not available_projects:
+            return "BPM"  # 기본값
+        
+        # mem0에서 관련 기록 검색
+        mem0_context = ""
+        if st.session_state.get('mem0_memory'):
+            try:
+                # 티켓 관련 기록 검색
+                search_query = f"티켓 {ticket.title} {ticket.description[:100]} 프로젝트"
+                related_memories = st.session_state.mem0_memory.search(search_query, limit=5)
+                
+                if related_memories:
+                    mem0_context = "\n".join([
+                        f"- {memory.get('memory', '')}" 
+                        for memory in related_memories
+                    ])
+            except Exception as e:
+                print(f"⚠️ mem0 검색 실패: {e}")
+        
+        # LLM 프롬프트 구성
+        prompt = f"""다음 티켓에 가장 적합한 Jira 프로젝트를 추천해주세요.
+
+티켓 정보:
+- 제목: {ticket.title}
+- 설명: {ticket.description[:500]}
+- 라벨: {', '.join(ticket.labels) if ticket.labels else 'None'}
+- 티켓 타입: {ticket.ticket_type}
+- 우선순위: {ticket.priority}
+
+사용 가능한 Jira 프로젝트:
+{chr(10).join([f"- {p['key']}: {p['name']}" for p in available_projects])}
+
+관련 기록 (mem0):
+{mem0_context if mem0_context else '관련 기록 없음'}
+
+지침:
+1. 티켓의 내용과 성격을 분석하여 가장 적합한 프로젝트를 선택하세요
+2. 과거 기록이 있다면 참고하세요
+3. 프로젝트 키만 반환하세요 (예: BPM, PROJ 등)
+4. 확실하지 않다면 BPM을 기본값으로 사용하세요
+
+추천 프로젝트 키:"""
+
+        # Azure OpenAI API 호출
+        try:
+            import os
+            from openai import AzureOpenAI
+            
+            client = AzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            )
+            
+            response = client.chat.completions.create(
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4"),
+                messages=[
+                    {"role": "system", "content": "당신은 Jira 프로젝트 관리 전문가입니다. 티켓의 내용을 분석하여 적합한 프로젝트를 추천합니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=50,
+                temperature=0.3
+            )
+            
+            recommended_project = response.choices[0].message.content.strip()
+            
+            # 추천된 프로젝트가 사용 가능한 목록에 있는지 확인
+            project_keys = [p['key'] for p in available_projects]
+            if recommended_project in project_keys:
+                print(f"🤖 LLM이 추천한 프로젝트: {recommended_project}")
+                return recommended_project
+            else:
+                print(f"⚠️ LLM이 추천한 프로젝트 '{recommended_project}'가 사용 가능한 목록에 없음. 기본값 사용.")
+                return project_keys[0] if project_keys else "BPM"
+                
+        except Exception as e:
+            print(f"⚠️ LLM 프로젝트 추천 실패: {e}")
+            return available_projects[0]['key'] if available_projects else "BPM"
+            
+    except Exception as e:
+        print(f"❌ 프로젝트 추천 중 오류: {e}")
+        return "BPM"  # 기본값
+
+def update_ticket_jira_project(ticket_id: int, new_project: str, old_project: str) -> bool:
+    """티켓의 Jira 프로젝트를 업데이트하고 mem0에 기록"""
+    try:
+        # 데이터베이스 업데이트
+        with sqlite3.connect("tickets.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE tickets 
+                SET jira_project = ?, updated_at = ?
+                WHERE ticket_id = ?
+            """, (new_project, datetime.now().isoformat(), ticket_id))
+            conn.commit()
+            
+            if cursor.rowcount > 0:
+                print(f"✅ 티켓 #{ticket_id} Jira 프로젝트 변경: {old_project} → {new_project}")
+                
+                # mem0에 변경사항 기록
+                if st.session_state.get('mem0_memory'):
+                    try:
+                        add_ticket_event(
+                            memory=st.session_state.mem0_memory,
+                            event_type="jira_project_change",
+                            description=f"티켓 #{ticket_id} Jira 프로젝트 변경: '{old_project}' → '{new_project}'",
+                            ticket_id=str(ticket_id),
+                            message_id="",
+                            old_value=old_project or "",
+                            new_value=new_project
+                        )
+                        print(f"🧠 mem0에 프로젝트 변경 이벤트 기록 완료")
+                    except Exception as e:
+                        print(f"⚠️ mem0 기록 실패: {e}")
+                
+                return True
+            else:
+                return False
+                
+    except Exception as e:
+        print(f"❌ 프로젝트 업데이트 실패: {e}")
+        return False
+
+def recommend_jira_project_with_llm_standalone(ticket: Ticket) -> str:
+    """Streamlit 없이 동작하는 LLM 기반 프로젝트 추천 (티켓 생성 시 사용)"""
+    try:
+        # 사용 가능한 Jira 프로젝트 목록 조회
+        from jira_connector import JiraConnector
+        
+        available_projects = []
+        try:
+            with JiraConnector() as jira:
+                projects = jira.jira.projects()
+                available_projects = [{"key": p.key, "name": p.name} for p in projects]
+        except Exception as e:
+            print(f"⚠️ Jira 프로젝트 목록 조회 실패: {e}")
+            return "BPM"  # 기본값
+        
+        if not available_projects:
+            return "BPM"  # 기본값
+        
+        # mem0에서 관련 기록 검색 (Streamlit 없이)
+        mem0_context = ""
+        try:
+            from mem0_memory_adapter import create_mem0_memory
+            mem0_memory = create_mem0_memory("ai_system")
+            
+            # 티켓 관련 기록 검색
+            search_query = f"티켓 {ticket.title} {ticket.description[:100]} 프로젝트"
+            related_memories = mem0_memory.search(search_query, limit=5)
+            
+            if related_memories:
+                mem0_context = "\n".join([
+                    f"- {memory.get('memory', '')}" 
+                    for memory in related_memories
+                ])
+        except Exception as e:
+            print(f"⚠️ mem0 검색 실패: {e}")
+        
+        # LLM 프롬프트 구성
+        prompt = f"""다음 티켓에 가장 적합한 Jira 프로젝트를 추천해주세요.
+
+티켓 정보:
+- 제목: {ticket.title}
+- 설명: {ticket.description[:500]}
+- 라벨: {', '.join(ticket.labels) if ticket.labels else 'None'}
+- 티켓 타입: {ticket.ticket_type}
+- 우선순위: {ticket.priority}
+
+사용 가능한 Jira 프로젝트:
+{chr(10).join([f"- {p['key']}: {p['name']}" for p in available_projects])}
+
+관련 기록 (mem0):
+{mem0_context if mem0_context else '관련 기록 없음'}
+
+지침:
+1. 티켓의 내용과 성격을 분석하여 가장 적합한 프로젝트를 선택하세요
+2. 과거 기록이 있다면 참고하세요
+3. 프로젝트 키만 반환하세요 (예: BPM, PROJ 등)
+4. 확실하지 않다면 BPM을 기본값으로 사용하세요
+
+추천 프로젝트 키:"""
+
+        # Azure OpenAI API 호출
+        try:
+            import os
+            from openai import AzureOpenAI
+            
+            client = AzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            )
+            
+            response = client.chat.completions.create(
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4"),
+                messages=[
+                    {"role": "system", "content": "당신은 Jira 프로젝트 관리 전문가입니다. 티켓의 내용을 분석하여 적합한 프로젝트를 추천합니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=50,
+                temperature=0.3
+            )
+            
+            recommended_project = response.choices[0].message.content.strip()
+            
+            # 추천된 프로젝트가 사용 가능한 목록에 있는지 확인
+            project_keys = [p['key'] for p in available_projects]
+            if recommended_project in project_keys:
+                print(f"🤖 LLM이 추천한 프로젝트: {recommended_project}")
+                return recommended_project
+            else:
+                print(f"⚠️ LLM이 추천한 프로젝트 '{recommended_project}'가 사용 가능한 목록에 없음. 기본값 사용.")
+                return project_keys[0] if project_keys else "BPM"
+                
+        except Exception as e:
+            print(f"⚠️ LLM 프로젝트 추천 실패: {e}")
+            return available_projects[0]['key'] if available_projects else "BPM"
+            
+    except Exception as e:
+        print(f"❌ 프로젝트 추천 중 오류: {e}")
+        return "BPM"  # 기본값
 
 def main():
     st.title("🎫 Enhanced Ticket Management System v2")

@@ -448,31 +448,73 @@ class TicketingAgent:
 - 가장 복잡하고 중요한 업무를 담당합니다
 
 ## 사용 가능한 도구
+- read_emails_tool: ViewingAgent를 통해 메일을 읽고 목록을 조회합니다
 - process_tickets_tool: 이메일을 분석하여 티켓을 생성하고 처리합니다
 - memory_tool: 티켓 조회 및 과거 사용자 피드백과 메모리를 조회합니다
 - correction_tool: 업무용이 아니라고 판단된 메일을 정정하여 티켓을 생성합니다
+
+## 중요: 티켓 생성 워크플로우
+- 티켓 생성 요청("안읽은 메일을 바탕으로 티켓을 생성해줘", "메일을 티켓으로 만들어줘") 처리 시:
+  1. 먼저 read_emails_tool을 사용해 ViewingAgent를 통해 메일을 읽고 확인
+  2. 메일 내용을 파악한 후 process_tickets_tool을 사용해 티켓 생성
+- 이 순서를 지켜야 인증 문제 없이 정상적으로 동작합니다
 
 ## 중요: 티켓 조회 시 주의사항
 - memory_tool에서 "📋 전체 티켓 목록"으로 시작하는 결과가 나오면, 이는 실제 데이터베이스에 저장된 티켓 목록입니다
 - 이 경우 "생성된 티켓이 없습니다"라고 답하지 말고, 실제 티켓 목록을 사용자에게 보여주세요
 - 사용자 액션 기록만 보고 티켓이 없다고 판단하지 마세요
 
-## 중요: 티켓 생성 요청 처리
-- "안읽은 메일을 바탕으로 티켓을 생성해줘", "메일을 티켓으로 만들어줘" 등의 요청은 process_tickets_tool을 사용해야 합니다
-- memory_tool은 기존 티켓 조회용이므로, 신규 티켓 생성에는 process_tickets_tool을 사용하세요
-- 티켓 생성 요청과 티켓 조회 요청을 구분하여 적절한 도구를 선택하세요
-
 ## 응답 형식
 - 티켓 생성/처리 결과를 상세하고 구조화된 형태로 제공합니다
 - 메모리 기반 판단 근거를 포함합니다
 - 한국어로 전문적이고 신뢰할 수 있는 톤으로 응답합니다"""
 
-        # 도구 정의
-        self.tools = [self._create_process_tickets_tool(), self._create_memory_tool(), self._create_correction_tool()]
+        # 도구 정의 (쿠키 저장을 위한 인스턴스 변수)
+        self.current_cookies = ""
+        self.viewing_agent = None  # ViewingAgent 참조를 위한 변수
+        self.tools = [self._create_read_emails_tool(), self._create_process_tickets_tool(), self._create_memory_tool(), self._create_correction_tool()]
         
         # 에이전트 생성
         self.agent = self._create_agent()
         self.agent_executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
+    
+    def set_viewing_agent(self, viewing_agent):
+        """ViewingAgent 참조 설정"""
+        self.viewing_agent = viewing_agent
+    
+    def _create_read_emails_tool(self) -> Tool:
+        """메일 읽기 도구 생성 (ViewingAgent 위임)"""
+        def read_emails_tool(query: str) -> str:
+            """
+            ViewingAgent를 통해 메일을 읽고 목록을 반환합니다.
+            
+            Args:
+                query: 메일 조회 쿼리 (예: "안 읽은 메일", "gmail 메일 조회")
+            
+            Returns:
+                메일 목록 정보
+            """
+            try:
+                if not self.viewing_agent:
+                    return "ViewingAgent가 설정되지 않았습니다. 메일을 직접 조회할 수 없습니다."
+                
+                print(f"🔄 TicketingAgent가 ViewingAgent에게 메일 읽기 요청: {query}")
+                
+                # ViewingAgent를 통해 메일 조회
+                result = self.viewing_agent.execute(query, cookies=self.current_cookies)
+                
+                print(f"✅ ViewingAgent로부터 메일 데이터 수신 완료")
+                return result
+                
+            except Exception as e:
+                logging.error(f"❌ ViewingAgent를 통한 메일 읽기 실패: {str(e)}")
+                return f"메일 읽기 중 오류가 발생했습니다: {str(e)}"
+        
+        return Tool(
+            name="read_emails_tool",
+            description="ViewingAgent를 통해 메일을 읽고 목록을 조회합니다. 티켓 생성 전에 먼저 메일 내용을 확인하는 용도로 사용합니다. '메일 읽기', '안읽은 메일 확인' 등의 요청에 사용합니다.",
+            func=read_emails_tool
+        )
     
     def _create_process_tickets_tool(self) -> Tool:
         """티켓 처리 도구 생성"""
@@ -508,16 +550,42 @@ class TicketingAgent:
                 except:
                     pass
                 
-                # 토큰 추출 (쿠키에서)
+                # 토큰 추출 (인스턴스 변수에서) - ViewingAgent와 동일한 방식 적용
                 access_token = None
+                cookies = self.current_cookies  # 인스턴스 변수에서 쿠키 가져오기
+                print(f"🍪 TicketAgent process_tickets_tool: current_cookies = {'있음' if cookies else '없음'}")
                 if cookies:
-                    cookie_dict = {}
-                    for cookie in cookies.split(';'):
-                        if '=' in cookie:
-                            key, value = cookie.strip().split('=', 1)
-                            cookie_dict[key] = value
-                    access_token = cookie_dict.get("gmail_access_token")
-                    print(f"🍪 TicketAgent에서 토큰 추출: {'성공' if access_token else '실패'}")
+                    print(f"🍪 TicketAgent process_tickets_tool: cookies 내용 = {cookies[:100]}...")
+                
+                if cookies and provider_name == "gmail":
+                    print("🍪 TicketAgent: 전달받은 토큰에서 Gmail access_token 추출 시도")
+                    try:
+                        # 쿠키에서 gmail_access_token 추출
+                        for cookie in cookies.split(';'):
+                            if 'gmail_access_token=' in cookie:
+                                access_token = cookie.split('gmail_access_token=')[1].strip()
+                                print(f"🍪 TicketAgent: 전달받은 토큰에서 추출된 access_token: {access_token[:20]}...")
+                                break
+                        
+                        if not access_token:
+                            print("🍪 TicketAgent: 전달받은 토큰에 gmail_access_token이 없음")
+                    except Exception as e:
+                        print(f"🍪 TicketAgent: 토큰 추출 중 오류: {e}")
+                
+                # 토큰이 없으면 refresh token으로 새로 발급
+                if not access_token:
+                    print(f"🔄 TicketAgent: {provider_name} access_token이 없어서 새로 발급 시도")
+                    try:
+                        from gmail_provider import get_gmail_access_token_from_refresh_token
+                        access_token = get_gmail_access_token_from_refresh_token()
+                        if access_token:
+                            print(f"🔄 TicketAgent: refresh token으로 새 access_token 발급 성공: {access_token[:20]}...")
+                        else:
+                            print("🔄 TicketAgent: refresh token으로 access_token 발급 실패")
+                    except Exception as e:
+                        print(f"🔄 TicketAgent: refresh token 처리 중 오류: {e}")
+                
+                print(f"🍪 TicketAgent 최종 토큰 상태: {'성공' if access_token else '실패'}")
                 
                 result = process_emails_with_ticket_logic(provider_name, query, mem0_memory, access_token)
                 
@@ -748,16 +816,24 @@ class TicketingAgent:
         
         return create_openai_tools_agent(self.llm, self.tools, prompt)
     
-    def execute(self, query: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def execute(self, query: str, context: Optional[Dict[str, Any]] = None, cookies: str = "") -> str:
         """에이전트 실행"""
         try:
             logging.info(f"🎫 {self.name} 실행: {query}")
+            print(f"🍪 TicketingAgent.execute에서 전달받은 cookies: {'있음' if cookies else '없음'}")
             
             # 컨텍스트가 있으면 쿼리에 추가
             if context:
                 enhanced_query = f"{query}\n\n컨텍스트 정보: {context}"
             else:
                 enhanced_query = query
+            
+            # 쿠키 정보를 인스턴스 변수에 저장하여 도구에서 접근 가능하게 함
+            if cookies:
+                self.current_cookies = cookies
+                print(f"🍪 TicketingAgent: 인스턴스 변수에 쿠키 저장됨")
+            else:
+                self.current_cookies = ""
                 
             result = self.agent_executor.invoke({"input": enhanced_query})
             return result.get("output", "처리 결과를 가져올 수 없습니다.")

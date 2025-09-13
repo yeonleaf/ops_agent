@@ -787,8 +787,10 @@ class GmailAPIClient:
             print(f"❌ 메일 가져오기 실패: {str(e)}")
             return []
 
-    def search_emails(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
+    def search_emails(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
         """Gmail 검색 쿼리로 메일 검색"""
+        print(f"🔍 Gmail API search_emails 호출: query='{query}', max_results={max_results}")
+        
         if not self.service:
             if not self.authenticate():
                 return []
@@ -799,6 +801,24 @@ class GmailAPIClient:
                 return []
         
         try:
+            print(f"🔍 Gmail API 실제 호출: q='{query}', maxResults={max_results}")
+            
+            # 안 읽은 메일 쿼리인 경우 추가 로깅
+            if query == "is:unread":
+                print("🔍 *** 안 읽은 메일 전용 쿼리 감지 ***")
+                
+                # 비교를 위해 전체 메일 수도 확인
+                try:
+                    all_results = self.service.users().messages().list(
+                        userId='me',
+                        q="",
+                        maxResults=10
+                    ).execute()
+                    all_count = len(all_results.get('messages', []))
+                    print(f"🔍 전체 메일 (최대 10개): {all_count}개")
+                except Exception as e:
+                    print(f"🔍 전체 메일 조회 실패: {e}")
+            
             results = self.service.users().messages().list(
                 userId='me',
                 q=query,
@@ -806,13 +826,21 @@ class GmailAPIClient:
             ).execute()
             
             messages = results.get('messages', [])
+            print(f"🔍 Gmail API 응답: {len(messages)}개 메시지 발견")
             emails = []
             
-            for message in messages:
+            for i, message in enumerate(messages):
                 email_data = self.get_email_details(message['id'])
                 if email_data:
                     emails.append(email_data)
+                    # 처음 3개 메일의 제목과 읽음 상태를 로깅
+                    if i < 3:
+                        subject = email_data.get('subject', 'N/A')
+                        unread = email_data.get('unread', 'N/A')
+                        labels = email_data.get('labels', [])
+                        print(f"🔍 메일 {i+1}: subject='{subject[:50]}...', unread={unread}, labels={labels}")
             
+            print(f"🔍 Gmail API 최종 반환: {len(emails)}개 이메일")
             return emails
             
         except HttpError as error:

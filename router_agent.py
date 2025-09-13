@@ -118,6 +118,9 @@ class RouterAgent:
         self.analysis_agent = create_analysis_agent(llm_client)
         self.ticketing_agent = create_ticketing_agent(llm_client)
         
+        # TicketingAgent에 ViewingAgent 참조 설정
+        self.ticketing_agent.set_viewing_agent(self.viewing_agent)
+        
         # 전문가 에이전트들을 도구로 변환
         self.tools = [
             self._create_viewing_agent_tool(),
@@ -135,7 +138,7 @@ class RouterAgent:
     
     def _create_viewing_agent_tool(self) -> Tool:
         """ViewingAgent를 도구로 변환"""
-        def viewing_agent_tool(query: str, cookies: str = "") -> str:
+        def viewing_agent_tool(query: str) -> str:
             """
             이메일 조회 전문가에게 작업을 위임합니다.
             
@@ -147,13 +150,15 @@ class RouterAgent:
             
             Args:
                 query: 이메일 조회 관련 사용자 요청
-                cookies: OAuth 토큰이 포함된 쿠키 문자열
             
             Returns:
                 조회된 이메일 목록 및 상세 정보
             """
             try:
                 logging.info(f"🔍 ViewingAgent에게 작업 위임: {query}")
+                # 현재 컨텍스트에서 쿠키 정보 가져오기
+                cookies = getattr(self, '_current_context', {}).get('cookies', '')
+                print(f"🍪 RouterAgent에서 ViewingAgent로 쿠키 전달: {'있음' if cookies else '없음'}")
                 # 쿠키를 ViewingAgent에 전달
                 result = self.viewing_agent.execute(query, cookies=cookies)
                 return f"📧 이메일 조회 전문가 결과:\n{result}"
@@ -201,7 +206,7 @@ class RouterAgent:
     
     def _create_ticketing_agent_tool(self) -> Tool:
         """TicketingAgent를 도구로 변환"""
-        def ticketing_agent_tool(query: str, cookies: str = "") -> str:
+        def ticketing_agent_tool(query: str) -> str:
             """
             티켓 처리 전문가에게 작업을 위임합니다.
             
@@ -220,6 +225,11 @@ class RouterAgent:
             """
             try:
                 logging.info(f"🎫 TicketingAgent에게 작업 위임: {query}")
+                # 현재 컨텍스트에서 쿠키 정보 가져오기
+                cookies = getattr(self, '_current_context', {}).get('cookies', '')
+                print(f"🍪 RouterAgent에서 TicketingAgent로 쿠키 전달: {'있음' if cookies else '없음'}")
+                if cookies:
+                    print(f"🍪 RouterAgent에서 전달할 쿠키 내용: {cookies[:100]}...")
                 result = self.ticketing_agent.execute(query, cookies=cookies)
                 return f"🎫 티켓 처리 전문가 결과:\n{result}"
             except Exception as e:
@@ -247,8 +257,8 @@ class RouterAgent:
         try:
             logging.info(f"🚀 {self.name} 실행: {query}")
             
-            # 이메일 관련 쿼리이고 쿠키가 있으면 ViewingAgent를 직접 호출
-            if cookies and any(keyword in query.lower() for keyword in ["메일", "이메일", "안 읽은", "읽지 않은", "gmail", "outlook"]):
+            # 이메일 관련 쿼리이고 쿠키가 있으면 ViewingAgent를 직접 호출 (티켓 생성 요청 제외)
+            if cookies and any(keyword in query.lower() for keyword in ["메일", "이메일", "안 읽은", "읽지 않은", "gmail", "outlook"]) and "티켓" not in query.lower():
                 print(f"🍪 RouterAgent에서 직접 ViewingAgent 호출: {cookies[:100]}...")
                 try:
                     result = self.viewing_agent.execute(query, cookies=cookies)

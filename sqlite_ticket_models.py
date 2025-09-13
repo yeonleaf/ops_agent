@@ -22,6 +22,8 @@ class Ticket:
     reporter: str  # 담당자/리포터
     reporter_email: str  # 담당자 이메일
     labels: List[str]  # 라벨 목록
+    jira_project: Optional[str]  # Jira 프로젝트 키 (예: BPM, PROJ 등)
+    start_date: Optional[str]  # 시작 일시 (메일 받은 일시)
     created_at: str  # 생성 시각
     updated_at: str  # 마지막 수정 시각
 
@@ -90,6 +92,19 @@ class SQLiteTicketManager:
                 )
             """)
             
+            # 새 컬럼 추가 (마이그레이션)
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN jira_project TEXT")
+                print("✅ jira_project 컬럼 추가 완료")
+            except sqlite3.OperationalError:
+                pass  # 이미 존재하는 컬럼
+            
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN start_date TEXT")
+                print("✅ start_date 컬럼 추가 완료")
+            except sqlite3.OperationalError:
+                pass  # 이미 존재하는 컬럼
+            
             # 인덱스 생성
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_message_id ON tickets(original_message_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
@@ -109,12 +124,13 @@ class SQLiteTicketManager:
                 cursor.execute("""
                     INSERT INTO tickets (original_message_id, status, title, description,
                                        priority, ticket_type, reporter, reporter_email, labels,
-                                       created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       jira_project, start_date, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     ticket.original_message_id, ticket.status, ticket.title, ticket.description,
                     ticket.priority, ticket.ticket_type, ticket.reporter, ticket.reporter_email,
-                    json.dumps(ticket.labels), ticket.created_at, ticket.updated_at
+                    json.dumps(ticket.labels), ticket.jira_project, ticket.start_date,
+                    ticket.created_at, ticket.updated_at
                 ))
                 
                 ticket_id = cursor.lastrowid
@@ -208,6 +224,39 @@ class SQLiteTicketManager:
                 )
             return None
     
+    def get_ticket_by_id(self, ticket_id: int) -> Optional[Ticket]:
+        """티켓 ID로 단일 티켓 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT ticket_id, original_message_id, status, title, description,
+                       priority, ticket_type, reporter, reporter_email, labels,
+                       jira_project, start_date, created_at, updated_at
+                FROM tickets WHERE ticket_id = ?
+            """, (ticket_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                return Ticket(
+                    ticket_id=row[0],
+                    original_message_id=row[1],
+                    status=row[2],
+                    title=row[3],
+                    description=row[4],
+                    priority=row[5],
+                    ticket_type=row[6],
+                    reporter=row[7],
+                    reporter_email=row[8],
+                    labels=json.loads(row[9]) if row[9] else [],
+                    jira_project=row[10],
+                    start_date=row[11],
+                    created_at=row[12],
+                    updated_at=row[13]
+                )
+            return None
+    
     def get_tickets_by_message_id(self, message_id: str) -> List[Ticket]:
         """메일 ID로 관련 티켓 조회"""
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
@@ -279,7 +328,7 @@ class SQLiteTicketManager:
             cursor.execute("""
                 SELECT ticket_id, original_message_id, status, title, description,
                        priority, ticket_type, reporter, reporter_email, labels,
-                       created_at, updated_at
+                       jira_project, start_date, created_at, updated_at
                 FROM tickets ORDER BY created_at DESC
             """)
             
@@ -296,8 +345,10 @@ class SQLiteTicketManager:
                     reporter=row[7],
                     reporter_email=row[8],
                     labels=json.loads(row[9]) if row[9] else [],
-                    created_at=row[10],
-                    updated_at=row[11]
+                    jira_project=row[10],
+                    start_date=row[11],
+                    created_at=row[12],
+                    updated_at=row[13]
                 ))
             return tickets
     
@@ -325,7 +376,7 @@ class SQLiteTicketManager:
                 
                 conn.commit()
                 print(f"✅ 데이터베이스 상태 업데이트 완료: 티켓 #{ticket_id} '{old_status}' → '{new_status}'")
-            
+
             # VectorDB 상태 동기화
             try:
                 from vector_db_models import VectorDBManager
@@ -346,7 +397,17 @@ class SQLiteTicketManager:
                         
             except Exception as e:
                 print(f"❌ VectorDB 상태 동기화 실패: {str(e)}")
-            
+
+            if new_status == 'approved':
+                try:
+                    from jira_connector import JiraConnector
+                    ticket = self.get_ticket_by_id(ticket_id)
+                    if ticket:
+                        jira_connector = JiraConnector()
+                        jira_connector.create_jira_issue(ticket_data=asdict(ticket), project_key=ticket.jira_project)
+                except Exception as e:
+                    print(f"❌ Jira 티켓 생성 실패: {str(e)}")
+
             return True  # 상태 업데이트 성공
             
         except Exception as e:
