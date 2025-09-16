@@ -430,50 +430,8 @@ def main():
     
     print(f"🍪 인증 성공 - 메인 UI 표시")
     
-    # 제목과 로그아웃 버튼
-    col1, col2, col3 = st.columns([3, 1, 1])
-    with col1:
-        st.title("🤖 에이전트 네트워크 메일 챗봇")
-    with col2:
-        if st.button("🍪 세션 상태", type="secondary"):
-            # 세션 상태 확인
-            print(f"🍪 세션 토큰 상태:")
-            print(f"   - gmail_access_token: {'있음' if st.session_state.get('gmail_access_token') else '없음'}")
-            print(f"   - gmail_refresh_token: {'있음' if st.session_state.get('gmail_refresh_token') else '없음'}")
-            print(f"🍪 URL 파라미터 상태:")
-            print(f"   - access_token: {st.query_params.get('access_token', '없음')}")
-            print(f"   - refresh_token: {st.query_params.get('refresh_token', '없음')}")
-            st.info("콘솔에서 세션 상태를 확인하세요.")
-    with col3:
-        if st.button("🚪 로그아웃", type="secondary"):
-            # 로그아웃 시작
-            print(f"🍪 로그아웃 시작...")
-            
-            # 1. URL 파라미터 정리
-            try:
-                st.query_params.clear()
-                print(f"🍪 URL 파라미터에서 토큰 삭제 완료")
-            except Exception as e:
-                print(f"🍪 URL 파라미터 삭제 실패: {e}")
-            
-            # 2. 세션 상태에서 삭제 (앱의 현재 상태 삭제)
-            for key in ['gmail_access_token', 'gmail_refresh_token']:
-                if key in st.session_state:
-                    del st.session_state[key]
-                    print(f"🍪 세션 상태에서 {key} 삭제")
-            
-            # 3. 기타 세션 데이터 초기화
-            if 'conversation_history' in st.session_state:
-                st.session_state.conversation_history = []
-                print(f"🍪 대화 기록 초기화")
-            
-            if 'non_work_emails' in st.session_state:
-                st.session_state.non_work_emails = []
-                print(f"🍪 non_work_emails 초기화")
-            
-            print(f"🍪 로그아웃 완료")
-            st.success("로그아웃되었습니다.")
-            st.rerun()
+    # 제목
+    st.title("🤖 에이전트 네트워크 메일 챗봇")
     
     st.markdown("---")
     
@@ -481,7 +439,7 @@ def main():
     chatbot = AgentNetworkChatBot(st.session_state.llm_client)
     
     # 탭 생성
-    tab1, tab2, tab3, tab4 = st.tabs(["💬 AI 챗봇", "🎫 티켓 관리", "📚 RAG 데이터 관리자", "🔗 연동 설정"])
+    tab1, tab2, tab3 = st.tabs(["💬 AI 챗봇", "🎫 티켓 관리", "📚 RAG 데이터 관리자"])
     
     # 자동 탭 전환 처리
     if st.session_state.auto_switch_to_tickets:
@@ -499,152 +457,9 @@ def main():
     with tab3:
         create_rag_manager_tab()
     
-    with tab4:
-        show_integration_settings()
 
 def display_chat_interface(chatbot):
     """채팅 인터페이스 표시"""
-    # 사이드바 - 서버 상태 및 도구
-    with st.sidebar:
-        st.header("🔧 서버 상태")
-        
-        # 서버 상태 확인
-        if st.button("에이전트 네트워크 상태 확인"):
-            status = chatbot.router_client.get_server_status()
-            if status.get("status") == "running":
-                st.success("✅ 에이전트 네트워크 정상")
-                st.json(status)
-            else:
-                st.error(f"❌ 에이전트 네트워크 오류: {status.get('message', '알 수 없는 오류')}")
-        
-        st.markdown("---")
-        
-        st.header("📧 Gmail 연동")
-        
-        # Gmail 연결 상태 확인
-        if st.session_state.get('gmail_access_token'):
-            st.success("✅ Gmail 연결됨")
-            if st.button("Gmail 연결 해제"):
-                # Gmail 토큰 삭제
-                for key in ['gmail_access_token', 'gmail_refresh_token']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                st.success("Gmail 연결이 해제되었습니다.")
-                st.rerun()
-            else:
-                st.warning("❌ Gmail 연결되지 않음")
-                
-                # Gmail OAuth URL 생성
-                # 먼저 로그인된 사용자 이메일 가져오기
-                user_email = 'unknown@example.com'
-                
-                # 1. 세션에서 확인
-                if 'user_email' in st.session_state:
-                    user_email = st.session_state['user_email']
-                    print(f"🍪 세션에서 사용자 이메일 가져옴: {user_email}")
-                
-                # 2. auth_client에서 확인
-                if user_email == 'unknown@example.com':
-                    try:
-                        from auth_client import auth_client
-                        if auth_client.is_logged_in():
-                            user_info = auth_client.get_user_info()
-                            user_email = user_info.get('email', 'unknown@example.com')
-                            st.session_state['user_email'] = user_email
-                            print(f"🍪 auth_client에서 사용자 이메일 가져옴: {user_email}")
-                        else:
-                            print("🍪 auth_client에서 로그인되지 않음")
-                    except Exception as e:
-                        print(f"🍪 auth_client 호출 실패: {e}")
-                
-                # 3. 여전히 unknown인 경우 사용자 입력 요청
-                if user_email == 'unknown@example.com':
-                    user_email = st.text_input(
-                        "Gmail 계정 이메일을 입력하세요:",
-                        value=st.session_state.get('user_email', ''),
-                        placeholder="dpffpsk907@gmail.com"
-                    )
-                    if user_email:
-                        st.session_state['user_email'] = user_email
-                        print(f"🍪 사용자 입력으로 이메일 설정: {user_email}")
-                
-                print(f"🍪 최종 사용자 이메일: {user_email}")
-                print(f"🍪 세션 사용자 이메일: {st.session_state.get('user_email', 'unknown@example.com')}")
-                
-                # user_email이 설정되었다면 세션에도 저장
-                if user_email != 'unknown@example.com':
-                    st.session_state['user_email'] = user_email
-                    print(f"🍪 세션에 사용자 이메일 저장: {user_email}")
-                
-                if st.button("🔐 Gmail 로그인", type="primary"):
-                    # 버튼 클릭 시점에 다시 세션에서 이메일 확인
-                    current_user_email = st.session_state.get('user_email', 'unknown@example.com')
-                    print(f"🍪 버튼 클릭 시 사용자 이메일: {current_user_email}")
-                    
-                    # MCP 서버의 oauth_login_gmail 도구 호출
-                    try:
-                        print(f"🍪 MCP 서버 oauth_login_gmail 호출 시도")
-                        print(f"🍪 전달할 user_email: {current_user_email} (type: {type(current_user_email)})")
-                        result = auth_client .call_tool("oauth_login_gmail", {"user_email": current_user_email})
-                        print(f"🍪 MCP 서버 응답: {result}")
-                        
-                        if result and 'auth_url' in result:
-                            gmail_oauth_url = result['auth_url']
-                            st.markdown(f"**Gmail 인증을 위해 아래 URL을 클릭하세요:**")
-                            st.markdown(f"[{gmail_oauth_url}]({gmail_oauth_url})")
-                            st.info("인증 완료 후 다시 이메일 조회를 요청해주세요.")
-                        else:
-                            st.error(f"OAuth URL 생성 실패: {result}")
-                    except Exception as e:
-                        print(f"🍪 MCP 서버 호출 실패: {e}")
-                        st.error(f"MCP 서버 호출 실패: {e}")
-        
-        st.markdown("---")
-        
-        st.header("🤖 전문가 에이전트 직접 호출")
-        
-        # 전문가 에이전트 선택
-        agent_options = [
-            "ViewingAgent (이메일 조회 전문가)",
-            "AnalysisAgent (데이터 분석 전문가)", 
-            "TicketingAgent (티켓 처리 전문가)"
-        ]
-        
-        selected_agent = st.selectbox("전문가 에이전트 선택", agent_options)
-        
-        # 에이전트별 쿼리 입력
-        if selected_agent:
-            agent_query = st.text_area("전문가 에이전트에게 보낼 쿼리", value="안 읽은 메일을 보여주세요")
-            
-            if st.button("전문가 에이전트 실행"):
-                try:
-                    # 선택된 에이전트에 따라 직접 호출
-                    if "ViewingAgent" in selected_agent:
-                        from specialist_agents import create_viewing_agent
-                        agent = create_viewing_agent()
-                        result = agent.execute(agent_query)
-                    elif "AnalysisAgent" in selected_agent:
-                        from specialist_agents import create_analysis_agent
-                        agent = create_analysis_agent()
-                        result = agent.execute(agent_query)
-                    elif "TicketingAgent" in selected_agent:
-                        from specialist_agents import create_ticketing_agent
-                        agent = create_ticketing_agent()
-                        result = agent.execute(agent_query)
-                    
-                    st.success(f"✅ {selected_agent} 실행 완료")
-                    st.text_area("결과", value=result, height=200)
-                except Exception as e:
-                    st.error(f"❌ 에이전트 실행 실패: {str(e)}")
-        
-        st.markdown("---")
-        
-        # 대화 기록 초기화
-        if st.button("🗑️ 대화 기록 초기화"):
-            chatbot.clear_conversation()
-            st.success("대화 기록이 초기화되었습니다.")
-            st.rerun()
-    
     # 메인 채팅 인터페이스
     col1, col2 = st.columns([3, 1])
     

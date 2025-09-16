@@ -15,21 +15,13 @@ from vector_db_models import VectorDBManager
 st.set_page_config(
     page_title="Enhanced Ticket Management",
     page_icon="🎫",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# 세션 상태 초기화
-if 'tickets' not in st.session_state:
-    st.session_state.tickets = []
-if 'selected_ticket' not in st.session_state:
-    st.session_state.selected_ticket = None
-if 'ui_mode' not in st.session_state:
-    st.session_state.ui_mode = 'card'
-if 'refresh_trigger' not in st.session_state:
-    st.session_state.refresh_trigger = 0
-if 'ai_recommendations' not in st.session_state:
-    st.session_state.ai_recommendations = []
+# 기본 변수 초기화
+tickets = []
+selected_ticket = None
+ui_mode = 'card'
 
 def display_mail_attachments(message_id: str):
     """메일의 첨부파일을 표시합니다."""
@@ -215,8 +207,7 @@ def update_ticket_status(ticket_id: int, new_status: str):
         conn.commit()
         conn.close()
         
-        # 세션 상태 업데이트로 새로고침 대신 처리
-        st.session_state.refresh_trigger += 1
+        # 상태 업데이트 완료
         return True
     except Exception as e:
         st.error(f"상태 업데이트 중 오류: {str(e)}")
@@ -353,7 +344,8 @@ def add_label_to_ticket(ticket_id: int, new_label: str):
 
 def clear_ticket_selection():
     """선택된 티켓을 초기화합니다."""
-    st.session_state.selected_ticket = None
+    global selected_ticket
+    selected_ticket = None
 
 def display_ticket_list(tickets: List[Dict[str, Any]]):
     """티켓 목록을 표시합니다."""
@@ -367,10 +359,9 @@ def display_ticket_list(tickets: List[Dict[str, Any]]):
         ui_mode = st.selectbox(
             "보기 모드",
             ['card', 'table'],
-            index=0 if st.session_state.ui_mode == 'card' else 1,
+            index=0,
             key="ui_mode_selector"
         )
-        st.session_state.ui_mode = ui_mode
     
     if ui_mode == 'card':
         st.subheader("📋 티켓 목록 (카드 형태)")
@@ -423,10 +414,11 @@ def display_ticket_list(tickets: List[Dict[str, Any]]):
                         st.write(f"📝 {description}")
                 
                 with col2:
-                    # 티켓 선택 버튼 - session state로 상태 관리
+                    # 티켓 선택 버튼
                     if st.button(f"상세보기", key=f"view_{ticket.get('id', i)}"):
-                        st.session_state.selected_ticket = ticket
-                        st.session_state.refresh_trigger += 1
+                        global selected_ticket
+                        selected_ticket = ticket
+                        st.rerun()
                 
                 st.divider()
     
@@ -507,8 +499,9 @@ def display_ticket_list_with_sidebar(tickets: List[Dict[str, Any]], ui_mode: str
                     with col2:
                         # 티켓 선택 버튼
                         if st.button(f"상세보기", key=f"view_{ticket.get('id', i)}"):
-                            st.session_state.selected_ticket = ticket
-                            st.session_state.refresh_trigger += 1
+                            global selected_ticket
+                            selected_ticket = ticket
+                            st.rerun()
                     
                     st.divider()
     
@@ -532,26 +525,24 @@ def display_ticket_detail(ticket: Dict[str, Any]):
         st.write(f"**ID:** {ticket.get('id', 'N/A')}")
         st.write(f"**제목:** {ticket.get('title', '제목 없음')}")
         
-        # 상태 변경 기능 - session state로 상태 관리
+        # 상태 변경 기능
         current_status = ticket.get('status', '상태 없음')
-        status_key = f"status_{ticket.get('id')}"
-        
-        if status_key not in st.session_state:
-            st.session_state[status_key] = current_status
-        
+        status_options = ['new', 'pending', 'in_progress', 'resolved', 'closed']
+        current_index = status_options.index(current_status) if current_status in status_options else 0
+
         new_status = st.selectbox(
-            "**상태:**", 
-            ['new', 'pending', 'in_progress', 'resolved', 'closed'],
-            index=['new', 'pending', 'in_progress', 'resolved', 'closed'].index(st.session_state[status_key]) if st.session_state[status_key] in ['new', 'pending', 'in_progress', 'resolved', 'closed'] else 0,
-            key=status_key
+            "**상태:**",
+            status_options,
+            index=current_index,
+            key=f"status_{ticket.get('id')}"
         )
-        
+
         # 상태가 변경되었는지 확인하고 업데이트
-        if new_status != st.session_state[status_key]:
+        if new_status != current_status:
             if update_ticket_status(ticket.get('id'), new_status):
-                st.session_state[status_key] = new_status
                 ticket['status'] = new_status
                 st.success(f"상태가 '{new_status}'로 변경되었습니다!")
+                st.rerun()
     
     with col2:
         created_at = ticket.get('created_at', '날짜 없음')
@@ -727,16 +718,15 @@ def display_ticket_detail(ticket: Dict[str, Any]):
                 
                 # 메일 내용 가져오기
                 mail_content = ""
-                if st.session_state.selected_ticket:
-                    message_id = st.session_state.selected_ticket.get('original_message_id') or st.session_state.selected_ticket.get('message_id')
-                    if message_id:
-                        try:
-                            vector_db = VectorDBManager()
-                            mail = vector_db.get_mail_by_id(message_id)
-                            if mail:
-                                mail_content = mail.original_content or mail.refined_content or ""
-                        except Exception as e:
-                            st.warning(f"메일 내용 조회 실패: {str(e)}")
+                message_id = ticket.get('original_message_id') or ticket.get('message_id')
+                if message_id:
+                    try:
+                        vector_db = VectorDBManager()
+                        mail = vector_db.get_mail_by_id(message_id)
+                        if mail:
+                            mail_content = mail.original_content or mail.refined_content or ""
+                    except Exception as e:
+                        st.warning(f"메일 내용 조회 실패: {str(e)}")
                 
                 # 티켓 히스토리 (간단한 형태)
                 ticket_history = f"티켓 ID: {ticket.get('ticket_id')}, 상태: {ticket.get('status')}, 우선순위: {ticket.get('priority')}, 제목: {ticket.get('title')}"
@@ -744,14 +734,6 @@ def display_ticket_detail(ticket: Dict[str, Any]):
                 # AI 추천 엔진 실행
                 ai_engine = AIRecommendationEngine()
                 recommendation = ai_engine.generate_solution_recommendation(mail_content, ticket_history)
-                
-                # AI 추천 결과를 session state에 저장
-                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                st.session_state.ai_recommendations.append({
-                    'timestamp': timestamp,
-                    'recommendation': recommendation,
-                    'ticket_id': ticket.get('id')
-                })
                 
                 st.success("✅ AI 추천이 생성되었습니다!")
                 st.markdown("---")
@@ -762,40 +744,11 @@ def display_ticket_detail(ticket: Dict[str, Any]):
             st.error(f"AI 추천 생성 중 오류가 발생했습니다: {str(e)}")
             st.info("💡 Azure OpenAI 설정을 확인해주세요.")
     
-    # AI 추천 히스토리 표시
-    st.markdown("---")
-    display_ai_recommendations(ticket.get('id'))
-    
     # 뒤로가기 버튼
     if st.button("← 목록으로 돌아가기", key=f"back_{ticket.get('id')}"):
         clear_ticket_selection()
-        st.session_state.refresh_trigger += 1
+        st.rerun()
 
-def display_ai_recommendations(ticket_id: int):
-    """AI 추천 히스토리를 표시합니다."""
-    if 'ai_recommendations' in st.session_state and st.session_state.ai_recommendations:
-        # 현재 티켓의 AI 추천만 필터링
-        ticket_recommendations = [rec for rec in st.session_state.ai_recommendations if rec.get('ticket_id') == ticket_id]
-        
-        if ticket_recommendations:
-            st.subheader("🤖 AI 추천 히스토리")
-            
-            for rec in reversed(ticket_recommendations):
-                with st.expander(f"📅 {rec['timestamp']}", expanded=False):
-                    st.write(rec['recommendation'])
-                    st.divider()
-
-# 호환성을 위한 함수들
-def add_ai_recommendation_to_history(recommendation: str):
-    """AI 추천을 히스토리에 추가합니다."""
-    if 'ai_recommendation_to_history' not in st.session_state:
-        st.session_state.ai_recommendation_to_history = []
-    
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    st.session_state.ai_recommendation_to_history.append({
-        'timestamp': timestamp,
-        'recommendation': recommendation
-    })
 
 def display_ticket_list_with_sidebar(tickets: List[Dict[str, Any]], ui_mode: str = 'card'):
     """사이드바가 있는 티켓 목록 표시"""
@@ -824,8 +777,9 @@ def display_ticket_list_with_sidebar(tickets: List[Dict[str, Any]], ui_mode: str
                 
                 with col2:
                     if st.button(f"상세보기", key=f"sidebar_detail_{i}_{ticket.get('id', 'unknown')}"):
-                        st.session_state.selected_ticket = ticket
-                        st.session_state.refresh_trigger += 1
+                        global selected_ticket
+                        selected_ticket = ticket
+                        st.rerun()
     else:
         # 기본 카드 형태
         for i, ticket in enumerate(tickets):
@@ -844,8 +798,9 @@ def display_ticket_list_with_sidebar(tickets: List[Dict[str, Any]], ui_mode: str
                 
                 with col2:
                     if st.button(f"상세보기", key=f"sidebar_detail_{i}_{ticket.get('id', 'unknown')}"):
-                        st.session_state.selected_ticket = ticket
-                        st.session_state.refresh_trigger += 1
+                        global selected_ticket
+                        selected_ticket = ticket
+                        st.rerun()
 
 def create_ticket_form():
     """새 티켓 생성을 위한 폼을 표시합니다."""
@@ -864,7 +819,7 @@ def create_ticket_form():
             if title:
                 # 여기에 티켓 생성 로직 추가
                 st.success("티켓이 생성되었습니다!")
-                st.session_state.refresh_trigger += 1
+                st.rerun()
                 return {
                     'title': title,
                     'description': description,
@@ -880,36 +835,16 @@ def create_ticket_form():
 # 메인 앱
 def main():
     st.title("🎫 Enhanced Ticket Management System")
-    
-    # 사이드바
-    with st.sidebar:
-        st.header("🔧 설정")
-        
-        # 새로고침 버튼
-        if st.button("🔄 데이터 새로고침"):
-            st.session_state.refresh_trigger += 1
-        
-        st.divider()
-        
-        # 새 티켓 생성
-        if st.button("➕ 새 티켓 생성"):
-            st.session_state.show_create_form = True
-    
-    # 메인 컨텐츠
-    if st.session_state.get('show_create_form', False):
-        create_ticket_form()
-        if st.button("← 목록으로 돌아가기"):
-            st.session_state.show_create_form = False
-            st.session_state.refresh_trigger += 1
+
+    global selected_ticket
+
+    # 티켓 목록 또는 상세 보기
+    if selected_ticket:
+        display_ticket_detail(selected_ticket)
     else:
-        # 티켓 목록 또는 상세 보기
-        if st.session_state.selected_ticket:
-            display_ticket_detail(st.session_state.selected_ticket)
-        else:
-            # refresh_trigger가 변경되면 티켓 목록 다시 로드
-            tickets = load_tickets()
-            st.session_state.tickets = tickets
-            display_ticket_list(tickets)
+        # 티켓 목록 로드 및 표시
+        tickets = load_tickets()
+        display_ticket_list(tickets)
 
 if __name__ == "__main__":
     main()

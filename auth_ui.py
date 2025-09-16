@@ -54,19 +54,7 @@ def show_user_info():
     st.sidebar.markdown("---")
     st.sidebar.subheader("👤 사용자 정보")
     st.sidebar.write(f"**이메일:** {user_info.get('email', 'N/A')}")
-    st.sidebar.write(f"**가입일:** {user_info.get('created_at', 'N/A')[:10]}")
     
-    # 연동 상태 표시
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔗 연동 상태")
-    
-    # Google 연동 상태
-    google_status = "✅ 연동됨" if user_info.get('has_google_token') else "❌ 미연동"
-    st.sidebar.write(f"**Google:** {google_status}")
-    
-    # Jira 연동 상태
-    jira_status = "✅ 연동됨" if user_info.get('has_jira_info') else "❌ 미연동"
-    st.sidebar.write(f"**Jira:** {jira_status}")
 
 def show_integration_settings():
     """연동 설정 UI"""
@@ -125,16 +113,6 @@ def show_integration_settings():
                 else:
                     st.warning("Google이 연동되지 않았습니다. Gmail 로그인을 통해 연동할 수 있습니다.")
 
-def show_logout_button():
-    """로그아웃 버튼 표시"""
-    if st.sidebar.button("🚪 로그아웃", type="secondary"):
-        with st.spinner("로그아웃 중..."):
-            result = auth_client.logout()
-            if result.get("success"):
-                st.success("로그아웃 완료!")
-                st.rerun()
-            else:
-                st.error(f"로그아웃 실패: {result.get('message', '알 수 없는 오류')}")
 
 def show_auth_required_message():
     """인증 필요 메시지 표시"""
@@ -157,6 +135,5 @@ def check_auth_and_show_ui():
         print(f"🍪 로그인됨 - 사용자 정보 UI 표시")
         # get_current_user()에서 이미 세션에 이메일을 저장하므로 중복 제거
         show_user_info()
-        show_logout_button()
         return True
  

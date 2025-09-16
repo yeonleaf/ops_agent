@@ -33,24 +33,20 @@ def get_ticket_ai_recommendation(*args, **kwargs):
 #     initial_sidebar_state="expanded"
 # )
 
-# 세션 상태 초기화
-if 'tickets' not in st.session_state:
-    st.session_state.tickets = []
-if 'selected_ticket' not in st.session_state:
-    st.session_state.selected_ticket = None
-if 'refresh_trigger' not in st.session_state:
-    st.session_state.refresh_trigger = 0
-# mem0_memory는 메인 앱에서 초기화됨
-if 'mem0_memory' not in st.session_state:
-    # 메인 앱에서 초기화된 mem0_memory를 가져옴
-    try:
-        import sys
-        if hasattr(sys.modules['__main__'], 'mem0_memory'):
-            st.session_state.mem0_memory = sys.modules['__main__'].mem0_memory
-        else:
-            st.session_state.mem0_memory = None
-    except:
-        st.session_state.mem0_memory = None
+# 전역 변수 초기화
+tickets = []
+selected_ticket = None
+
+# mem0_memory 초기화
+mem0_memory = None
+try:
+    import sys
+    if hasattr(sys.modules['__main__'], 'mem0_memory'):
+        mem0_memory = sys.modules['__main__'].mem0_memory
+    else:
+        mem0_memory = None
+except:
+    mem0_memory = None
 
 def load_tickets_from_db() -> List[Ticket]:
     """데이터베이스에서 티켓을 로드합니다."""
@@ -90,9 +86,9 @@ def record_status_change_to_mem0(ticket: Ticket, old_status: str, new_status: st
         status_change_event = f"티켓 #{ticket.ticket_id} 상태 변경: '{old_status}' → '{new_status}'"
         
         # mem0에 이벤트 기록
-        if st.session_state.mem0_memory:
+        if mem0_memory:
             add_ticket_event(
-                memory=st.session_state.mem0_memory,
+                memory=mem0_memory,
                 event_type="status_change",
                 description=status_change_event,
                 ticket_id=str(ticket.ticket_id),
@@ -140,8 +136,9 @@ def display_ticket_button_list(tickets: List[Ticket]):
                 with col2:
                     # 상세보기 버튼
                     if st.button("상세보기", key=f"detail_{ticket.ticket_id}"):
-                        st.session_state.selected_ticket = ticket
-                        st.session_state.refresh_trigger += 1
+                        global selected_ticket
+                        selected_ticket = ticket
+                        st.rerun()
                 
                 with col3:
                     # 상태 표시
@@ -191,7 +188,7 @@ def display_ticket_detail(ticket: Ticket):
                     st.success(f"✅ 상태가 '{current_status}'에서 '{new_status}'로 변경되었습니다!")
                     # mem0에 상태 변경 이벤트 기록
                     record_status_change_to_mem0(ticket, current_status, new_status)
-                    st.session_state.refresh_trigger += 1
+                    st.rerun()
                     st.rerun()
                 else:
                     st.error("❌ 상태 변경에 실패했습니다.")
@@ -219,7 +216,7 @@ def display_ticket_detail(ticket: Ticket):
                     success = update_ticket_jira_project(ticket.ticket_id, recommended_project, current_project)
                     if success:
                         st.success(f"✅ 프로젝트가 '{recommended_project}'로 설정되었습니다!")
-                        st.session_state.refresh_trigger += 1
+                        st.rerun()
                         st.rerun()
                     else:
                         st.error("❌ 프로젝트 설정에 실패했습니다.")
@@ -253,7 +250,7 @@ def display_ticket_detail(ticket: Ticket):
                 success = update_ticket_jira_project(ticket.ticket_id, new_project, current_project)
                 if success:
                     st.success(f"✅ 프로젝트가 '{current_project or '미설정'}'에서 '{new_project}'로 변경되었습니다!")
-                    st.session_state.refresh_trigger += 1
+                    st.rerun()
                     st.rerun()
                 else:
                     st.error("❌ 프로젝트 변경에 실패했습니다.")
@@ -267,120 +264,17 @@ def display_ticket_detail(ticket: Ticket):
     # 설명 섹션
     st.subheader("📝 설명")
     
-    # 설명 편집 모드 확인
-    edit_mode_key = f"edit_mode_{ticket.ticket_id}"
-    if edit_mode_key not in st.session_state:
-        st.session_state[edit_mode_key] = False
-    
-    if st.session_state[edit_mode_key]:
-        # 편집 모드
-        new_description = st.text_area(
-            "설명 편집:",
-            value=ticket.description or "",
+    # 설명 표시 (읽기 전용)
+    if ticket.description:
+        st.text_area(
+            "설명:",
+            value=ticket.description,
             height=150,
-            key=f"description_edit_{ticket.ticket_id}",
-            help="티켓의 상세 설명을 입력하세요."
+            disabled=True,
+            key=f"description_readonly_{ticket.ticket_id}"
         )
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("💾 저장", key=f"save_desc_{ticket.ticket_id}"):
-                if new_description != ticket.description:
-                    success = update_ticket_description(ticket.ticket_id, new_description, ticket.description or "")
-                    if success:
-                        st.success("✅ 설명이 업데이트되었습니다!")
-                        # mem0에 설명 변경 이벤트 기록
-                        record_description_change_to_mem0(ticket, ticket.description or "", new_description)
-                        st.session_state[edit_mode_key] = False
-                        st.session_state.refresh_trigger += 1
-                        st.rerun()
-                    else:
-                        st.error("❌ 설명 업데이트에 실패했습니다.")
-                else:
-                    st.info("변경사항이 없습니다.")
-                    st.session_state[edit_mode_key] = False
-                    st.rerun()
-        
-        with col2:
-            if st.button("❌ 취소", key=f"cancel_desc_{ticket.ticket_id}"):
-                st.session_state[edit_mode_key] = False
-                st.rerun()
-        
-        with col3:
-            if st.button("🤖 AI 추천", key=f"ai_rec_{ticket.ticket_id}"):
-                with st.spinner("AI가 추천을 생성하고 있습니다..."):
-                    recommendation = get_ticket_ai_recommendation(ticket.ticket_id)
-                    if recommendation.get("success"):
-                        st.session_state[f"ai_recommendation_{ticket.ticket_id}"] = recommendation
-                        st.success("✅ AI 추천이 생성되었습니다!")
-                    else:
-                        error_msg = recommendation.get('error', '알 수 없는 오류')
-                        if error_msg == "콘텐츠 필터":
-                            st.warning("⚠️ 콘텐츠 필터: 이 티켓의 내용이 Azure OpenAI 콘텐츠 정책에 의해 필터링되었습니다.")
-                            st.info("💡 키워드 기반 추천을 사용합니다.")
-                        else:
-                            st.error(f"❌ AI 추천 생성 실패: {error_msg}")
     else:
-        # 보기 모드
-        if ticket.description:
-            st.write(ticket.description)
-        else:
-            st.write("설명이 없습니다.")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✏️ 편집", key=f"edit_btn_{ticket.ticket_id}"):
-                st.session_state[edit_mode_key] = True
-                st.rerun()
-        
-        with col2:
-            if st.button("🤖 AI 추천", key=f"ai_rec_view_{ticket.ticket_id}"):
-                with st.spinner("AI가 추천을 생성하고 있습니다..."):
-                    recommendation = get_ticket_ai_recommendation(ticket.ticket_id)
-                    if recommendation.get("success"):
-                        st.session_state[f"ai_recommendation_{ticket.ticket_id}"] = recommendation
-                        st.success("✅ AI 추천이 생성되었습니다!")
-                    else:
-                        error_msg = recommendation.get('error', '알 수 없는 오류')
-                        if error_msg == "콘텐츠 필터":
-                            st.warning("⚠️ 콘텐츠 필터: 이 티켓의 내용이 Azure OpenAI 콘텐츠 정책에 의해 필터링되었습니다.")
-                            st.info("💡 키워드 기반 추천을 사용합니다.")
-                        else:
-                            st.error(f"❌ AI 추천 생성 실패: {error_msg}")
-    
-    # AI 추천 결과 표시
-    recommendation_key = f"ai_recommendation_{ticket.ticket_id}"
-    if recommendation_key in st.session_state:
-        st.subheader("🤖 AI 추천")
-        recommendation = st.session_state[recommendation_key]
-        
-        with st.expander("📋 AI 추천 내용", expanded=True):
-            st.markdown(recommendation.get("recommendation", "추천 내용이 없습니다."))
-            
-            # 추천 메타데이터
-            col1, col2 = st.columns(2)
-            with col1:
-                st.caption(f"🕒 생성 시간: {recommendation.get('generated_at', 'N/A')}")
-            with col2:
-                st.caption(f"📊 참조된 유사 사례: {recommendation.get('similar_emails_count', 0)}개")
-        
-        # 추천 내용을 설명에 적용하는 버튼
-        if st.button("📝 추천 내용을 설명에 적용", key=f"apply_rec_{ticket.ticket_id}"):
-            # 추천 내용의 요약을 설명에 추가
-            recommendation_text = recommendation.get("recommendation", "")
-            if recommendation_text:
-                # 기존 설명에 AI 추천 추가
-                current_desc = ticket.description or ""
-                new_desc = f"{current_desc}\n\n--- AI 추천 ---\n{recommendation_text}"
-                
-                success = update_ticket_description(ticket.ticket_id, new_desc, current_desc)
-                if success:
-                    st.success("✅ AI 추천이 설명에 적용되었습니다!")
-                    st.session_state[edit_mode_key] = False
-                    st.session_state.refresh_trigger += 1
-                    st.rerun()
-                else:
-                    st.error("❌ AI 추천 적용에 실패했습니다.")
+        st.info("설명이 없습니다.")
     
     # 레이블 관리 섹션
     st.subheader("🏷️ 레이블 관리")
@@ -394,7 +288,7 @@ def display_ticket_detail(ticket: Ticket):
             with col1:
                 if st.button("❌", key=f"delete_label_{ticket.ticket_id}_{i}"):
                     delete_label_from_ticket(ticket.ticket_id, label)
-                    st.session_state.refresh_trigger += 1
+                    st.rerun()
                     st.rerun()
             with col2:
                 st.write(f"• {label}")
@@ -427,7 +321,7 @@ def display_ticket_detail(ticket: Ticket):
                     st.success("✅ 레이블이 업데이트되었습니다!")
                     # mem0에 레이블 변경 이벤트 기록
                     record_label_change_to_mem0(ticket, old_labels, new_labels)
-                    st.session_state.refresh_trigger += 1
+                    st.rerun()
                     st.rerun()
                 else:
                     st.error("❌ 레이블 업데이트에 실패했습니다.")
@@ -436,7 +330,7 @@ def display_ticket_detail(ticket: Ticket):
     
     with col2:
         if st.button("취소", key=f"cancel_labels_{ticket.ticket_id}"):
-            st.session_state.refresh_trigger += 1
+            st.rerun()
             st.rerun()
     
     # 원본 메일 섹션
@@ -492,8 +386,8 @@ def display_ticket_detail(ticket: Ticket):
     
     # 뒤로가기 버튼
     if st.button("← 목록으로 돌아가기", key=f"back_{ticket.ticket_id}"):
-        st.session_state.selected_ticket = None
-        st.session_state.refresh_trigger += 1
+        global selected_ticket
+        selected_ticket = None
         st.rerun()
 
 def update_ticket_labels(ticket_id: int, new_labels: List[str], old_labels: List[str]) -> bool:
@@ -521,7 +415,7 @@ def delete_label_from_ticket(ticket_id: int, label: str):
                     st.success(f"✅ 레이블 '{label}'이 삭제되었습니다!")
                     # mem0에 레이블 삭제 이벤트 기록
                     record_label_change_to_mem0(current_ticket, current_ticket.labels, old_labels)
-                    st.session_state.refresh_trigger += 1
+                    st.rerun()
                     st.rerun()
                 else:
                     st.error("❌ 레이블 삭제에 실패했습니다.")
@@ -545,7 +439,7 @@ def update_ticket_description(ticket_id: int, new_description: str, old_descript
 def record_description_change_to_mem0(ticket: Ticket, old_description: str, new_description: str):
     """Description 변경을 mem0에 기록합니다."""
     try:
-        mem0_memory = st.session_state.mem0_memory
+        mem0_memory = mem0_memory
         if not mem0_memory:
             return
             
@@ -569,7 +463,7 @@ def record_description_change_to_mem0(ticket: Ticket, old_description: str, new_
 def record_label_change_to_mem0(ticket: Ticket, old_labels: List[str], new_labels: List[str]):
     """레이블 변경을 mem0에 기록합니다."""
     try:
-        mem0_memory = st.session_state.mem0_memory
+        mem0_memory = mem0_memory
         if not mem0_memory:
             return
             
@@ -721,11 +615,11 @@ def recommend_jira_project_with_llm(ticket: Ticket) -> str:
         
         # mem0에서 관련 기록 검색
         mem0_context = ""
-        if st.session_state.get('mem0_memory'):
+        if False:  # mem0 memory disabled
             try:
                 # 티켓 관련 기록 검색
                 search_query = f"티켓 {ticket.title} {ticket.description[:100]} 프로젝트"
-                related_memories = st.session_state.mem0_memory.search(search_query, limit=5)
+                related_memories = mem0_memory.search(search_query, limit=5)
                 
                 if related_memories:
                     mem0_context = "\n".join([
@@ -816,10 +710,10 @@ def update_ticket_jira_project(ticket_id: int, new_project: str, old_project: st
                 print(f"✅ 티켓 #{ticket_id} Jira 프로젝트 변경: {old_project} → {new_project}")
                 
                 # mem0에 변경사항 기록
-                if st.session_state.get('mem0_memory'):
+                if False:  # mem0 memory disabled
                     try:
                         add_ticket_event(
-                            memory=st.session_state.mem0_memory,
+                            memory=mem0_memory,
                             event_type="jira_project_change",
                             description=f"티켓 #{ticket_id} Jira 프로젝트 변경: '{old_project}' → '{new_project}'",
                             ticket_id=str(ticket_id),
@@ -942,38 +836,13 @@ def recommend_jira_project_with_llm_standalone(ticket: Ticket) -> str:
 def main():
     st.title("🎫 Enhanced Ticket Management System v2")
     
-    # 사이드바
-    with st.sidebar:
-        st.header("🔧 설정")
-        
-        # 새로고침 버튼
-        if st.button("🔄 데이터 새로고침"):
-            st.session_state.refresh_trigger += 1
-            st.rerun()
-        
-        st.divider()
-        
-        # 통계 정보
-        st.subheader("📊 통계")
-        tickets = load_tickets_from_db()
-        if tickets:
-            status_counts = {}
-            for ticket in tickets:
-                status = ticket.status
-                status_counts[status] = status_counts.get(status, 0) + 1
-            
-            for status, count in status_counts.items():
-                st.write(f"**{status}:** {count}개")
-        else:
-            st.write("티켓이 없습니다.")
-    
     # 메인 컨텐츠
-    if st.session_state.selected_ticket:
-        display_ticket_detail(st.session_state.selected_ticket)
+    global selected_ticket
+    if selected_ticket:
+        display_ticket_detail(selected_ticket)
     else:
         # 티켓 목록 표시
         tickets = load_tickets_from_db()
-        st.session_state.tickets = tickets
         display_ticket_button_list(tickets)
 
 # 메인 앱에서 import할 때는 실행하지 않음
