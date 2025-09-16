@@ -31,6 +31,140 @@ if 'refresh_trigger' not in st.session_state:
 if 'ai_recommendations' not in st.session_state:
     st.session_state.ai_recommendations = []
 
+def display_mail_attachments(message_id: str):
+    """메일의 첨부파일을 표시합니다."""
+    try:
+        from gmail_api_client import GmailAPIClient
+        
+        # Gmail API 클라이언트 초기화
+        gmail_client = GmailAPIClient()
+        
+        # 첨부파일 목록 조회
+        attachments = gmail_client.get_message_attachments(message_id)
+        
+        if not attachments:
+            st.info("첨부파일이 없습니다.")
+            return
+        
+        st.success(f"📎 첨부파일 {len(attachments)}개 발견")
+        
+        for i, attachment in enumerate(attachments):
+            attachment_id = attachment.get('id', '')
+            filename = attachment.get('filename', '알 수 없는 파일')
+            mime_type = attachment.get('mime_type', 'application/octet-stream')
+            size = attachment.get('size', 0)
+            
+            # 파일 크기 포맷팅
+            if size > 1024 * 1024:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+            elif size > 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size} bytes"
+            
+            # 첨부파일 정보 표시
+            with st.expander(f"📄 {filename}", expanded=False):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    st.write(f"**파일명:** {filename}")
+                    st.write(f"**타입:** {mime_type}")
+                    st.write(f"**크기:** {size_str}")
+                
+                with col2:
+                    if st.button("📥 다운로드", key=f"download_{message_id}_{i}"):
+                        # 첨부파일 다운로드
+                        file_content = gmail_client.download_attachment(message_id, attachment_id)
+                        if file_content:
+                            st.download_button(
+                                label="💾 저장",
+                                data=file_content,
+                                file_name=filename,
+                                mime=mime_type,
+                                key=f"save_{message_id}_{i}"
+                            )
+                        else:
+                            st.error("첨부파일 다운로드에 실패했습니다.")
+                
+                with col3:
+                    if st.button("👁️ 미리보기", key=f"preview_{message_id}_{i}"):
+                        # 텍스트 파일 미리보기
+                        if mime_type.startswith('text/'):
+                            file_content = gmail_client.download_attachment(message_id, attachment_id)
+                            if file_content:
+                                try:
+                                    text_content = file_content.decode('utf-8')
+                                    st.text_area("파일 내용", text_content, height=200, key=f"preview_content_{message_id}_{i}")
+                                except:
+                                    st.warning("텍스트로 변환할 수 없습니다.")
+                        else:
+                            st.info("미리보기는 텍스트 파일만 지원됩니다.")
+                
+                st.divider()
+                
+    except Exception as e:
+        st.error(f"첨부파일 조회 중 오류가 발생했습니다: {str(e)}")
+        st.info("💡 Gmail API 설정을 확인해주세요.")
+
+def display_vectordb_attachments(attachment_chunks):
+    """VectorDB에서 가져온 첨부파일 정보를 표시합니다."""
+    try:
+        if not attachment_chunks:
+            st.info("첨부파일이 없습니다.")
+            return
+        
+        st.success(f"📎 첨부파일 {len(attachment_chunks)}개 발견")
+        
+        for i, chunk in enumerate(attachment_chunks):
+            filename = chunk.original_filename or '알 수 없는 파일'
+            mime_type = chunk.mime_type or 'application/octet-stream'
+            size = chunk.file_size or 0
+            analysis_summary = chunk.analysis_summary or ""
+            keywords = chunk.keywords or []
+            file_category = chunk.file_category or ""
+            business_relevance = chunk.business_relevance or ""
+            
+            # 파일 크기 포맷팅
+            if size > 1024 * 1024:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+            elif size > 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size} bytes"
+            
+            # 첨부파일 정보 표시
+            with st.expander(f"📄 {filename}", expanded=False):
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    st.write(f"**파일명:** {filename}")
+                    st.write(f"**타입:** {mime_type}")
+                    st.write(f"**크기:** {size_str}")
+                    
+                    if file_category:
+                        st.write(f"**카테고리:** {file_category}")
+                    
+                    if business_relevance:
+                        st.write(f"**업무 관련성:** {business_relevance}")
+                    
+                    if keywords:
+                        st.write(f"**키워드:** {', '.join(keywords)}")
+                
+                with col2:
+                    if analysis_summary:
+                        st.write("**분석 요약:**")
+                        st.write(analysis_summary)
+                
+                # 파일 내용 표시 (텍스트인 경우)
+                if chunk.content and mime_type.startswith('text/'):
+                    st.write("**파일 내용:**")
+                    st.text_area("", chunk.content, height=200, disabled=True, key=f"vectordb_content_{i}")
+                
+                st.divider()
+                
+    except Exception as e:
+        st.error(f"VectorDB 첨부파일 표시 중 오류가 발생했습니다: {str(e)}")
+
 def load_tickets():
     """데이터베이스에서 티켓을 로드합니다."""
     try:
@@ -450,8 +584,64 @@ def display_ticket_detail(ticket: Dict[str, Any]):
         vector_db = VectorDBManager()
         message_id = ticket.get('original_message_id') or ticket.get('message_id')
         
+        st.write(f"🔍 **디버그 정보:**")
+        st.write(f"   - 조회할 메일 ID: `{message_id}`")
+        st.write(f"   - 티켓에서 가져온 original_message_id: `{ticket.get('original_message_id')}`")
+        st.write(f"   - 티켓에서 가져온 message_id: `{ticket.get('message_id')}`")
+        
         if message_id:
+            st.write(f"   - VectorDB에서 메일 조회 시도...")
             mail = vector_db.get_mail_by_id(message_id)
+            
+            if mail:
+                st.success(f"   ✅ VectorDB에서 메일 발견!")
+                st.write(f"   - original_content 길이: {len(mail.original_content)}")
+                st.write(f"   - extraction_method: {mail.extraction_method}")
+            else:
+                st.warning(f"   ⚠️ VectorDB에서 메일을 찾을 수 없습니다 (ID: {message_id})")
+                st.info("🔄 Gmail API에서 직접 조회를 시도합니다...")
+                
+                try:
+                    from unified_email_service import get_mail_content_by_id
+                    from gmail_api_client import get_gmail_client
+                    
+                    # Gmail API에서 직접 조회
+                    gmail_client = get_gmail_client()
+                    if gmail_client and gmail_client.service:
+                        st.write("   - Gmail API 클라이언트 연결 확인됨")
+                        mail_detail = gmail_client.get_email_details(message_id)
+                        if mail_detail:
+                            st.success("✅ Gmail API에서 메일을 가져왔습니다!")
+                            st.write(f"   - Gmail API에서 가져온 본문 길이: {len(mail_detail.get('body', ''))}")
+                            
+                            # 임시 메일 객체 생성
+                            from vector_db_models import Mail
+                            from datetime import datetime
+                            
+                            mail = Mail(
+                                message_id=message_id,
+                                original_content=mail_detail.get('body', ''),
+                                refined_content=mail_detail.get('body', ''),
+                                sender=mail_detail.get('from', ''),
+                                status='retrieved_from_api',
+                                subject=mail_detail.get('subject', ''),
+                                received_datetime=mail_detail.get('received_date', datetime.now().isoformat()),
+                                content_type='html',
+                                has_attachment=mail_detail.get('has_attachments', False),
+                                extraction_method='gmail_api_fallback',
+                                content_summary='Gmail API에서 직접 조회',
+                                key_points=[],
+                                created_at=datetime.now().isoformat()
+                            )
+                        else:
+                            st.error("❌ Gmail API에서도 메일을 찾을 수 없습니다.")
+                    else:
+                        st.error("❌ Gmail API 연결이 필요합니다.")
+                        
+                except Exception as api_error:
+                    st.error(f"❌ Gmail API 조회 실패: {api_error}")
+                    import traceback
+                    st.code(traceback.format_exc())
             
             if mail:
                 # 메일 정보 표시
@@ -488,6 +678,23 @@ def display_ticket_detail(ticket: Dict[str, Any]):
                     st.subheader("📋 요약")
                     st.write(mail.content_summary)
                 
+                # 첨부파일 표시 섹션
+                if mail.has_attachment:
+                    st.subheader("📎 첨부파일")
+                    
+                    # VectorDB에서 첨부파일 정보 조회
+                    try:
+                        attachment_chunks = vector_db.get_attachment_chunks_by_message_id(message_id)
+                        if attachment_chunks:
+                            display_vectordb_attachments(attachment_chunks)
+                        else:
+                            # VectorDB에 첨부파일 정보가 없으면 Gmail API로 조회
+                            display_mail_attachments(message_id)
+                    except Exception as e:
+                        st.warning(f"VectorDB 첨부파일 조회 실패: {str(e)}")
+                        # Gmail API로 대체 조회
+                        display_mail_attachments(message_id)
+                
                 if mail.key_points:
                     st.subheader("🎯 핵심 포인트")
                     for point in mail.key_points:
@@ -495,9 +702,14 @@ def display_ticket_detail(ticket: Dict[str, Any]):
             else:
                 st.warning("메일을 찾을 수 없습니다.")
         else:
-            st.warning("메일 ID가 없습니다.")
+            st.warning("❌ 메일 ID가 없습니다.")
+            st.write(f"   - ticket 전체 정보: {ticket}")
     except Exception as e:
-        st.error(f"메일 로드 중 오류: {str(e)}")
+        st.error(f"❌ 메일 로드 중 오류: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        st.write(f"   - 오류 발생 시점 ticket 정보: {ticket}")
+        st.write(f"   - 메일 ID: {ticket.get('original_message_id') or ticket.get('message_id')}")
     
     # AI 추천 섹션
     st.subheader("🤖 AI 추천")

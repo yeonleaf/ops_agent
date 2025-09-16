@@ -223,7 +223,7 @@ def add_mail_to_vector_db(message_id: str) -> str:
         )
         
         # 벡터 DB에 저장
-        vector_manager.add_mail(mail)
+        vector_manager.save_mail(mail)
         
         result = {
             "message_id": message_id,
@@ -373,7 +373,7 @@ def process_todays_tasks() -> str:
                             created_at=datetime.now().isoformat()
                         )
                         
-                        vector_manager.add_mail(vector_mail)
+                        vector_manager.save_mail(vector_mail)
                         vector_saved = True
                     except:
                         vector_saved = False

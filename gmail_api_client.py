@@ -752,32 +752,81 @@ class GmailAPIClient:
                 return None
         except Exception as e:
             print(f"❌ 메일 상세 정보 가져오기 실패: {str(e)}")
+            print(f"   - 요청한 메일 ID: {message_id}")
+            print(f"   - 오류 타입: {type(e).__name__}")
+            if hasattr(e, 'resp'):
+                print(f"   - HTTP 상태: {e.resp.status}")
+                print(f"   - HTTP 이유: {e.resp.reason}")
+            import traceback
+            print(f"   - 상세 스택: {traceback.format_exc()}")
             return None
     
     def extract_email_body(self, payload: Dict[str, Any]) -> str:
-        """메일 본문 추출"""
+        """메일 본문 추출 - 개선된 재귀적 처리"""
         try:
-            if 'parts' in payload:
-                # 멀티파트 메일
-                for part in payload['parts']:
-                    if part['mimeType'] == 'text/plain':
-                        data = part['body']['data']
-                        return base64.urlsafe_b64decode(data).decode('utf-8')
-                    elif part['mimeType'] == 'text/html':
-                        data = part['body']['data']
-                        return base64.urlsafe_b64decode(data).decode('utf-8')
-            else:
-                # 단일 파트 메일
-                if payload['mimeType'] == 'text/plain':
-                    data = payload['body']['data']
-                    return base64.urlsafe_b64decode(data).decode('utf-8')
-                elif payload['mimeType'] == 'text/html':
-                    data = payload['body']['data']
-                    return base64.urlsafe_b64decode(data).decode('utf-8')
+            def extract_text_content(payload_part, prefer_plain=True):
+                """재귀적으로 텍스트 콘텐츠를 추출"""
+                mime_type = payload_part.get('mimeType', '')
+                
+                # 디버그 로그 (선택적)
+                # print(f"🔍 분석 중: {mime_type}")
+                
+                # 직접 텍스트 파트인 경우
+                if mime_type in ['text/plain', 'text/html']:
+                    body = payload_part.get('body', {})
+                    if 'data' in body and body['data']:
+                        try:
+                            decoded = base64.urlsafe_b64decode(body['data']).decode('utf-8')
+                            # print(f"✅ {mime_type} 추출 성공: {len(decoded)}자")
+                            return decoded, mime_type
+                        except Exception as e:
+                            print(f"❌ {mime_type} 디코딩 실패: {e}")
+                
+                # 멀티파트인 경우 재귀적으로 처리
+                if 'parts' in payload_part:
+                    plain_text = None
+                    html_text = None
+                    
+                    for part in payload_part['parts']:
+                        text, text_type = extract_text_content(part, prefer_plain)
+                        if text:
+                            if text_type == 'text/plain':
+                                plain_text = text
+                            elif text_type == 'text/html':
+                                html_text = text
+                            
+                            # prefer_plain이 True면 첫 번째 text/plain을 우선 반환
+                            if prefer_plain and text_type == 'text/plain':
+                                return text, text_type
+                    
+                    # 선호도에 따라 반환
+                    if prefer_plain and plain_text:
+                        return plain_text, 'text/plain'
+                    elif html_text:
+                        return html_text, 'text/html'
+                    elif plain_text:
+                        return plain_text, 'text/plain'
+                
+                return None, None
+            
+            # 먼저 plain text를 선호하여 추출 시도
+            text_content, content_type = extract_text_content(payload, prefer_plain=True)
+            
+            if text_content:
+                # print(f"✅ 최종 추출 성공: {content_type}, {len(text_content)}자")
+                return text_content
+            
+            # plain text가 없으면 HTML을 선호하여 재시도
+            text_content, content_type = extract_text_content(payload, prefer_plain=False)
+            
+            if text_content:
+                # print(f"✅ HTML 추출 성공: {len(text_content)}자")
+                return text_content
             
             return "메일 내용을 읽을 수 없습니다."
             
         except Exception as e:
+            print(f"❌ 메일 본문 추출 중 예외: {e}")
             return f"메일 내용 추출 실패: {str(e)}"
     
     def get_all_emails(self, max_results: int = 50) -> List[Dict[str, Any]]:

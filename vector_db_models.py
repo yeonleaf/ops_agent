@@ -155,11 +155,18 @@ class VectorDBManager:
             )
     
     def save_mail(self, mail: Mail) -> bool:
-        """메일을 Vector DB에 저장"""
+        """메일을 Vector DB에 저장 (상세 로그 포함)"""
+        print(f"\n💾 [VectorDB] 메일 저장 시작: {mail.message_id}")
+        print(f"   📊 [VectorDB] 저장할 메일 정보:")
+        print(f"      - 제목: {mail.subject}")
+        print(f"      - 발신자: {mail.sender}")
+        print(f"      - original_content 길이: {len(mail.original_content)} 문자")
+        print(f"      - refined_content 길이: {len(mail.refined_content)} 문자")
+
         try:
             # 저장 전 Vector DB 폴더 및 파일 권한 재설정
             self._ensure_vector_db_permissions()
-            
+
             # ChromaDB 파일 권한 특별 확인
             import os
             import stat
@@ -176,8 +183,9 @@ class VectorDBManager:
                     if not (current_perms & stat.S_IWUSR):
                         os.chmod(chroma_file, current_perms | stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
                     print(f"✅ ChromaDB 파일 권한 강제 설정 완료")
-            
+
             # 메타데이터 준비 (datetime 객체를 문자열로 변환)
+            print(f"   🏗️ [VectorDB] 메타데이터 준비 중...")
             metadata = {
                 "sender": mail.sender,
                 "status": mail.status,
@@ -193,8 +201,13 @@ class VectorDBManager:
                 "original_content": mail.original_content,  # 원본 내용 추가
                 "refined_content": mail.refined_content    # 정제된 내용 추가
             }
+
+            print(f"   ✅ [VectorDB] 메타데이터 준비 완료:")
+            print(f"      - original_content in metadata: {len(metadata['original_content'])} 문자")
+            print(f"      - refined_content in metadata: {len(metadata['refined_content'])} 문자")
             
             # 문서 내용 (임베딩할 텍스트)
+            print(f"   📝 [VectorDB] 임베딩용 문서 텍스트 준비 중...")
             document_text = f"""
             Subject: {mail.subject}
             Sender: {mail.sender}
@@ -203,51 +216,72 @@ class VectorDBManager:
             Key Points: {', '.join(mail.key_points)}
             Labels: {', '.join(mail.key_points)}
             """
-            
+
+            print(f"   🔧 [VectorDB] 텍스트 전처리 적용 중...")
             # 텍스트 전처리 적용
             preprocessed_document = preprocess_for_embedding(document_text)
-            
+            print(f"   ✅ [VectorDB] 전처리 완료: {len(preprocessed_document)} 문자")
+
+            print(f"   💿 [VectorDB] ChromaDB에 저장 중... (ID: {mail.message_id})")
             # ChromaDB에 저장 (전처리된 텍스트)
             self.collection.add(
                 documents=[preprocessed_document],
                 metadatas=[metadata],
                 ids=[mail.message_id]
             )
-            
+
+            print(f"   🔒 [VectorDB] 저장 후 권한 재확인 중...")
             # 저장 후 권한 재확인
             self._ensure_vector_db_permissions()
-            
+
+            print(f"   ✅ [VectorDB] 메일 저장 성공: {mail.message_id}")
             return True
-            
+
         except Exception as e:
-            print(f"Vector DB 저장 오류: {e}")
+            print(f"   ❌ [VectorDB] 저장 오류: {e}")
+            import traceback
+            print(f"   📋 [VectorDB] 상세 저장 오류:")
+            traceback.print_exc()
             # 오류 발생 시 권한 재설정 시도
             try:
+                print(f"   🔧 [VectorDB] 오류 후 권한 재설정 시도...")
                 self._ensure_vector_db_permissions()
             except:
                 pass
             return False
     
     def get_mail_by_id(self, message_id: str) -> Optional[Mail]:
-        """메시지 ID로 메일 조회"""
+        """메시지 ID로 메일 조회 (상세 로그 포함)"""
+        print(f"\n🔍 [VectorDB] 메일 조회 시작: {message_id}")
         try:
+            print(f"   📊 [VectorDB] ChromaDB 컬렉션에서 조회 중...")
             result = self.collection.get(
                 ids=[message_id],
                 include=["metadatas", "documents"]
             )
-            
+
+            print(f"   📋 [VectorDB] 조회 결과: {len(result.get('ids', []))}개 아이템 발견")
             if not result['ids']:
+                print(f"   ❌ [VectorDB] 메일을 찾을 수 없음: {message_id}")
                 return None
-            
+
             metadata = result['metadatas'][0]
             document = result['documents'][0]
-            
+
+            print(f"   ✅ [VectorDB] 메일 발견! 메타데이터 키: {list(metadata.keys())}")
+
             # 메타데이터에서 직접 내용 가져오기 (더 안정적)
             refined_content = metadata.get("refined_content", "")
             original_content = metadata.get("original_content", "")
             content_summary = metadata.get("content_summary", "")
             key_points_str = metadata.get("key_points", "[]")
             labels_str = metadata.get("labels", "[]")  # labels 필드 추가
+
+            print(f"   📝 [VectorDB] 내용 길이 확인:")
+            print(f"      - original_content: {len(original_content)} 문자")
+            print(f"      - refined_content: {len(refined_content)} 문자")
+            print(f"      - content_summary: {len(content_summary)} 문자")
+            print(f"      - document: {len(document)} 문자")
             
             # key_points와 labels가 JSON 문자열인 경우 파싱
             try:
@@ -265,17 +299,36 @@ class VectorDBManager:
             
             # 메타데이터에 내용이 없으면 document에서 파싱 시도
             if not refined_content:
+                print(f"   🔄 [VectorDB] refined_content가 없음, document에서 파싱 시도...")
                 lines = document.strip().split('\n')
                 for line in lines:
                     if line.startswith("Content:"):
                         refined_content = line.replace("Content:", "").strip()
+                        print(f"      📄 Document에서 Content 파싱: {len(refined_content)} 문자")
                     elif line.startswith("Summary:"):
                         content_summary = line.replace("Summary:", "").strip()
+                        print(f"      📋 Document에서 Summary 파싱: {len(content_summary)} 문자")
                     elif line.startswith("Key Points:"):
                         key_points_str = line.replace("Key Points:", "").strip()
                         key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
-            
-            return Mail(
+                        print(f"      🔑 Document에서 Key Points 파싱: {len(key_points)}개 포인트")
+
+            # 최종 결과 로그
+            print(f"   ✨ [VectorDB] Mail 객체 생성:")
+            print(f"      - 제목: {metadata.get('subject', '제목 없음')}")
+            print(f"      - 발신자: {metadata.get('sender', '발신자 불명')}")
+            print(f"      - original_content 최종 길이: {len(original_content)} 문자")
+            print(f"      - refined_content 최종 길이: {len(refined_content)} 문자")
+
+            if len(original_content) == 0:
+                print(f"   ⚠️ [VectorDB] 경고: original_content가 비어있습니다!")
+                # 메타데이터 전체 내용 출력
+                print(f"   🔍 [VectorDB] 전체 메타데이터 디버그:")
+                for key, value in metadata.items():
+                    value_preview = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
+                    print(f"      - {key}: {value_preview}")
+
+            mail_obj = Mail(
                 message_id=message_id,
                 original_content=original_content,
                 refined_content=refined_content,
@@ -290,9 +343,15 @@ class VectorDBManager:
                 key_points=key_points,
                 created_at=metadata.get("created_at", "")
             )
-            
+
+            print(f"   ✅ [VectorDB] Mail 객체 생성 완료!")
+            return mail_obj
+
         except Exception as e:
-            print(f"Vector DB 조회 오류: {e}")
+            print(f"   ❌ [VectorDB] 조회 오류: {e}")
+            import traceback
+            print(f"   📋 [VectorDB] 상세 오류:")
+            traceback.print_exc()
             return None
     
     def search_similar_mails(self, query: str, n_results: int = 5) -> List[Mail]:

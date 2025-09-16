@@ -825,6 +825,53 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
             # 1단계: 안 읽은 메일 가져오기
             logging.info("🔍 1단계: 안 읽은 메일 가져오기 시작...")
             try:
+                # access_token이 없으면 DB에서 refresh_token으로 재발급 시도
+                if not access_token and provider_name == 'gmail':
+                    logging.info("🔄 access_token이 없어서 DB에서 refresh_token으로 재발급 시도...")
+                    try:
+                        # DB에서 첫 번째 사용자의 Google 토큰 조회 (단순화)
+                        from database_models import DatabaseManager
+                        import sqlite3
+                        
+                        db_manager = DatabaseManager()
+                        with sqlite3.connect('tickets.db') as conn:
+                            cursor = conn.cursor()
+                            cursor.execute('SELECT google_refresh_token FROM users WHERE google_refresh_token IS NOT NULL LIMIT 1')
+                            result = cursor.fetchone()
+                            
+                            if result and result[0]:
+                                refresh_token = result[0]
+                                logging.info(f"🔍 DB에서 refresh_token 발견: {refresh_token[:20]}...")
+                                
+                                # Google API로 access_token 재발급
+                                import os
+                                from google.oauth2.credentials import Credentials
+                                from google.auth.transport.requests import Request
+                                
+                                client_id = os.getenv("GOOGLE_CLIENT_ID")
+                                client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+                                
+                                if client_id and client_secret:
+                                    credentials = Credentials(
+                                        token=None,
+                                        refresh_token=refresh_token,
+                                        token_uri="https://oauth2.googleapis.com/token",
+                                        client_id=client_id,
+                                        client_secret=client_secret
+                                    )
+                                    
+                                    request = Request()
+                                    credentials.refresh(request)
+                                    access_token = credentials.token
+                                    logging.info(f"✅ access_token 재발급 성공: {access_token[:20]}...")
+                                else:
+                                    logging.warning("❌ GOOGLE_CLIENT_ID 또는 GOOGLE_CLIENT_SECRET이 설정되지 않음")
+                            else:
+                                logging.warning("❌ DB에 Google refresh_token이 없음")
+                                
+                    except Exception as token_error:
+                        logging.warning(f"⚠️ 토큰 재발급 실패: {token_error}")
+                
                 logging.info(f"🔍 UnifiedEmailService({provider_name}) 생성 시도...")
                 service = UnifiedEmailService(provider_name, access_token=access_token)
                 logging.info(f"🔍 서비스 생성 완료: {service}")
