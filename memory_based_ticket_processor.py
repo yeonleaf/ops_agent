@@ -146,7 +146,7 @@ class MemoryBasedTicketProcessorTool(BaseTool):
             
             # 3단계: 실행 (Action)
             print("⚡ 3단계: 실행 (Action) 시작")
-            action_result = self._action_phase(reasoning_result, message_id)
+            action_result = self._action_phase(reasoning_result, message_id, email_content, email_subject)
             
             # 4단계: 통합된 기억 저장 (Unified Memorization)
             print("💾 4단계: 통합된 기억 저장 (Unified Memorization) 시작")
@@ -360,7 +360,7 @@ ticket_type: Bug/Feature/Task/Improvement"""),
                 "analysis_context": {"error": str(e)}
             }
     
-    def _action_phase(self, reasoning_result: Dict[str, Any], message_id: str) -> Dict[str, Any]:
+    def _action_phase(self, reasoning_result: Dict[str, Any], message_id: str, email_content: str, email_subject: str) -> Dict[str, Any]:
         """3단계: 실행 (Action) - AI 판단에 따라 실제 티켓 생성"""
         try:
             print("  ⚡ 3단계: 실행 (Action) 시작")
@@ -371,15 +371,21 @@ ticket_type: Bug/Feature/Task/Improvement"""),
             if decision_type == "create_ticket":
                 print("  🎫 티켓 생성 시작")
                 
-                # 티켓 데이터 준비
+                # 티켓 데이터 준비 (database_models.Ticket 모델의 필수 필드만 포함)
+                current_time = datetime.now().isoformat()
                 ticket_data = {
-                    "title": decision.get("title", "AI 생성 티켓"),
-                    "description": decision.get("description", ""),
+                    "ticket_id": None,  # 자동 생성
+                    "original_message_id": message_id,
+                    "title": decision.get("title", f"[AI] {email_subject}"),
+                    "description": decision.get("description", f"이메일 내용:\n{email_content}\n\nAI 분석:\n{decision.get('reason', '업무 관련 이메일로 분석됨')}"),
                     "priority": decision.get("priority", "Medium"),
                     "labels": decision.get("labels", []),
                     "ticket_type": decision.get("ticket_type", "Task"),
-                    "status": "new",
-                    "created_at": datetime.now().isoformat()
+                    "status": "pending",  # 'new' 대신 'pending' 사용
+                    "reporter": "AI System",
+                    "reporter_email": "ai@system.com",
+                    "created_at": current_time,
+                    "updated_at": current_time
                 }
                 
                 # 데이터베이스에 티켓 저장

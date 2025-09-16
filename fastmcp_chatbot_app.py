@@ -769,10 +769,8 @@ def display_chat_interface(chatbot):
         st.markdown("**🚀 빠른 명령어:**")
         
         quick_commands = [
-            "안 읽은 메일을 처리해주세요",
-            "Gmail 연결 상태를 확인해주세요",
-            "사용 가능한 이메일 제공자를 보여주세요",
-            "서버 상태를 확인해주세요"
+            "안 읽은 메일을 가져와서 티켓을 생성해주세요",
+            "안 읽은 메일 3개만 가져와서 보여주세요"
         ]
         
         for cmd in quick_commands:

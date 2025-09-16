@@ -1,0 +1,28 @@
+# 첨부파일 처리를 위한 추가 라이브러리
+
+# 문서 처리
+PyPDF2>=3.0.1
+python-docx>=0.8.11
+openpyxl>=3.1.2
+
+# 이미지 처리
+Pillow>=10.0.0
+
+# OCR (선택사항 - 이미지 텍스트 추출용)
+# pytesseract>=0.3.10
+
+# 파일 타입 감지
+python-magic>=0.4.27
+
+# 암호화 및 해시
+cryptography>=41.0.0
+
+# 기존 requirements.txt 내용도 포함
+streamlit>=1.28.0
+langchain>=0.1.0
+langchain-openai>=0.1.0
+chromadb>=0.4.0
+sqlite3  # Python 내장
+pandas>=2.0.0
+numpy>=1.24.0
+python-dotenv>=1.0.0

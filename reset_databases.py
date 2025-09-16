@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
 데이터베이스 초기화 및 재생성 스크립트
+users 테이블은 보존합니다.
 """
 
 import os
 import shutil
+import sqlite3
+import tempfile
 from pathlib import Path
 
 def reset_databases():
@@ -33,12 +36,32 @@ def reset_databases():
     
     print()
     
-    # 2. RDB (SQLite) 초기화
-    print("2️⃣ RDB (SQLite) 초기화")
-    
+    # 2. RDB (SQLite) 초기화 (users 테이블 보존)
+    print("2️⃣ RDB (SQLite) 초기화 (users 테이블 보존)")
+
     # 데이터베이스 파일들 찾기
     db_files = list(Path(".").glob("*.db"))
-    
+
+    # users 테이블 데이터 백업
+    users_backup = []
+    main_db_file = Path("tickets.db")
+
+    if main_db_file.exists():
+        try:
+            with sqlite3.connect(str(main_db_file), timeout=30.0) as conn:
+                cursor = conn.cursor()
+                # users 테이블이 존재하는지 확인
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+                if cursor.fetchone():
+                    # users 테이블 데이터 백업
+                    cursor.execute("SELECT * FROM users")
+                    users_backup = cursor.fetchall()
+                    print(f"   💾 {len(users_backup)}개의 사용자 데이터를 백업했습니다.")
+                else:
+                    print("   ℹ️ users 테이블이 없습니다.")
+        except Exception as e:
+            print(f"   ⚠️ users 테이블 백업 실패: {e}")
+
     if db_files:
         for db_file in db_files:
             try:
@@ -53,18 +76,37 @@ def reset_databases():
     
     # 3. 데이터베이스 재생성 테스트
     print("3️⃣ 데이터베이스 재생성 테스트")
-    
+
     try:
         # SQLite 데이터베이스 재생성
-        from sqlite_ticket_models import SQLiteTicketManager
-        ticket_manager = SQLiteTicketManager()
-        print("   ✅ SQLite 티켓 데이터베이스 재생성 완료")
-        
+        from database_models import DatabaseManager
+        db_manager = DatabaseManager()
+        print("   ✅ SQLite 데이터베이스 재생성 완료")
+
         # Vector DB 재생성
         from vector_db_models import VectorDBManager
         vector_db = VectorDBManager()
         print("   ✅ Vector DB 재생성 완료")
-        
+
+        # users 테이블 데이터 복원
+        if users_backup:
+            print("4️⃣ users 테이블 데이터 복원")
+            try:
+                with sqlite3.connect("tickets.db", timeout=30.0) as conn:
+                    cursor = conn.cursor()
+                    # users 테이블이 이미 생성되어 있는지 확인하고 데이터 복원
+                    for user_data in users_backup:
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO users
+                            (id, email, password_hash, google_refresh_token, jira_endpoint, jira_api_token, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, user_data)
+                    conn.commit()
+                    print(f"   ✅ {len(users_backup)}개의 사용자 데이터를 복원했습니다.")
+            except Exception as e:
+                print(f"   ❌ users 테이블 데이터 복원 실패: {e}")
+                return False
+
     except Exception as e:
         print(f"   ❌ 데이터베이스 재생성 실패: {e}")
         return False

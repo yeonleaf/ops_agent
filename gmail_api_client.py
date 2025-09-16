@@ -597,11 +597,22 @@ class GmailAPIClient:
         
         try:
             # 안읽은 메일 검색
+            print(f"🔍 Gmail API 요청: list_messages")
+            print(f"   - userId: 'me'")
+            print(f"   - labelIds: ['UNREAD']")
+            print(f"   - maxResults: {max_results}")
+            
             results = self.service.users().messages().list(
                 userId='me',
                 labelIds=['UNREAD'],
                 maxResults=max_results
             ).execute()
+            
+            print(f"📊 Gmail API 응답:")
+            print(f"   - 결과 키: {list(results.keys())}")
+            print(f"   - 메시지 수: {len(results.get('messages', []))}")
+            if 'nextPageToken' in results:
+                print(f"   - 다음 페이지 토큰: {results['nextPageToken'][:20]}...")
             
             messages = results.get('messages', [])
             emails = []
@@ -658,11 +669,22 @@ class GmailAPIClient:
                 if not self.authenticate(force_refresh=True):
                     return None
             
+            print(f"🔍 Gmail API 요청: get_message")
+            print(f"   - userId: 'me'")
+            print(f"   - messageId: {message_id}")
+            print(f"   - format: 'full'")
+            
             message = self.service.users().messages().get(
                 userId='me', 
                 id=message_id,
                 format='full'
             ).execute()
+            
+            print(f"📊 Gmail API 응답:")
+            print(f"   - 메시지 ID: {message.get('id', 'N/A')}")
+            print(f"   - 스레드 ID: {message.get('threadId', 'N/A')}")
+            print(f"   - 라벨 ID: {message.get('labelIds', [])}")
+            print(f"   - 스니펫: {message.get('snippet', 'N/A')[:100]}...")
             
             # 헤더 정보 추출
             headers = message['payload']['headers']
@@ -670,12 +692,43 @@ class GmailAPIClient:
             sender = next((h['value'] for h in headers if h['name'] == 'From'), '발신자 없음')
             date = next((h['value'] for h in headers if h['name'] == 'Date'), '')
             
+            print(f"📧 메일 정보:")
+            print(f"   - 제목: {subject}")
+            print(f"   - 발신자: {sender}")
+            print(f"   - 날짜: {date}")
+            print(f"   - 라벨: {message.get('labelIds', [])}")
+            
             # 메일 본문 추출
             body = self.extract_email_body(message['payload'])
             
             # 라벨 정보
             labels = message.get('labelIds', [])
-            
+            unread_status = 'UNREAD' in labels
+
+            # 상세한 디버깅 로깅
+            print(f"📧 [Gmail API] 메일 {message_id}:")
+            print(f"   - 제목: {subject[:50]}...")
+            print(f"   - 라벨: {labels}")
+            print(f"   - UNREAD 라벨 있음: {'UNREAD' in labels}")
+            print(f"   - INBOX 라벨 있음: {'INBOX' in labels}")
+            print(f"   - 최종 unread 상태: {unread_status}")
+
+            # 추가 검증: 실제 Gmail에서 안 읽은 메일인지 다중 기준으로 확인
+            alternative_unread_checks = {
+                'has_unread_label': 'UNREAD' in labels,
+                'in_inbox_and_unread': 'INBOX' in labels and 'UNREAD' in labels,
+                'not_in_read_label': 'READ' not in labels,  # READ 라벨이 없으면 안 읽은 것
+            }
+
+            print(f"   - 다중 검증: {alternative_unread_checks}")
+
+            # 가장 확실한 기준 사용: UNREAD 라벨 존재
+            final_unread = 'UNREAD' in labels
+            if final_unread != unread_status:
+                print(f"   ⚠️ 읽음 상태 불일치 감지! UNREAD 라벨 기준: {final_unread}, 기존 로직: {unread_status}")
+
+            unread_status = final_unread
+
             return {
                 'id': message_id,
                 'subject': subject,
@@ -683,7 +736,7 @@ class GmailAPIClient:
                 'date': date,
                 'body': body,
                 'labels': labels,
-                'unread': 'UNREAD' in labels
+                'unread': unread_status
             }
             
         except HttpError as error:
@@ -740,10 +793,21 @@ class GmailAPIClient:
         
         try:
             # 모든 메일 가져오기 (라벨 제한 없음)
+            print(f"🔍 Gmail API 요청: list_messages (모든 메일)")
+            print(f"   - userId: 'me'")
+            print(f"   - maxResults: {max_results}")
+            print(f"   - labelIds: 없음 (모든 메일)")
+            
             results = self.service.users().messages().list(
                 userId='me',
                 maxResults=max_results
             ).execute()
+            
+            print(f"📊 Gmail API 응답:")
+            print(f"   - 결과 키: {list(results.keys())}")
+            print(f"   - 메시지 수: {len(results.get('messages', []))}")
+            if 'nextPageToken' in results:
+                print(f"   - 다음 페이지 토큰: {results['nextPageToken'][:20]}...")
             
             messages = results.get('messages', [])
             emails = []
@@ -806,7 +870,7 @@ class GmailAPIClient:
             # 안 읽은 메일 쿼리인 경우 추가 로깅
             if query == "is:unread":
                 print("🔍 *** 안 읽은 메일 전용 쿼리 감지 ***")
-                
+
                 # 비교를 위해 전체 메일 수도 확인
                 try:
                     all_results = self.service.users().messages().list(
@@ -816,17 +880,79 @@ class GmailAPIClient:
                     ).execute()
                     all_count = len(all_results.get('messages', []))
                     print(f"🔍 전체 메일 (최대 10개): {all_count}개")
+
+                    # UNREAD 라벨로도 확인
+                    unread_results = self.service.users().messages().list(
+                        userId='me',
+                        labelIds=['UNREAD'],
+                        maxResults=10
+                    ).execute()
+                    unread_count = len(unread_results.get('messages', []))
+                    print(f"🔍 UNREAD 라벨 기준: {unread_count}개")
+
                 except Exception as e:
                     print(f"🔍 전체 메일 조회 실패: {e}")
             
-            results = self.service.users().messages().list(
-                userId='me',
-                q=query,
-                maxResults=max_results
-            ).execute()
+            # 안 읽은 메일 쿼리인 경우 라벨 방식을 우선 사용
+            if query == "is:unread":
+                print("🔍 is:unread 쿼리 감지 - 라벨 방식을 우선 사용")
+
+                # 방법 1: 라벨 방식 (더 확실함)
+                print("🔍 방법 1: labelIds=['UNREAD'] 방식 (우선)")
+                results = self.service.users().messages().list(
+                    userId='me',
+                    labelIds=['UNREAD'],
+                    maxResults=max_results
+                ).execute()
+
+                label_messages = results.get('messages', [])
+                print(f"🔍 라벨 방식 결과: {len(label_messages)}개")
+
+                # 방법 2: 쿼리 방식 (비교용)
+                print("🔍 방법 2: q='is:unread' 쿼리 방식 (비교용)")
+                query_results = self.service.users().messages().list(
+                    userId='me',
+                    q=query,
+                    maxResults=max_results
+                ).execute()
+
+                query_messages = query_results.get('messages', [])
+                print(f"🔍 쿼리 방식 결과: {len(query_messages)}개")
+
+                # 각 방식의 메일 ID 비교
+                query_ids = set(msg['id'] for msg in query_messages)
+                label_ids = set(msg['id'] for msg in label_messages)
+
+                print(f"🔍 쿼리 방식 메일 ID (처음 3개): {list(query_ids)[:3]}")
+                print(f"🔍 라벨 방식 메일 ID (처음 3개): {list(label_ids)[:3]}")
+                print(f"🔍 두 방식 결과가 동일한가? {query_ids == label_ids}")
+
+                if query_ids != label_ids:
+                    only_in_query = query_ids - label_ids
+                    only_in_label = label_ids - query_ids
+                    print(f"🔍 쿼리 방식에만 있는 메일: {len(only_in_query)}개")
+                    print(f"🔍 라벨 방식에만 있는 메일: {len(only_in_label)}개")
+
+                # 라벨 방식을 우선 사용 (더 확실함)
+                print("🔍 라벨 방식 우선 사용 (UNREAD 라벨이 더 정확함)")
+                # results는 이미 라벨 방식 결과로 설정됨
+
+            else:
+                results = self.service.users().messages().list(
+                    userId='me',
+                    q=query,
+                    maxResults=max_results
+                ).execute()
             
             messages = results.get('messages', [])
             print(f"🔍 Gmail API 응답: {len(messages)}개 메시지 발견")
+
+            # 안 읽은 메일 쿼리일 때 더 자세한 로깅
+            if query == "is:unread" and len(messages) == 0:
+                print("⚠️ *** 주의: is:unread 쿼리로 0개 메일 발견 ***")
+                print("💡 실제 Gmail에서 안 읽은 메일이 있는지 확인하세요")
+                print("💡 Gmail API 스코프가 읽기 권한을 포함하는지 확인하세요")
+
             emails = []
             
             for i, message in enumerate(messages):

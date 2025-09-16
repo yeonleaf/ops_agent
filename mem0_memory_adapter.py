@@ -69,32 +69,75 @@ class AzureOpenAIMemory:
             return self._fallback_search(query, user_id, limit)
         
         try:
+            # 사용자별 필터링된 메모리 가져오기
+            filtered_memories = [
+                mem for mem in self.memories 
+                if user_id is None or mem['user_id'] == user_id
+            ]
+            
+            if not filtered_memories:
+                return []
+            
             # Azure OpenAI를 사용한 의미적 검색
+            memories_text = "\n".join([
+                f"- ID: {mem['id']}, 내용: {mem['memory']}, 메타데이터: {mem['metadata']}"
+                for mem in filtered_memories
+            ])
+            
             response = self.azure_client.chat.completions.create(
                 model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
                 messages=[
                     {
                         "role": "system",
-                        "content": "다음 메모리들 중에서 주어진 쿼리와 가장 관련성이 높은 메모리를 찾아주세요. 각 메모리에 대해 0.0-1.0 사이의 관련성 점수를 매겨주세요."
+                        "content": """다음 메모리들 중에서 주어진 쿼리와 가장 관련성이 높은 메모리를 찾아서 JSON 형태로 응답해주세요.
+응답 형식:
+{
+  "results": [
+    {"id": "메모리_ID", "score": 0.9, "reason": "관련성 이유"},
+    {"id": "메모리_ID", "score": 0.7, "reason": "관련성 이유"}
+  ]
+}"""
                     },
                     {
                         "role": "user",
-                        "content": f"쿼리: {query}\n\n메모리들:\n" + "\n".join([
-                            f"- {i+1}. {mem['memory']} (메타데이터: {mem['metadata']})"
-                            for i, mem in enumerate(self.memories)
-                            if user_id is None or mem['user_id'] == user_id
-                        ])
+                        "content": f"쿼리: {query}\n\n메모리들:\n{memories_text}"
                     }
                 ],
-                temperature=0.1
+                temperature=0.1,
+                max_tokens=500
             )
             
-            # 응답에서 관련성 점수 추출 (간단한 구현)
+            # JSON 응답 파싱
             content = response.choices[0].message.content
-            print(f"🔍 Azure OpenAI 검색 응답: {content[:100]}...")
+            print(f"🔍 Azure OpenAI 검색 응답: {content[:200]}...")
             
-            # 간단한 키워드 매칭으로 폴백
-            return self._fallback_search(query, user_id, limit)
+            import json
+            try:
+                llm_result = json.loads(content)
+                results = []
+                
+                for item in llm_result.get("results", []):
+                    memory_id = item.get("id")
+                    score = item.get("score", 0.0)
+                    
+                    # 메모리 ID로 실제 메모리 찾기
+                    for mem in filtered_memories:
+                        if mem["id"] == memory_id:
+                            results.append({
+                                "memory": mem["memory"],
+                                "score": score,
+                                "metadata": mem["metadata"],
+                                "id": mem["id"]
+                            })
+                            break
+                
+                # 점수순으로 정렬하고 limit만큼 반환
+                results.sort(key=lambda x: x["score"], reverse=True)
+                return results[:limit]
+                
+            except json.JSONDecodeError:
+                print("⚠️ Azure OpenAI 응답 JSON 파싱 실패, 폴백 검색 사용")
+                return self._fallback_search(query, user_id, limit)
             
         except Exception as e:
             print(f"⚠️ Azure OpenAI 검색 실패: {e}")
@@ -125,6 +168,20 @@ class AzureOpenAIMemory:
         # 점수순으로 정렬하고 limit만큼 반환
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
+    
+    def get_all(self, user_id=None, limit=100):
+        """모든 메모리 조회"""
+        filtered_memories = []
+        for memory in self.memories:
+            if user_id is None or memory["user_id"] == user_id:
+                filtered_memories.append({
+                    "memory": memory["memory"],
+                    "metadata": memory["metadata"],
+                    "id": memory["id"],
+                    "created_at": memory["created_at"]
+                })
+        
+        return {"results": filtered_memories[:limit]}
     
     def delete(self, memory_id, user_id=None):
         """메모리 삭제"""
@@ -213,12 +270,10 @@ class Mem0Memory:
             llm_client: LangChain LLM 클라이언트 객체 (예: AzureChatOpenAI)
             user_id: 사용자 ID (기본값: "default_user")
         """
-        if not MEM0_AVAILABLE:
-            raise ImportError("mem0 라이브러리가 설치되지 않았습니다. pip install mem0ai 명령으로 설치해주세요.")
-        
         self.user_id = user_id
         self.llm_client = llm_client
         self.memory = None
+        self.mem0_available = MEM0_AVAILABLE
         self._initialize_memory()
     
     def _initialize_memory(self):
@@ -233,42 +288,57 @@ class Mem0Memory:
             api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
             
             if not all([azure_endpoint, deployment_name, api_key]):
+                print(f"⚠️ Azure OpenAI 환경변수 확인:")
+                print(f"   AZURE_OPENAI_ENDPOINT: {'✅' if azure_endpoint else '❌'}")
+                print(f"   AZURE_OPENAI_DEPLOYMENT_NAME: {'✅' if deployment_name else '❌'}")
+                print(f"   AZURE_OPENAI_API_KEY: {'✅' if api_key else '❌'}")
                 raise ValueError("Azure OpenAI 환경변수가 설정되지 않았습니다.")
             
-            # mem0 LangChain 설정 (문서에 따른 간단한 설정)
-            # mem0가 embedding을 위해 OPENAI_API_KEY를 요구함
-            openai_key = os.getenv("OPENAI_KEY") or os.getenv("OPENAI_API_KEY")
-            if openai_key:
-                os.environ["OPENAI_API_KEY"] = openai_key
-            else:
-                # fallback으로 Azure API 키 사용
-                os.environ["OPENAI_API_KEY"] = api_key
-            
-            config = {
-                "llm": {
-                    "provider": "langchain",
-                    "config": {
-                        "model": self.llm_client  # LangChain AzureChatOpenAI 객체 직접 전달
+            # mem0 초기화 시도 - Azure OpenAI 설정 사용
+            try:
+                # Azure OpenAI를 mem0 설정으로 전달
+                config = {
+                    "llm": {
+                        "provider": "azure_openai",
+                        "config": {
+                            "api_key": api_key,
+                            "azure_endpoint": azure_endpoint,
+                            "api_version": api_version,
+                            "model": deployment_name
+                        }
+                    },
+                    "embedder": {
+                        "provider": "azure_openai", 
+                        "config": {
+                            "api_key": api_key,
+                            "azure_endpoint": azure_endpoint,
+                            "api_version": api_version,
+                            "model": "text-embedding-ada-002"  # Azure embedding 모델
+                        }
+                    },
+                    "vector_store": {
+                        "provider": "chroma",
+                        "config": {
+                            "collection_name": "mem0_memory",
+                            "path": "./vector_db/mem0_db"
+                        }
                     }
                 }
-            }
-            
-            # mem0 초기화
-            self.memory = Memory.from_config(config)
-            
-            # 테스트 메모리 추가로 실제 작동 확인
-            test_result = self.memory.add(
-                messages=[{"role": "user", "content": "mem0 Azure OpenAI 초기화 테스트"}],
-                user_id="test",
-                metadata={"test": True, "provider": "azure_openai"}
-            )
-            
-            print("✅ mem0 초기화 성공 (Azure OpenAI 설정 사용)")
+                
+                print("🔧 mem0 Azure OpenAI 설정으로 초기화 시도...")
+                self.memory = Memory(config=config)
+                print("✅ mem0 초기화 성공 (Azure OpenAI)")
+                
+            except Exception as mem0_error:
+                print(f"⚠️ mem0 라이브러리 초기화 실패: {mem0_error}")
+                print("   Azure OpenAI 커스텀 메모리로 대체합니다.")
+                # mem0 초기화 실패 시 Azure 커스텀 메모리로 폴백
+                self.memory = AzureOpenAIMemory()
             
         except Exception as e:
             print(f"⚠️ mem0 초기화 실패: {e}")
             print("   Azure OpenAI 커스텀 메모리를 사용합니다.")
-            # mem0 초기화 실패 시 Azure 커스텀 메모리로 폴백
+            # 환경변수 오류 시에도 Azure 커스텀 메모리로 폴백
             self.memory = AzureOpenAIMemory()
             
         print(f"✅ Mem0Memory 초기화 완료 (사용자: {self.user_id})")
@@ -569,9 +639,22 @@ if __name__ == "__main__":
     # 테스트 코드
     print("🧪 Mem0Memory 어댑터 테스트 시작")
     
+    # 환경변수 확인
+    print("\n🔧 Azure OpenAI 환경변수 확인...")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
+    azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+    azure_version = os.getenv("AZURE_OPENAI_API_VERSION")
+    
+    print(f"   AZURE_OPENAI_ENDPOINT: {'✅ ' + azure_endpoint if azure_endpoint else '❌ 미설정'}")
+    print(f"   AZURE_OPENAI_API_KEY: {'✅ 설정됨' if azure_key else '❌ 미설정'}")
+    print(f"   AZURE_OPENAI_DEPLOYMENT_NAME: {'✅ ' + azure_deployment if azure_deployment else '❌ 미설정'}")
+    print(f"   AZURE_OPENAI_API_VERSION: {'✅ ' + azure_version if azure_version else '❌ 미설정'}")
+    
     try:
         # Mem0Memory 인스턴스 생성
-        mem0_memory = create_mem0_memory("test_user")
+        print("\n🔧 Mem0Memory 인스턴스 생성...")
+        mem0_memory = create_mem0_memory(llm_client=None, user_id="test_user")
         
         # 테스트 이벤트 추가
         print("\n📝 테스트 이벤트 추가...")
@@ -609,6 +692,19 @@ if __name__ == "__main__":
         stats = mem0_memory.get_memory_stats()
         print(f"총 메모리 수: {stats['total_memories']}")
         print(f"액션 타입별: {stats['action_types']}")
+        
+        # Azure OpenAI 커스텀 메모리 테스트
+        if isinstance(mem0_memory.memory, AzureOpenAIMemory):
+            print("\n🔍 Azure OpenAI 커스텀 메모리 기능 테스트...")
+            azure_memory = mem0_memory.memory
+            
+            # 직접 검색 테스트
+            azure_search_results = azure_memory.search("버그 수정", limit=2)
+            print(f"Azure OpenAI 검색 결과: {len(azure_search_results)}개")
+            
+            # 전체 메모리 조회 테스트
+            all_memories = azure_memory.get_all(limit=10)
+            print(f"전체 메모리: {len(all_memories.get('results', []))}개")
         
         print("\n✅ Mem0Memory 어댑터 테스트 완료")
         

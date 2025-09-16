@@ -51,6 +51,31 @@ class TicketCreationStatus(str, Enum):
 class IntegratedMailClassifier:
     """통합 메일 분류기"""
     
+    def _safe_log(self, message: str, level: str = "info"):
+        """Streamlit 환경에 안전한 로깅"""
+        try:
+            # Streamlit이 실제로 실행 중인지 확인
+            import streamlit as st
+            from streamlit.runtime.scriptrunner.script_run_context import get_script_run_ctx
+            
+            # ScriptRunContext가 있는지 확인 (실제 Streamlit 앱에서 실행 중인지)
+            ctx = get_script_run_ctx()
+            if ctx is not None:
+                if level == "error":
+                    st.error(message)
+                elif level == "warning":
+                    st.warning(message)
+                elif level == "info":
+                    st.info(message)
+                else:
+                    st.write(message)
+            else:
+                # Streamlit 컨텍스트가 없으면 print 사용
+                print(f"[{level.upper()}] {message}")
+        except Exception:
+            # 모든 예외에 대해 기본 print 사용
+            print(f"[{level.upper()}] {message}")
+    
     def __init__(self, use_lm: bool = True):
         """초기화"""
         self.use_lm = use_lm and LANGCHAIN_AVAILABLE
@@ -74,18 +99,34 @@ class IntegratedMailClassifier:
     def _initialize_llm(self):
         """LLM 모델 초기화"""
         try:
+            # 환경 변수 로드
+            try:
+                from dotenv import load_dotenv
+                load_dotenv()  # .env 파일 로드
+                load_dotenv('oauth_config.env')  # oauth_config.env 파일 로드
+            except ImportError:
+                pass  # python-dotenv가 없어도 계속 진행
+            
             # Azure OpenAI 설정 확인
             azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
             azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
             azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
             azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
             
-            # 디버깅 정보 표시
-            st.error(f"🔧 Azure OpenAI 설정 확인:")
-            st.error(f"   - Endpoint: {azure_endpoint}")
-            st.error(f"   - API Key: {'설정됨' if azure_api_key else '설정 안됨'}")
-            st.error(f"   - Deployment: {azure_deployment}")
-            st.error(f"   - API Version: {azure_api_version}")
+            # 디버깅 정보 표시 (Streamlit 환경에서만)
+            try:
+                st.error(f"🔧 Azure OpenAI 설정 확인:")
+                st.error(f"   - Endpoint: {azure_endpoint}")
+                st.error(f"   - API Key: {'설정됨' if azure_api_key else '설정 안됨'}")
+                st.error(f"   - Deployment: {azure_deployment}")
+                st.error(f"   - API Version: {azure_api_version}")
+            except:
+                # Streamlit이 없는 환경에서는 print 사용
+                print(f"🔧 Azure OpenAI 설정 확인:")
+                print(f"   - Endpoint: {azure_endpoint}")
+                print(f"   - API Key: {'설정됨' if azure_api_key else '설정 안됨'}")
+                print(f"   - Deployment: {azure_deployment}")
+                print(f"   - API Version: {azure_api_version}")
             
             if all([azure_endpoint, azure_api_key, azure_deployment]):
                 # 환경 변수 설정 (LangChain이 자동으로 읽도록)
@@ -98,21 +139,39 @@ class IntegratedMailClassifier:
                 os.environ["AZURE_OPENAI_ENDPOINT"] = azure_endpoint
                 os.environ["AZURE_OPENAI_API_VERSION"] = azure_api_version
                 
-                st.error(f"   🔧 환경 변수 설정 완료:")
-                st.error(f"      - OPENAI_API_KEY: {'설정됨' if os.getenv('OPENAI_API_KEY') else '설정 안됨'}")
-                st.error(f"      - OPENAI_API_BASE: {'설정됨' if os.getenv('OPENAI_API_BASE') else '설정 안됨'}")
-                st.error(f"      - OPENAI_API_VERSION: {'설정됨' if os.getenv('OPENAI_API_VERSION') else '설정 안됨'}")
-                
-                # URL 구성 확인
-                st.error(f"   🌐 URL 구성 확인:")
-                st.error(f"      - 원본 Endpoint: {azure_endpoint}")
-                st.error(f"      - Deployment: {azure_deployment}")
-                st.error(f"      - 예상 API URL: {azure_endpoint}/openai/deployments/{azure_deployment}/chat/completions?api-version={azure_api_version}")
-                
-                # URL 정리 (trailing slash 제거)
-                clean_endpoint = azure_endpoint.rstrip('/')
-                st.error(f"      - 정리된 Endpoint: {clean_endpoint}")
-                st.error(f"      - 정리된 API URL: {clean_endpoint}/openai/deployments/{azure_deployment}/chat/completions?api-version={azure_api_version}")
+                try:
+                    st.error(f"   🔧 환경 변수 설정 완료:")
+                    st.error(f"      - OPENAI_API_KEY: {'설정됨' if os.getenv('OPENAI_API_KEY') else '설정 안됨'}")
+                    st.error(f"      - OPENAI_API_BASE: {'설정됨' if os.getenv('OPENAI_API_BASE') else '설정 안됨'}")
+                    st.error(f"      - OPENAI_API_VERSION: {'설정됨' if os.getenv('OPENAI_API_VERSION') else '설정 안됨'}")
+                    
+                    # URL 구성 확인
+                    st.error(f"   🌐 URL 구성 확인:")
+                    st.error(f"      - 원본 Endpoint: {azure_endpoint}")
+                    st.error(f"      - Deployment: {azure_deployment}")
+                    st.error(f"      - 예상 API URL: {azure_endpoint}/openai/deployments/{azure_deployment}/chat/completions?api-version={azure_api_version}")
+                    
+                    # URL 정리 (trailing slash 제거)
+                    clean_endpoint = azure_endpoint.rstrip('/')
+                    st.error(f"      - 정리된 Endpoint: {clean_endpoint}")
+                    st.error(f"      - 정리된 API URL: {clean_endpoint}/openai/deployments/{azure_deployment}/chat/completions?api-version={azure_api_version}")
+                except:
+                    # Streamlit이 없는 환경에서는 print 사용
+                    print(f"   🔧 환경 변수 설정 완료:")
+                    print(f"      - OPENAI_API_KEY: {'설정됨' if os.getenv('OPENAI_API_KEY') else '설정 안됨'}")
+                    print(f"      - OPENAI_API_BASE: {'설정됨' if os.getenv('OPENAI_API_BASE') else '설정 안됨'}")
+                    print(f"      - OPENAI_API_VERSION: {'설정됨' if os.getenv('OPENAI_API_VERSION') else '설정 안됨'}")
+                    
+                    # URL 구성 확인
+                    print(f"   🌐 URL 구성 확인:")
+                    print(f"      - 원본 Endpoint: {azure_endpoint}")
+                    print(f"      - Deployment: {azure_deployment}")
+                    print(f"      - 예상 API URL: {azure_endpoint}/openai/deployments/{azure_deployment}/chat/completions?api-version={azure_api_version}")
+                    
+                    # URL 정리 (trailing slash 제거)
+                    clean_endpoint = azure_endpoint.rstrip('/')
+                    print(f"      - 정리된 Endpoint: {clean_endpoint}")
+                    print(f"      - 정리된 API URL: {clean_endpoint}/openai/deployments/{azure_deployment}/chat/completions?api-version={azure_api_version}")
                 
                 try:
                     # AzureChatOpenAI 사용 (Azure OpenAI API에 최적화)
@@ -127,21 +186,21 @@ class IntegratedMailClassifier:
                     st.success("✅ LLM 모델 초기화 완료 (AzureChatOpenAI)")
                     self.use_lm = True
                 except Exception as e:
-                    st.error(f"❌ LLM 모델 초기화 실패: {str(e)}")
-                    st.error("💡 해결 방법:")
-                    st.error("   1. Azure OpenAI 리소스가 활성화되어 있는지 확인")
-                    st.error("   2. Deployment 이름이 정확한지 확인")
-                    st.error("   3. Endpoint URL이 올바른지 확인")
-                    st.error("   4. API 키가 유효한지 확인")
+                    self._safe_log(f"❌ LLM 모델 초기화 실패: {str(e)}", "error")
+                    self._safe_log("💡 해결 방법:", "error")
+                    self._safe_log("   1. Azure OpenAI 리소스가 활성화되어 있는지 확인", "error")
+                    self._safe_log("   2. Deployment 이름이 정확한지 확인", "error")
+                    self._safe_log("   3. Endpoint URL이 올바른지 확인", "error")
+                    self._safe_log("   4. API 키가 유효한지 확인", "error")
                     self.use_lm = False
                     self.llm = None
             else:
-                st.warning("⚠️ Azure OpenAI 설정이 불완전하여 LLM을 사용할 수 없습니다.")
+                self._safe_log("⚠️ Azure OpenAI 설정이 불완전하여 LLM을 사용할 수 없습니다.", "warning")
                 self.use_lm = False
                 self.llm = None
                 
         except Exception as e:
-            st.error(f"❌ LLM 초기화 실패: {str(e)}")
+            self._safe_log(f"❌ LLM 초기화 실패: {str(e)}", "error")
             self.use_lm = False
             self.llm = None
     
@@ -169,14 +228,14 @@ class IntegratedMailClassifier:
             (티켓생성상태, 이유, 추가정보) 튜플
         """
         if not self.is_llm_available():
-            st.error("❌ LM을 사용할 수 없습니다. Azure OpenAI 설정을 확인해주세요.")
+            self._safe_log("❌ LM을 사용할 수 없습니다. Azure OpenAI 설정을 확인해주세요.", "error")
             # LLM을 사용할 수 없는 경우 기본 규칙 적용
             return self._should_create_ticket_fallback(email_data, user_query)
         
         try:
-            st.info(f"🧠 LM 기반 티켓 생성 판단 시작:")
-            st.info(f"   - 사용자 쿼리: '{user_query}'")
-            st.info(f"   - 메일 제목: '{email_data.get('subject', '')}'")
+            self._safe_log(f"🧠 LM 기반 티켓 생성 판단 시작:", "info")
+            self._safe_log(f"   - 사용자 쿼리: '{user_query}'", "info")
+            self._safe_log(f"   - 메일 제목: '{email_data.get('subject', '')}'", "info")
             
             # LM 프롬프트 구성 (개별 메일 내용 기반 판단)
             system_prompt = """당신은 메일 관리 시스템의 티켓 생성 판단 전문가입니다.
@@ -196,14 +255,18 @@ class IntegratedMailClassifier:
 티켓 생성이 불필요한 메일:
 - 개인적인 안부나 인사
 - 단순 정보 공유 (뉴스레터, 공지사항)
-- 스팸이나 광고 메일
+- 스팸이나 광고 메일 (제목에 (광고), 💰, 📢 등 포함)
+- 마케팅/홍보 메일 (할인, 프로모션, 이벤트 등)
 - 자동 알림 메일 (단순 확인용)
 - 개인적인 대화나 잡담
+- HTML 태그가 주요 내용인 메일 (@media, CSS 스타일)
 
-판단 기준:
-1. 메일 내용이 업무와 관련이 있는가?
-2. 액션이나 응답이 필요한 내용인가?
+강화된 판단 기준:
+1. 메일 내용이 실제 업무와 관련이 있는가? (광고/마케팅은 제외)
+2. 구체적인 액션이나 응답이 필요한 내용인가?
 3. 추적하고 관리해야 할 작업인가?
+4. 제목이나 내용에 광고성 표시가 있는가? ((광고), 💰, 📢, 할인, 이벤트 등)
+5. 내용이 대부분 HTML/CSS 코드인가?
 
 사용자가 "티켓 목록", "업무 메일" 등을 요청했다면, 업무 관련 메일은 티켓으로 생성해야 합니다.
 
@@ -232,16 +295,17 @@ JSON 형식으로만 응답해주세요:
                 HumanMessage(content=user_prompt)
             ]
             
-            # 스트리밍 처리
-            current_response = ""
-            final_response = None
-            
-            for chunk in self.llm.stream(messages):
-                if hasattr(chunk, 'content'):
-                    current_response += chunk.content
-                    final_response = chunk
-            
-            response_content = final_response.content if final_response else ""
+            # LLM 호출 및 응답 처리 (스트리밍 대신 직접 호출)
+            try:
+                response = self.llm.invoke(messages)
+                response_content = response.content if hasattr(response, 'content') else str(response)
+                
+                self._safe_log(f"   📤 LLM 응답 수신: {len(response_content)} 문자", "info")
+                self._safe_log(f"   📝 응답 미리보기: '{response_content[:200]}...'", "info")
+                
+            except Exception as invoke_error:
+                self._safe_log(f"   ❌ LLM invoke 실패: {invoke_error}", "error")
+                return self._should_create_ticket_fallback(email_data, user_query)
             
             # JSON 파싱
             import json
@@ -254,12 +318,12 @@ JSON 형식으로만 응답해주세요:
                 detected_intent = lm_result.get('detected_intent', 'other')
                 ticket_type = lm_result.get('ticket_type', 'general')
                 
-                st.success(f"   🧠 LM 판단 결과:")
-                st.success(f"      - 티켓 생성 필요: {should_create}")
-                st.success(f"      - 판단 근거: {reasoning}")
-                st.success(f"      - 신뢰도: {confidence}")
-                st.success(f"      - 감지된 의도: {detected_intent}")
-                st.success(f"      - 티켓 타입: {ticket_type}")
+                self._safe_log(f"   🧠 LM 판단 결과:", "info")
+                self._safe_log(f"      - 티켓 생성 필요: {should_create}", "info")
+                self._safe_log(f"      - 판단 근거: {reasoning}", "info")
+                self._safe_log(f"      - 신뢰도: {confidence}", "info")
+                self._safe_log(f"      - 감지된 의도: {detected_intent}", "info")
+                self._safe_log(f"      - 티켓 타입: {ticket_type}", "info")
                 
                 if should_create:
                     # 🎯 LLM이 "티켓 생성 필요"라고 판단한 경우, LLM 판단을 절대적으로 우선시
@@ -296,31 +360,61 @@ JSON 형식으로만 응답해주세요:
                         'ticket_type': ticket_type
                     }
                 
-            except json.JSONDecodeError:
-                st.error(f"   ❌ LM 응답 JSON 파싱 실패")
+            except json.JSONDecodeError as e:
+                self._safe_log(f"   ❌ LM 응답 JSON 파싱 실패: {e}", "error")
+                self._safe_log(f"   📋 LM 원본 응답: '{response_content[:500]}...'", "error")  # 처음 500자만 표시
+                self._safe_log(f"   📏 응답 길이: {len(response_content)} 문자", "error")
                 return self._should_create_ticket_fallback(email_data, user_query)
                 
         except Exception as e:
-            st.error(f"   ❌ LM 호출 실패: {str(e)}")
+            self._safe_log(f"   ❌ LM 호출 실패: {str(e)}", "error")
+            # 상세한 예외 정보 로깅
+            import traceback
+            traceback_str = traceback.format_exc()
+            self._safe_log(f"   📋 상세 오류: {traceback_str}", "error")
             return self._should_create_ticket_fallback(email_data, user_query)
     
     def _should_create_ticket_fallback(self, email_data: Dict[str, Any], user_query: str = "") -> Tuple[TicketCreationStatus, str, Dict[str, Any]]:
         """LLM을 사용할 수 없을 때의 fallback 로직"""
         # 경고 메시지는 한 번만 표시 (첫 번째 호출 시에만)
         if not hasattr(self, '_fallback_warning_shown'):
-            st.warning("⚠️ LM을 사용할 수 없어 기본 규칙을 적용합니다.")
+            self._safe_log("⚠️ LM을 사용할 수 없어 기본 규칙을 적용합니다.", "warning")
             self._fallback_warning_shown = True
         
-        # 1단계: 사용자 쿼리에서 명시적 티켓 생성 의도 확인
+        # 1단계: 광고/스팸 메일 사전 필터링 (강화됨)
+        subject = email_data.get('subject', '')
+        body = email_data.get('body', '')
+        full_content = f"{subject} {body}".lower()
+        
+        # 광고 메일 감지 키워드
+        spam_indicators = [
+            '(광고)', '💰', '📢', '할인', '이벤트', '프로모션', '무료', '당첨',
+            '@media', 'css', 'style', 'font-family', 'background-color',
+            'unsubscribe', '수신거부', 'marketing', '뉴스레터'
+        ]
+        
+        spam_score = sum(1 for indicator in spam_indicators if indicator in full_content)
+        
+        if spam_score >= 2:  # 2개 이상의 광고성 키워드가 있으면 필터링
+            return TicketCreationStatus.NO_TICKET_NEEDED, f"광고/스팸 메일로 감지 (점수: {spam_score})", {
+                'fallback_reason': 'LM 사용 불가 + 광고 메일 감지',
+                'spam_score': spam_score,
+                'detected_indicators': [indicator for indicator in spam_indicators if indicator in full_content]
+            }
+        
+        # 2단계: 사용자 쿼리에서 명시적 티켓 생성 의도 확인 (확장됨)
         query_lower = user_query.lower()
-        explicit_ticket_keywords = ['티켓', '일감', '작업', '할일', '일정', '스케줄', '프로젝트', '이슈', '버그']
+        explicit_ticket_keywords = [
+            '티켓', '일감', '작업', '할일', '일정', '스케줄', '프로젝트', '이슈', '버그',
+            '처리', '생성', '만들', '확인', '관리', '업무', '메일', '읽은', '안읽은'
+        ]
         
         has_explicit_intent = any(keyword in query_lower for keyword in explicit_ticket_keywords)
         
         if not has_explicit_intent:
             # 정보 메시지도 한 번만 표시
             if not hasattr(self, '_no_intent_info_shown'):
-                st.info("ℹ️ 사용자 쿼리에 명시적 티켓 생성 의도가 없습니다.")
+                self._safe_log("ℹ️ 사용자 쿼리에 명시적 티켓 생성 의도가 없습니다.", "info")
                 self._no_intent_info_shown = True
                 
             return TicketCreationStatus.NO_TICKET_NEEDED, "기본 규칙: 명시적 티켓 생성 의도 없음", {
@@ -328,16 +422,17 @@ JSON 형식으로만 응답해주세요:
                 'query_analysis': '단순 메일 조회로 판단'
             }
         
-        # 2단계: 사용자가 명시적 티켓 생성 의도를 보였다면, 키워드 검증과 무관하게 티켓 생성
-        # (LLM 우선시 원칙과 일치)
+        # 3단계: 사용자가 명시적 티켓 생성 의도를 보였다면, 광고 필터링 후 티켓 생성
+        # (LLM 우선시 원칙과 일치하되 광고는 제외)
         email_has_keywords = self._check_ticket_keywords_in_email(email_data)
         
-        # 사용자가 명시적 의도를 보였다면, 키워드 검증 결과와 무관하게 티켓 생성
-        return TicketCreationStatus.SHOULD_CREATE, "기본 규칙: 명시적 티켓 생성 의도 발견 (LLM 우선시 원칙)", {
-            'fallback_reason': 'LM 사용 불가 + 명시적 의도',
+        # 사용자가 명시적 의도를 보였고 광고가 아니라면 티켓 생성
+        return TicketCreationStatus.SHOULD_CREATE, "기본 규칙: 명시적 티켓 생성 의도 발견 (광고 필터링 통과)", {
+            'fallback_reason': 'LM 사용 불가 + 명시적 의도 + 광고 아님',
             'explicit_intent': True,
             'email_keywords': email_has_keywords,  # 보조 정보
-            'llm_priority_principle': '사용자 의도 우선시'
+            'spam_score': spam_score,
+            'llm_priority_principle': '사용자 의도 우선시 (광고 제외)'
         }
     
     def _check_ticket_keywords_in_email(self, email_data: Dict[str, Any]) -> List[str]:

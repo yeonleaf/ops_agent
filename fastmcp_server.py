@@ -95,16 +95,7 @@ class DatabaseManager:
             )
         """)
         
-        # sessions 테이블 생성
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            )
-        """)
+        # sessions 테이블 제거됨 (메모리 기반 세션 관리 사용)
         
         conn.commit()
         conn.close()
@@ -131,46 +122,7 @@ class DatabaseManager:
         conn.close()
         return user_id
     
-    def create_session(self, user_id: int, expires_at: datetime):
-        """세션 생성"""
-        session_id = str(uuid.uuid4())
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)",
-            (session_id, user_id, expires_at)
-        )
-        conn.commit()
-        conn.close()
-        return session_id
-    
-    def get_session(self, session_id: str):
-        """세션 조회"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT s.*, u.email FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = ? AND s.expires_at > ?",
-            (session_id, datetime.now())
-        )
-        session = cursor.fetchone()
-        conn.close()
-        return session
-    
-    def delete_session(self, session_id: str):
-        """세션 삭제"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        conn.commit()
-        conn.close()
-    
-    def delete_user_sessions(self, user_id: int):
-        """사용자의 모든 세션 삭제"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-        conn.commit()
-        conn.close()
+    # sessions 테이블 관련 메서드 제거됨 (메모리 기반 세션 관리 사용)
     
     def update_user_google_token(self, user_id: int, encrypted_token: str = None):
         """사용자 Google 토큰 업데이트 (None이면 토큰 삭제)"""
@@ -240,18 +192,20 @@ class AuthResponse(BaseModel):
 
 # 인증 의존성
 def get_current_user(request: Request):
-    """현재 로그인된 사용자 조회"""
+    """현재 로그인된 사용자 조회 (메모리 기반 세션 관리)"""
     session_id = request.cookies.get("session_id")
     if not session_id:
         raise HTTPException(status_code=401, detail="인증이 필요합니다")
     
-    session = db_manager.get_session(session_id)
+    # 메모리 기반 세션 관리 사용
+    from auth_utils import session_manager
+    session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=401, detail="세션이 만료되었습니다")
     
     return {
-        "user_id": session[1],
-        "email": session[4]
+        "user_id": session['user_id'],
+        "email": session['email']
     }
 
 # FastAPI 엔드포인트들
@@ -294,9 +248,9 @@ async def login(request: LoginRequest, response: Response):
         if not bcrypt.checkpw(request.password.encode('utf-8'), user[2].encode('utf-8')):
             raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다")
         
-        # 세션 생성
-        expires_at = datetime.now() + timedelta(days=7)
-        session_id = db_manager.create_session(user[0], expires_at)
+        # 메모리 기반 세션 생성
+        from auth_utils import session_manager
+        session_id = session_manager.create_session(user[0], user[1])
         
         # HttpOnly 쿠키 설정
         response.set_cookie(
@@ -337,15 +291,14 @@ async def logout(request: LogoutRequest, response: Response):
         # 현재 사용자 정보 가져오기
         current_user = get_current_user(request)
         
-        # 세션 삭제
-        if request.session_id:
-            # 특정 세션만 삭제
-            db_manager.delete_session(request.session_id)
-            logging.info(f"🔓 특정 세션 삭제: {request.session_id}")
-        else:
-            # 사용자의 모든 세션 삭제
-            db_manager.delete_user_sessions(current_user["user_id"])
-            logging.info(f"🔓 사용자 모든 세션 삭제: {current_user['user_id']}")
+        # 메모리 기반 세션 삭제
+        session_id = request.cookies.get("session_id")
+        if session_id:
+            from auth_utils import session_manager
+            session_manager.delete_session(session_id)
+            logging.info(f"🔓 세션 삭제: {session_id}")
+        
+        logging.info(f"🔓 사용자 로그아웃: {current_user['user_id']}")
         
         # 글로벌 컨텍스트 초기화
         clear_user_context()

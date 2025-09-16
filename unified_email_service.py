@@ -24,6 +24,7 @@ from email_provider import create_provider, get_available_providers, get_default
 from email_models import EmailMessage, EmailSearchResult, EmailPriority
 from memory_based_ticket_processor import MemoryBasedTicketProcessorTool
 from mem0_memory_adapter import create_mem0_memory, add_ticket_event, search_related_memories
+from typing import List
 
 # TicketCreationStatus enum 정의 (memory_based_ticket_processor에서 가져옴)
 class TicketCreationStatus(str):
@@ -39,6 +40,9 @@ from memory_based_ticket_processor import create_memory_based_ticket_processor
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# 전역 캐시 변수들
+_integrated_classifier_cache = None
 
 def fetch_emails_sync(provider_name: str, use_classifier: bool = False, max_results: int = 20) -> Dict[str, Any]:
     """
@@ -188,7 +192,9 @@ class UnifiedEmailService:
             if filters['is_read']:
                 query_parts.append("is:read")  # 읽은 메일
             else:
-                query_parts.append("is:unread")  # 안 읽은 메일
+                # 안 읽은 메일 + 최신 메일 우선을 위한 날짜 제한
+                query_parts.append("is:unread")
+                query_parts.append("newer_than:7d")  # 최근 7일로 제한하여 최신순 보장
         
         # 발신자 필터
         if 'sender' in filters:
@@ -215,8 +221,8 @@ class UnifiedEmailService:
         if 'date_before' in filters:
             query_parts.append(f"before:{filters['date_before']}")
         
-        # 기본 쿼리 (최신 메일부터) - Gmail API에서는 빈 쿼리 사용
-        # is:any는 Gmail API에서 유효하지 않으므로 빈 문자열 사용
+        # 기본 쿼리 (최신 메일부터) - Gmail API는 기본적으로 최신순이지만 명시적 보장
+        # newer_than 파라미터로 최신 메일 우선 보장
         
         # 쿼리 조합
         final_query = " ".join(query_parts)
@@ -224,22 +230,75 @@ class UnifiedEmailService:
         
         return final_query
 
+    def _parse_email_date(self, email_dict: Dict[str, Any]) -> datetime:
+        """이메일 딕셔너리에서 받은 날짜를 파싱합니다."""
+        try:
+            # Gmail API에서 제공하는 날짜 필드들 확인
+            date_fields = ['received_date', 'date', 'receivedDateTime', 'Date']
+            
+            for field in date_fields:
+                if field in email_dict and email_dict[field]:
+                    date_str = email_dict[field]
+                    
+                    # 이미 datetime 객체인 경우
+                    if isinstance(date_str, datetime):
+                        return date_str
+                    
+                    # 문자열인 경우 파싱 시도
+                    if isinstance(date_str, str):
+                        try:
+                            # ISO 형식 시도
+                            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        except:
+                            try:
+                                # RFC 2822 형식 시도 (Gmail 표준)
+                                from email.utils import parsedate_to_datetime
+                                return parsedate_to_datetime(date_str)
+                            except:
+                                continue
+            
+            # 파싱 실패 시 현재 시간 반환
+            logging.warning(f"이메일 날짜 파싱 실패, 현재 시간 사용: {email_dict.get('id', 'unknown')}")
+            return datetime.now()
+            
+        except Exception as e:
+            logging.warning(f"이메일 날짜 파싱 오류: {e}, 현재 시간 사용")
+            return datetime.now()
+
     def _init_classifier(self):
-        """필요 시점에 Memory-Based 학습 분류기를 초기화합니다."""
+        """IntegratedMailClassifier를 우선 사용하고, 실패 시 MemoryBased로 대체"""
         if not self.classifier:
             try:
-                self.classifier = MemoryBasedTicketProcessorTool()
-                logging.info("Memory-Based 학습 분류기 초기화 완료")
-            except Exception as e:
-                logging.warning(f"Memory-Based 학습 분류기 초기화 실패: {e}")
-                raise e
+                # 1차 시도: IntegratedMailClassifier (복잡한 분류 로직)
+                from integrated_mail_classifier import IntegratedMailClassifier
+                self.classifier = IntegratedMailClassifier(use_lm=True)
+                logging.info("✅ IntegratedMailClassifier (복잡한 분류 로직) 초기화 완료")
+            except Exception as e1:
+                logging.warning(f"⚠️ IntegratedMailClassifier 초기화 실패: {e1}")
+                try:
+                    # 2차 시도: MemoryBasedTicketProcessorTool (간단한 분류)
+                    self.classifier = MemoryBasedTicketProcessorTool()
+                    logging.info("✅ MemoryBasedTicketProcessorTool (간단한 분류) 초기화 완료")
+                except Exception as e2:
+                    logging.error(f"❌ 모든 분류기 초기화 실패: {e2}")
+                    raise e2
+
 
     def fetch_emails(self, filters: Optional[Dict[str, Any]] = None) -> List[EmailMessage]:
         """Gmail API의 q 파라미터를 사용하여 서버 레벨에서 필터링된 이메일을 가져옵니다."""
         try:
             # Gmail API 쿼리 구성
             gmail_query = self._build_gmail_query(filters or {})
-            logging.info(f"Gmail API 쿼리 구성: {gmail_query}")
+            logging.info(f"🔍 Gmail API 쿼리 구성: '{gmail_query}' (필터: {filters})")
+
+            # 안 읽은 메일 쿼리 특별 확인
+            if filters and filters.get('is_read') is False:
+                logging.info("🔍 *** 안 읽은 메일 필터 감지 - is_read=False ***")
+                expected_query = "is:unread newer_than:7d"  # newer_than:7d 포함된 쿼리 예상
+                if gmail_query != expected_query:
+                    logging.warning(f"⚠️ 예상과 다른 쿼리: '{gmail_query}' (예상: '{expected_query}')")
+                else:
+                    logging.info(f"✅ 안 읽은 메일 쿼리 생성 완료: '{gmail_query}'")
             
             # 이미 인증된 Gmail API 클라이언트 사용
             gmail_client = self.provider
@@ -254,13 +313,23 @@ class UnifiedEmailService:
             
             # Gmail API에서 필터링된 메일 가져오기
             search_result = gmail_client.search_emails(gmail_query, max_results=max_results)
-            gmail_emails = search_result.messages
-            
+
+            # 반환 타입에 따라 처리 (EmailSearchResult 또는 List)
+            if hasattr(search_result, 'messages'):
+                # EmailSearchResult 객체인 경우
+                gmail_emails = search_result.messages
+                logging.info(f"EmailSearchResult에서 {len(gmail_emails)}개 메일 가져옴")
+            else:
+                # List 객체인 경우 (gmail_api_client.py의 search_emails)
+                gmail_emails = search_result
+                logging.info(f"Gmail API에서 {len(gmail_emails)}개 메일 가져옴")
+
             if not gmail_emails:
                 logging.info("조건에 맞는 메일이 없습니다.")
                 return []
             
-            logging.info(f"Gmail API에서 {len(gmail_emails)}개 메일 가져옴")
+            # 최신순 정렬 보장 - 메일을 가져온 후 received_date로 정렬
+            logging.info(f"📋 메일 정렬 전: {len(gmail_emails)}개")
             
             # Gmail 데이터를 EmailMessage 형식으로 변환
             email_messages = []
@@ -288,7 +357,7 @@ class UnifiedEmailService:
                         subject=email_dict.get('subject', '제목 없음'),
                         sender=email_dict.get('from', '발신자 없음'),
                         body=body,
-                        received_date=datetime.now(),  # 실제 날짜 파싱 필요
+                        received_date=self._parse_email_date(email_dict),  # 실제 날짜 파싱
                         is_read=calculated_is_read,
                         priority=EmailPriority.NORMAL,
                         has_attachments=False  # 첨부파일 확인 로직 필요
@@ -316,6 +385,22 @@ class UnifiedEmailService:
                     logging.error(f"상세 오류: {traceback.format_exc()}")
                     continue
             
+            # 최신순 정렬 보장: received_date 기준 내림차순 정렬
+            try:
+                email_messages.sort(key=lambda x: x.received_date, reverse=True)
+                logging.info(f"✅ 메일 최신순 정렬 완료: {len(email_messages)}개")
+                
+                # 정렬 결과 로깅 (처음 3개만)
+                if email_messages:
+                    logging.info("📋 정렬된 메일 순서 (최신 3개):")
+                    for i, email in enumerate(email_messages[:3]):
+                        date_str = email.received_date.strftime('%Y-%m-%d %H:%M') if hasattr(email.received_date, 'strftime') else str(email.received_date)
+                        subject_preview = email.subject[:30] if email.subject else "제목 없음"
+                        logging.info(f"  {i+1}. {date_str} - {subject_preview}...")
+                        
+            except Exception as e:
+                logging.warning(f"⚠️ 메일 정렬 실패: {e}, 원본 순서 유지")
+            
             # Gmail API에서 이미 maxResults로 제한했으므로 추가 제한 불필요
             logging.info(f"최종 반환 메일 수: {len(email_messages)}개")
             return email_messages
@@ -335,7 +420,18 @@ class UnifiedEmailService:
                 return []
             
             # 실제 Gmail에서 모든 메일 가져오기 (읽은 메일 + 안 읽은 메일)
+            logging.info(f"🔍 Gmail API 호출 시작: get_all_emails(max_results={max_results})")
             gmail_emails = gmail_client.get_all_emails(max_results)
+            
+            logging.info(f"📊 Gmail API 응답: {len(gmail_emails)}개 메일")
+            if gmail_emails:
+                # 첫 번째 메일의 라벨 정보 확인
+                first_email = gmail_emails[0]
+                if isinstance(first_email, dict):
+                    labels = first_email.get('labels', [])
+                    is_read = 'UNREAD' not in labels
+                    logging.info(f"📧 첫 번째 메일 라벨 정보: {labels}")
+                    logging.info(f"📧 첫 번째 메일 읽음 상태: {'읽음' if is_read else '안읽음'}")
             
             if not gmail_emails:
                 logging.info("가져올 메일이 없습니다.")
@@ -367,7 +463,7 @@ class UnifiedEmailService:
                         subject=email_dict.get('subject', '제목 없음'),
                         sender=email_dict.get('from', '발신자 없음'),
                         body=body,
-                        received_date=datetime.now(),  # 실제 날짜 파싱 필요
+                        received_date=self._parse_email_date(email_dict),  # 실제 날짜 파싱
                         is_read=calculated_is_read,
                         priority=EmailPriority.NORMAL,
                         has_attachments=False  # 첨부파일 확인 로직 필요
@@ -426,8 +522,8 @@ class UnifiedEmailService:
                         
                         # 메일 받은 시간 조회 (start_date로 사용)
                         email_received_time = None
-                        if mail_data and hasattr(mail_data, 'received_datetime'):
-                            email_received_time = mail_data.received_datetime
+                        if email and hasattr(email, 'received_datetime'):
+                            email_received_time = email.received_datetime
                         elif 'received_datetime' in ticket:
                             email_received_time = ticket['received_datetime']
                         
@@ -732,11 +828,18 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                 logging.info(f"🔍 UnifiedEmailService({provider_name}) 생성 시도...")
                 service = UnifiedEmailService(provider_name, access_token=access_token)
                 logging.info(f"🔍 서비스 생성 완료: {service}")
-                
+                logging.info(f"🔍 서비스 클래스: {service.__class__}")
+                logging.info(f"🔍 서비스에 fetch_emails 메서드 존재: {hasattr(service, 'fetch_emails')}")
+
+                # 메서드가 없으면 디버깅 정보 출력
+                if not hasattr(service, 'fetch_emails'):
+                    logging.error(f"❌ service 객체에 fetch_emails 메서드가 없습니다: {dir(service)}")
+                    raise AttributeError("fetch_emails 메서드가 존재하지 않습니다")
+
                 # 안 읽은 메일 필터 설정
                 unread_filters = {
                     'is_read': False,  # 안 읽은 메일만
-                    'limit': 20  # 최신순으로 20개만
+                    'limit': 20  # 최신순으로 20개 가져와서 모두 처리
                 }
                 logging.info(f"🔍 안 읽은 메일 필터: {unread_filters}")
                 
@@ -766,6 +869,17 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         if unread_emails:
             first_email = unread_emails[0]
             logging.info(f"🔍 첫 번째 메일: id={first_email.id}, subject={first_email.subject}, sender={first_email.sender}")
+            
+            # 메일 읽음 상태 상세 로깅
+            if hasattr(first_email, 'is_read'):
+                logging.info(f"📧 첫 번째 메일 읽음 상태: {'읽음' if first_email.is_read else '안읽음'}")
+            else:
+                logging.warning("⚠️ 첫 번째 메일에 is_read 속성이 없습니다")
+                
+            # 모든 메일의 읽음 상태 통계
+            read_count = sum(1 for email in unread_emails if hasattr(email, 'is_read') and email.is_read)
+            unread_count = len(unread_emails) - read_count
+            logging.info(f"📊 메일 읽음 상태 통계: 읽음 {read_count}개, 안읽음 {unread_count}개")
         else:
             logging.warning("⚠️ 안 읽은 메일이 없습니다")
             return {
@@ -779,10 +893,8 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         # 2단계: 최적화된 LLM 기반 업무용 메일 필터링
         logging.info("🔍 2단계: 최적화된 LLM 기반 업무용 메일 필터링 시작...")
         
-        # 성능 최적화: 처리할 메일 수 제한 (20개 → 10개)
-        if len(unread_emails) > 10:
-            logging.info(f"⚡ 성능 최적화: {len(unread_emails)}개 메일 중 최신 10개만 처리")
-            unread_emails = unread_emails[:10]
+        # 모든 메일 처리 (제한 제거)
+        logging.info(f"📋 모든 메일 처리: {len(unread_emails)}개 메일 전체 분류 진행")
         
         try:
             # Memory-Based Ticket Processor를 사용하여 LLM이 업무 관련성 판단
@@ -812,53 +924,120 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                 context_info += f"- 대기 중인 티켓: {status_stats.get('pending', 0)}개\n"
                 context_info += f"- 총 티켓: {status_stats.get('total', 0)}개\n"
             
-            # 1단계: 빠른 키워드 기반 사전 필터링
-            logging.info("🔍 2a. 빠른 키워드 기반 사전 필터링 시작...")
+            # 1단계: IntegratedMailClassifier를 사용한 정교한 메일 분류
+            logging.info("🔍 2a. IntegratedMailClassifier를 사용한 정교한 메일 분류 시작...")
             work_related_emails = []
             non_work_emails = []
-            
-            # 업무 관련 키워드 패턴 (빠른 필터링용)
-            work_keywords = [
-                'bug', 'error', 'issue', 'problem', 'fix', 'urgent', 'important',
-                'meeting', 'schedule', 'deadline', 'project', 'task', 'request',
-                'approve', 'review', 'feedback', 'action', 'required', 'help',
-                'support', 'service', 'system', 'server', 'database', 'api',
-                '버그', '오류', '문제', '수정', '긴급', '중요', '회의', '일정',
-                '마감', '프로젝트', '작업', '요청', '승인', '검토', '피드백',
-                '액션', '필요', '도움', '지원', '서비스', '시스템', '서버', '데이터베이스'
-            ]
-            
-            # 개인/마케팅 관련 키워드 패턴
-            personal_keywords = [
-                'newsletter', 'marketing', 'promotion', 'sale', 'discount',
-                'personal', 'private', 'spam', 'unsubscribe', 'advertisement',
-                '뉴스레터', '마케팅', '프로모션', '세일', '할인', '개인', '사적',
-                '스팸', '구독취소', '광고', '지옥', '고백', 'MZ', '숏폼'
-            ]
-            
-            for email in unread_emails:
-                # 빠른 키워드 기반 사전 필터링
-                full_text = f"{email.subject} {email.body}".lower()
-                
-                work_score = sum(1 for keyword in work_keywords if keyword.lower() in full_text)
-                personal_score = sum(1 for keyword in personal_keywords if keyword.lower() in full_text)
-                
-                # 명확한 개인/마케팅 메일은 LLM 호출 없이 제외
-                if personal_score > work_score and personal_score >= 2:
-                    email._llm_analysis = {
-                        'is_work_related': False,
-                        'reason': f"키워드 사전 필터링: 개인/마케팅 키워드 {personal_score}개 발견",
-                        'confidence': 0.8,
-                        'priority': 'Low',
-                        'suggested_labels': ['키워드-사전필터', '개인-관련'],
-                        'ticket_type': 'Task'
-                    }
-                    non_work_emails.append(email)
+
+            # 분류기 초기화 및 확인 (전역 캐시 사용 - 강제 재초기화)
+            global _integrated_classifier_cache
+            # 환경 변수 로드 기능 추가로 인한 강제 재초기화
+            try:
+                from integrated_mail_classifier import IntegratedMailClassifier
+                _integrated_classifier_cache = IntegratedMailClassifier()
+                logging.info("✅ IntegratedMailClassifier 재초기화 완료 (환경변수 로드 기능 포함)")
+                logging.info(f"   - LLM 사용 가능: {_integrated_classifier_cache.is_llm_available()}")
+                if _integrated_classifier_cache.is_llm_available():
+                    logging.info("   - ✅ LLM 기반 분류 활성화됨")
                 else:
-                    # LLM 분석이 필요한 메일들
-                    work_related_emails.append(email)
+                    logging.warning("   - ❌ LLM 기반 분류 비활성화됨 (fallback 사용)")
+            except Exception as e:
+                logging.error(f"❌ IntegratedMailClassifier 초기화 실패: {e}")
+                _integrated_classifier_cache = None
             
-            logging.info(f"🔍 사전 필터링 완료: 업무용 {len(work_related_emails)}개, 개인용 {len(non_work_emails)}개")
+            classifier = _integrated_classifier_cache
+            if classifier:
+                logging.info("✅ IntegratedMailClassifier를 사용한 복잡한 분류 로직 적용")
+                
+                # 안전장치: 매우 관대한 제한 (실질적으로 제한 없음)
+                import time
+                classification_start_time = time.time()
+                max_classification_time = 1800  # 30분 제한 (실질적 무제한)
+                
+                processed_emails = 0
+                max_emails_per_batch = len(unread_emails)  # 모든 메일 처리
+                
+                for email_idx, email in enumerate(unread_emails):
+                    # 안전장치 체크 (매우 관대한 제한)
+                    if time.time() - classification_start_time > max_classification_time:
+                        logging.warning(f"⚠️ 분류 시간 안전장치 작동 ({max_classification_time//60}분 초과), 처리 중단")
+                        break
+                    
+                    # 모든 메일 처리 (제한 없음)
+                    if processed_emails >= max_emails_per_batch:
+                        logging.info(f"✅ 모든 메일 분류 완료 ({max_emails_per_batch}개)")
+                        break
+                    try:
+                        # EmailMessage를 딕셔너리로 변환
+                        email_data = {
+                            'id': email.id,
+                            'subject': email.subject,
+                            'from': email.sender,
+                            'body': email.body,
+                            'received_date': email.received_date.isoformat() if hasattr(email.received_date, 'isoformat') else str(email.received_date),
+                            'is_read': email.is_read,
+                            'has_attachments': email.has_attachments
+                        }
+
+                        # IntegratedMailClassifier로 티켓 생성 여부 판단
+                        user_query = user_query if user_query else "안 읽은 메일 처리"
+                        ticket_status, reason, details = classifier.should_create_ticket(
+                            email_data, user_query
+                        )
+
+                        # 결과 분석 정보 추가
+                        email._integrated_analysis = {
+                            'ticket_status': ticket_status,
+                            'reason': reason,
+                            'details': details,
+                            'classification_method': 'integrated_classifier'
+                        }
+
+                        # 업무 관련 메일 여부 판단
+                        if ticket_status == 'should_create':
+                            work_related_emails.append(email)
+                            logging.info(f"✅ 업무 관련 메일 (IntegratedClassifier): {email.subject[:50]}... - {reason}")
+                        else:
+                            non_work_emails.append(email)
+                            logging.info(f"❌ 비업무 메일 (IntegratedClassifier): {email.subject[:50]}... - {reason}")
+                        
+                        # 처리 완료 카운터 증가
+                        processed_emails += 1
+
+                    except Exception as e:
+                        logging.warning(f"⚠️ IntegratedMailClassifier 분류 실패: {email.subject[:50]}... - {str(e)}")
+                        # 분류 실패 시 보수적으로 업무 관련으로 처리
+                        email._integrated_analysis = {
+                            'ticket_status': 'should_create',
+                            'reason': f'분류 실패로 보수적 처리: {str(e)}',
+                            'details': {},
+                            'classification_method': 'fallback'
+                        }
+                        work_related_emails.append(email)
+                        processed_emails += 1  # 예외 처리 시에도 카운터 증가
+
+            else:
+                # IntegratedMailClassifier를 사용할 수 없는 경우 간단한 키워드 기반으로 대체
+                logging.warning("⚠️ IntegratedMailClassifier 사용 불가, 간단한 키워드 분류로 대체")
+                work_keywords = ['bug', 'error', 'issue', 'urgent', 'meeting', 'project', 'task', '버그', '오류', '긴급', '회의']
+
+                for email in unread_emails:
+                    full_text = f"{email.subject} {email.body}".lower()
+                    work_score = sum(1 for keyword in work_keywords if keyword.lower() in full_text)
+
+                    email._integrated_analysis = {
+                        'ticket_status': 'should_create' if work_score > 0 else 'no_ticket_needed',
+                        'reason': f"키워드 기반 분류 (점수: {work_score})",
+                        'details': {'work_keywords_found': work_score},
+                        'classification_method': 'keyword_fallback'
+                    }
+
+                    if work_score > 0:
+                        work_related_emails.append(email)
+                    else:
+                        non_work_emails.append(email)
+
+            logging.info(f"🔍 IntegratedMailClassifier 분류 완료: 업무용 {len(work_related_emails)}개, 비업무용 {len(non_work_emails)}개")
             
             # 2단계: 간소화된 LLM 분석 (성능 최적화)
             if work_related_emails:
@@ -946,68 +1125,261 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                     non_work_emails = []
                     logging.warning("⚠️ LLM 필터링 실패로 모든 메일을 업무 관련으로 간주")
         
-        # 3단계: 간소화된 레이블 추천 (성능 최적화)
-        logging.info("🔍 3단계: 간소화된 레이블 추천 시작...")
-        try:
-            # 성능 최적화: mem0 검색 생략하고 기본 레이블 사용
-            skip_memory_search = len(work_related_emails) > 3  # 3개 초과 시 메모리 검색 생략
+        # 3단계: LLM 기반 고도화된 레이블 추천 및 유사 메일 검색
+        logging.info("🔍 3단계: LLM 기반 고도화된 레이블 추천 시작...")
+        
+        # 폴백 레이블 생성 함수 정의 (로컬 함수)
+        def _generate_fallback_labels(subject: str, body: str) -> List[str]:
+            """키워드 기반 폴백 레이블 생성"""
+            labels = []
+            full_text = f"{subject} {body}".lower()
             
-            if skip_memory_search:
-                logging.info("⚡ 성능 최적화: 메모리 검색 생략하고 기본 레이블 사용")
-                for email in work_related_emails:
-                    # 간단한 키워드 기반 레이블 추천
-                    default_labels = []
-                    subject_lower = email.subject.lower()
-                    
-                    if any(word in subject_lower for word in ['urgent', '긴급', 'asap']):
-                        default_labels.append('긴급')
-                    if any(word in subject_lower for word in ['bug', '버그', 'error', '오류']):
-                        default_labels.append('버그수정')
-                    if any(word in subject_lower for word in ['request', '요청', 'help', '도움']):
-                        default_labels.append('요청사항')
-                    if any(word in subject_lower for word in ['meeting', '회의', 'schedule']):
-                        default_labels.append('회의')
-                    
-                    if not default_labels:
-                        default_labels = ['일반업무']
-                    
-                    # 기본 레이블 설정
-                    if hasattr(email, '_llm_analysis'):
-                        email._llm_analysis['labels'] = default_labels
-                    else:
-                        email._llm_analysis = {'labels': default_labels}
-                    
-                    logging.info(f"✅ 기본 레이블 설정: {email.subject[:50]}... → {default_labels}")
-            else:
-                # mem0 메모리 인스턴스 생성 (소량일 때만)
-                if mem0_memory is None:
-                    mem0_memory = create_mem0_memory("ai_system")
+            # 우선순위 기반 레이블
+            if any(word in full_text for word in ['urgent', '긴급', 'asap', 'critical', '크리티컬']):
+                labels.append('긴급')
                 
-                # 소량의 메일만 간소화된 메모리 검색
-                for email in work_related_emails:
-                    try:
-                        # 간소화: 기본 레이블만 설정 (메모리 검색도 생략)
-                        default_labels = ['업무메일', '처리필요']
-                        
-                        if hasattr(email, '_llm_analysis'):
-                            email._llm_analysis['labels'] = default_labels
-                        else:
-                            email._llm_analysis = {'labels': default_labels}
-                        
-                        logging.info(f"✅ 간소화된 레이블 설정: {email.subject[:50]}... → {default_labels}")
-                    except Exception as e:
-                        logging.error(f"⚠️ 레이블 설정 실패: {str(e)}")
-                        # 실패해도 진행
-                        continue
+            # 카테고리 기반 레이블
+            if any(word in full_text for word in ['bug', '버그', 'error', '오류', 'fail', '실패']):
+                labels.append('버그수정')
+            elif any(word in full_text for word in ['feature', '기능', 'enhancement', '개선']):
+                labels.append('기능개발')
+            elif any(word in full_text for word in ['request', '요청', 'help', '도움', 'support', '지원']):
+                labels.append('요청사항')
+            elif any(word in full_text for word in ['meeting', '회의', 'schedule', '일정']):
+                labels.append('회의')
+            elif any(word in full_text for word in ['server', '서버', 'system', '시스템', 'database', '데이터베이스']):
+                labels.append('시스템')
+            elif any(word in full_text for word in ['api', 'API', 'interface', '인터페이스']):
+                labels.append('API')
+            else:
+                labels.append('일반업무')
+                
+            # 기술 스택 기반 레이블
+            if any(word in full_text for word in ['java', 'python', 'javascript', 'react', 'spring']):
+                labels.append('개발')
+            elif any(word in full_text for word in ['database', 'db', 'sql', 'oracle', 'mysql']):
+                labels.append('데이터베이스')
+            elif any(word in full_text for word in ['network', '네트워크', 'firewall', '방화벽']):
+                labels.append('네트워크')
+                
+            # 최소 하나의 레이블은 보장
+            if not labels:
+                labels = ['일반업무']
+                
+            return labels[:3]  # 최대 3개까지만 반환
+        
+        try:
+            # mem0 메모리 인스턴스 생성
+            if mem0_memory is None:
+                mem0_memory = create_mem0_memory("ai_system")
             
-            logging.info(f"🔍 레이블 추천 완료: {len(work_related_emails)}개 메일")
+            # Memory-Based Ticket Processor 사용하여 각 메일에 대해 고도화된 레이블 추천
+            # 안전장치: 매우 관대한 제한 (실질적으로 제한 없음)
+            llm_label_start_time = time.time()
+            max_llm_label_time = 3600  # 1시간 제한 (실질적 무제한)
+            max_llm_emails = len(work_related_emails)  # 모든 메일 처리
+            processed_llm_emails = 0
+            
+            for email_idx, email in enumerate(work_related_emails):
+                # 안전장치 체크 (매우 관대한 제한)
+                if time.time() - llm_label_start_time > max_llm_label_time:
+                    logging.warning(f"⚠️ LLM 레이블 생성 안전장치 작동 ({max_llm_label_time//60}분 초과), 남은 메일은 키워드 기반으로 처리")
+                    break
+                
+                # 모든 메일 LLM 처리 (제한 없음)
+                if processed_llm_emails >= max_llm_emails:
+                    logging.info(f"✅ 모든 메일 LLM 레이블 생성 완료 ({max_llm_emails}개)")
+                    break
+                try:
+                    logging.info(f"🔍 메일 '{email.subject[:50]}...'에 대한 LLM 레이블 분석 시작")
+                    
+                    # Memory-Based Ticket Processor를 사용하여 상세 분석
+                    from memory_based_ticket_processor import create_memory_based_ticket_processor
+                    
+                    processor = create_memory_based_ticket_processor()
+                    
+                    # 메일 내용을 LLM이 분석할 수 있는 형태로 구성
+                    email_content = f"제목: {email.subject}\n발신자: {email.sender}\n내용: {email.body}"
+                    
+                    # LLM을 사용하여 업무 관련성 판단 및 고도화된 레이블 추천
+                    llm_response = processor._run(
+                        email_content=email_content,
+                        email_subject=email.subject,
+                        email_sender=email.sender,
+                        message_id=email.id
+                    )
+                    
+                    # LLM 응답을 JSON으로 파싱
+                    import json
+                    logging.info(f"🔍 LLM 응답 길이: {len(llm_response)}, 타입: {type(llm_response)}")
+                    logging.info(f"🔍 LLM 응답 첫 200자: {repr(llm_response[:200])}")
+                    llm_data = json.loads(llm_response)
+                    
+                    if llm_data.get('success'):
+                        # reasoning 단계에서 티켓 생성 여부 판단
+                        reasoning_data = llm_data.get('workflow_steps', {}).get('reasoning', {})
+                        decision_data = reasoning_data.get('ticket_creation_decision', {})
+                        
+                        # fallback: workflow_steps가 없으면 최상위 decision 사용
+                        if not decision_data:
+                            decision_data = llm_data.get('decision', {}).get('ticket_creation_decision', {})
+                        
+                        decision = decision_data.get('decision', 'create_ticket')
+                        reason = decision_data.get('reason', 'AI 판단 완료')
+                        confidence = decision_data.get('confidence', 0.5)
+                        priority = decision_data.get('priority', 'Medium')
+                        llm_recommended_labels = decision_data.get('labels', [])
+                        ticket_type = decision_data.get('ticket_type', 'Task')
+                        
+                        # 추가: mem0에서 유사한 메일 검색하여 과거 레이블 패턴 활용
+                        try:
+                            related_memories = search_related_memories(
+                                memory=mem0_memory,
+                                email_content=email_content,
+                                limit=5
+                            )
+                            
+                            # 과거 유사 메일에서 사용된 레이블들 추출
+                            similar_labels = []
+                            for memory in related_memories:
+                                metadata = memory.get('metadata', {})
+                                # 메모리에서 레이블 정보 추출 (메모리 텍스트 분석)
+                                memory_text = memory.get('memory', '')
+                                if '레이블로' in memory_text or 'label' in memory_text.lower():
+                                    # 간단한 정규식으로 레이블 추출 시도
+                                    import re
+                                    label_matches = re.findall(r"'([^']+)'\s*레이블", memory_text)
+                                    similar_labels.extend(label_matches)
+                            
+                            # 중복 제거 및 빈도 기반 정렬
+                            from collections import Counter
+                            if similar_labels:
+                                label_frequency = Counter(similar_labels)
+                                top_similar_labels = [label for label, _ in label_frequency.most_common(3)]
+                                logging.info(f"🔍 과거 유사 메일에서 추출한 레이블: {top_similar_labels}")
+                            else:
+                                top_similar_labels = []
+                                
+                        except Exception as memory_error:
+                            logging.warning(f"⚠️ 유사 메일 검색 실패: {memory_error}")
+                            top_similar_labels = []
+                        
+                        # LLM 추천 레이블과 과거 유사 레이블을 통합
+                        final_labels = []
+                        
+                        # 1. LLM이 추천한 레이블 우선 추가
+                        for label in llm_recommended_labels:
+                            if label and label not in final_labels:
+                                final_labels.append(label)
+                                
+                        # 2. 과거 유사 메일 레이블 추가 (중복되지 않는 것만)
+                        for label in top_similar_labels:
+                            if label and label not in final_labels and len(final_labels) < 5:  # 최대 5개 레이블
+                                final_labels.append(label)
+                        
+                        # 3. 레이블이 없으면 기본 레이블 추가
+                        if not final_labels:
+                            final_labels = ['일반', '업무']
+                        
+                        # email 객체에 LLM 분석 결과 저장
+                        email._llm_analysis = {
+                            'is_work_related': (decision == 'create_ticket'),
+                            'reason': reason,
+                            'confidence': confidence,
+                            'priority': priority,
+                            'suggested_labels': final_labels,  # LLM + 메모리 기반 통합 레이블
+                            'ticket_type': ticket_type
+                        }
+                        
+                        # 추가로 LLM이 생성한 레이블과 추천 이유를 별도 저장
+                        email._llm_suggested_labels = final_labels
+                        email._llm_reasoning = f"LLM 분석: {reason} | 과거 유사 메일 패턴 반영: {len(top_similar_labels)}개"
+                        
+                        logging.info(f"✅ LLM 레이블 추천: {email.subject[:50]}... → {final_labels}")
+                        logging.info(f"   추천 이유: {reason}")
+                        logging.info(f"   신뢰도: {confidence}, 우선순위: {priority}")
+                        
+                        # LLM 처리 완료 카운터 증가
+                        processed_llm_emails += 1
+                        
+                    else:
+                        # LLM 실행 실패 - 키워드 기반으로 폴백
+                        fallback_labels = _generate_fallback_labels(email.subject, email.body)
+                        email._llm_analysis = {
+                            'is_work_related': True,
+                            'reason': 'LLM 실행 실패로 인한 키워드 기반 분석',
+                            'confidence': 0.3,
+                            'priority': 'Medium',
+                            'suggested_labels': fallback_labels,
+                            'ticket_type': 'Task'
+                        }
+                        email._llm_suggested_labels = fallback_labels
+                        email._llm_reasoning = 'LLM 실행 실패로 인한 키워드 기반 폴백'
+                        logging.warning(f"⚠️ LLM 실행 실패, 키워드 기반 레이블: {fallback_labels}")
+                        
+                except json.JSONDecodeError as json_error:
+                    # 파싱 실패 시 키워드 기반으로 폴백
+                    logging.error(f"❌ LLM 응답 JSON 파싱 실패: {json_error}")
+                    logging.error(f"❌ 파싱 오류 위치: line {json_error.lineno}, col {json_error.colno}")
+                    logging.error(f"❌ 응답 내용: {repr(llm_response)}")
+                    
+                    fallback_labels = _generate_fallback_labels(email.subject, email.body)
+                    email._llm_analysis = {
+                        'is_work_related': True,
+                        'reason': 'JSON 파싱 실패로 인한 키워드 기반 분석',
+                        'confidence': 0.3,
+                        'priority': 'Medium',
+                        'suggested_labels': fallback_labels,
+                        'ticket_type': 'Task'
+                    }
+                    email._llm_suggested_labels = fallback_labels
+                    email._llm_reasoning = f'JSON 파싱 실패: {str(json_error)}'
+                    logging.warning(f"⚠️ JSON 파싱 실패, 키워드 기반 레이블: {fallback_labels}")
+                    processed_llm_emails += 1  # 실패한 경우에도 카운터 증가
+                    
+                except Exception as e:
+                    # 기타 오류 발생 시 키워드 기반으로 폴백
+                    fallback_labels = _generate_fallback_labels(email.subject, email.body)
+                    email._llm_analysis = {
+                        'is_work_related': True,
+                        'reason': '처리 오류로 인한 키워드 기반 분석',
+                        'confidence': 0.3,
+                        'priority': 'Medium',
+                        'suggested_labels': fallback_labels,
+                        'ticket_type': 'Task'
+                    }
+                    email._llm_suggested_labels = fallback_labels
+                    email._llm_reasoning = f'처리 오류: {str(e)}'
+                    logging.error(f"❌ 레이블 생성 오류: {str(e)}, 키워드 기반 레이블: {fallback_labels}")
+                    processed_llm_emails += 1  # 오류 발생 시에도 카운터 증가
+            
+            # 처리되지 않은 나머지 메일들에 대해 키워드 기반 레이블 적용 (안전장치 작동 시에만)
+            remaining_emails = work_related_emails[processed_llm_emails:]
+            if remaining_emails:
+                logging.warning(f"⚠️ 안전장치 작동으로 나머지 {len(remaining_emails)}개 메일에 키워드 기반 레이블 적용")
+                for email in remaining_emails:
+                    fallback_labels = _generate_fallback_labels(email.subject, email.body)
+                    email._llm_analysis = {
+                        'is_work_related': True,
+                        'reason': '안전장치 작동으로 키워드 기반 분석',
+                        'confidence': 0.3,
+                        'priority': 'Medium',
+                        'suggested_labels': fallback_labels,
+                        'ticket_type': 'Task'
+                    }
+                    email._llm_suggested_labels = fallback_labels
+                    email._llm_reasoning = '안전장치 작동으로 인한 키워드 기반 처리'
+            
+            logging.info(f"🔍 LLM 기반 레이블 추천 완료: {processed_llm_emails}개 LLM 처리, {len(remaining_emails)}개 키워드 처리")
             
         except Exception as e:
-            logging.error(f"❌ 레이블 추천 실패: {str(e)}")
-            # 오류 발생 시 기본 레이블 설정
+            logging.error(f"❌ LLM 레이블 추천 실패: {str(e)}")
+            # 오류 발생 시 모든 메일에 기본 레이블 설정
             for email in work_related_emails:
                 if not hasattr(email, '_llm_analysis'):
-                    email._llm_analysis = {'labels': ['일반업무']}
+                    email._llm_analysis = {'suggested_labels': ['일반업무']}
+                if not hasattr(email, '_llm_suggested_labels'):
+                    email._llm_suggested_labels = ['일반업무']
         
         # 4단계: 새로운 티켓 생성 (업무 관련 메일만)
         logging.info("🔍 4단계: 새로운 티켓 생성 시작...")
@@ -1293,7 +1665,7 @@ def test_email_fetch_logic(provider_name: str) -> Dict[str, Any]:
         # 안 읽은 메일 필터
         unread_filters = {
             'is_read': False,
-            'limit': 10
+            'limit': 20  # 20개 전체 처리
         }
         logging.info(f"🧪 안 읽은 메일 필터: {unread_filters}")
         
