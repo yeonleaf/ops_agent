@@ -441,18 +441,53 @@ class TicketAIRecommender:
                     
             except Exception as rerank_error:
                 print(f"⚠️ Cohere Re-ranking 실패: {str(rerank_error)}")
-                print("🔄 기본 벡터 검색으로 폴백...")
-                
-                # 폴백: 기존 방식 사용
+                print("🔄 RRF 시스템으로 폴백...")
+
+                # 폴백: RRF 시스템 사용
+                try:
+                    from vector_db_models import VectorDBManager
+                    vector_db = VectorDBManager()
+
+                    if vector_db.rrf_system:
+                        print(f"🚀 RRF 시스템 통합 검색 시작: '{ticket_description}'")
+                        rrf_results = vector_db.rrf_system.rrf_search(ticket_description)
+
+                        if rrf_results:
+                            # RRF 결과를 표준 형식으로 변환
+                            formatted_results = []
+                            for result in rrf_results[:5]:  # 상위 5개
+                                formatted_result = {
+                                    "id": result.get("id", ""),
+                                    "content": result.get("content", ""),
+                                    "source": "rrf_system",
+                                    "similarity_score": result.get("score", result.get("raw_score", 0.0)),
+                                    "metadata": result.get("metadata", {}),
+                                    "search_type": "rrf_fusion",
+                                    "rrf_rank": result.get("rrf_rank", 0),
+                                    "weight": result.get("weight", 1.0)
+                                }
+                                formatted_results.append(formatted_result)
+
+                            print(f"✅ RRF 시스템 검색 완료: {len(formatted_results)}개 결과")
+                            return formatted_results
+                        else:
+                            print("⚠️ RRF 시스템 결과 없음")
+
+                except Exception as rrf_error:
+                    print(f"⚠️ RRF 시스템 사용 실패: {str(rrf_error)}")
+
+                print("🔄 기본 벡터 검색으로 최종 폴백...")
+
+                # 최종 폴백: 기존 방식 사용
                 similar_emails = self.get_similar_emails(ticket_description, email_limit)
                 similar_chunks = self.get_similar_file_chunks(ticket_description, chunk_limit)
-                
+
                 # 결과 통합 및 정렬
                 all_results = similar_emails + similar_chunks
-                
+
                 # 유사도 점수 기준으로 정렬 (높은 순)
                 all_results.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
-                
+
                 print(f"✅ 기본 통합 검색 완료: 메일 {len(similar_emails)}개, 파일 청크 {len(similar_chunks)}개")
                 return all_results
             
@@ -752,9 +787,50 @@ class TicketAIRecommender:
 # 전역 인스턴스
 ticket_ai_recommender = TicketAIRecommender()
 
-def get_ticket_ai_recommendation(ticket_id: int) -> Dict[str, Any]:
-    """티켓 AI 추천을 가져오는 편의 함수"""
-    return ticket_ai_recommender.get_recommendation_for_ticket(ticket_id)
+def get_ticket_ai_recommendation(ticket_id: int = None, 
+                                ticket_description: str = "",
+                                mail_content: str = "",
+                                ticket_history: str = "") -> Dict[str, Any]:
+    """티켓 AI 추천을 가져오는 편의 함수 (UI 호환 버전)"""
+    if ticket_id is not None:
+        # 기존 방식: ticket_id로 추천
+        return ticket_ai_recommender.get_recommendation_for_ticket(ticket_id)
+    else:
+        # 새로운 방식: 직접 제공된 데이터로 추천
+        try:
+            # AI 추천 엔진 실행
+            ai_engine = ticket_ai_recommender
+            
+            # 티켓 데이터 구성
+            ticket_data = {
+                'description': ticket_description,
+                'title': 'AI 추천 요청',
+                'status': 'pending',
+                'priority': 'medium'
+            }
+            
+            # 유사한 콘텐츠 검색
+            search_query = f"{ticket_description} {mail_content}".strip()
+            if search_query:
+                similar_content = ai_engine.get_integrated_similar_content(search_query, email_limit=3, chunk_limit=2)
+            else:
+                similar_content = []
+            
+            # AI 추천 생성
+            recommendation_result = ai_engine.generate_ai_recommendation(ticket_data, similar_content)
+            
+            return {
+                "recommendation": recommendation_result.get("recommendation", "추천을 생성할 수 없습니다."),
+                "confidence": recommendation_result.get("confidence", 0.5),
+                "source": "direct_call",
+                "success": recommendation_result.get("success", False)
+            }
+        except Exception as e:
+            return {
+                "recommendation": f"AI 추천 생성 중 오류가 발생했습니다: {str(e)}",
+                "confidence": 0.0,
+                "error": str(e)
+            }
 
 if __name__ == "__main__":
     # 테스트 코드

@@ -11,6 +11,14 @@ from typing import Dict, Any, List, Optional
 import json
 from vector_db_models import VectorDBManager
 
+# 로깅 설정 추가
+from module.logging_config import setup_logging
+import logging
+
+# 로깅 초기화
+setup_logging(level="INFO", log_file="logs/enhanced_ticket_ui.log", console_output=True)
+logger = logging.getLogger(__name__)
+
 # 페이지 설정
 st.set_page_config(
     page_title="Enhanced Ticket Management",
@@ -160,6 +168,7 @@ def display_vectordb_attachments(attachment_chunks):
 def load_tickets():
     """데이터베이스에서 티켓을 로드합니다."""
     try:
+        logger.info("📋 티켓 목록 로드 시작")
         conn = sqlite3.connect('tickets.db')
         cursor = conn.cursor()
         
@@ -561,8 +570,55 @@ def display_ticket_detail(ticket: Dict[str, Any]):
     
     # 설명 섹션
     st.subheader("📝 설명")
-    description = ticket.get('description', '설명이 없습니다.')
-    st.write(description)
+    
+    # 설명 편집 기능
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        current_description = ticket.get('description', '')
+        if current_description:
+            edited_description = st.text_area(
+                "설명 편집:",
+                value=current_description,
+                height=150,
+                key=f"description_edit_{ticket.get('id')}"
+            )
+        else:
+            edited_description = st.text_area(
+                "설명 편집:",
+                placeholder="설명을 입력하세요...",
+                height=150,
+                key=f"description_edit_{ticket.get('id')}"
+            )
+    
+    with col2:
+        st.write("")  # 공간 확보
+        st.write("")  # 공간 확보
+        if st.button("💾 저장", key=f"save_description_{ticket.get('id')}"):
+            if edited_description != current_description:
+                # description 업데이트 (SQLite 직접 업데이트)
+                try:
+                    import sqlite3
+                    conn = sqlite3.connect('tickets.db')
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("""
+                        UPDATE tickets 
+                        SET description = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (edited_description, datetime.now().isoformat(), ticket.get('id')))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    st.success("✅ 설명이 업데이트되었습니다!")
+                    logger.info(f"✅ 티켓 {ticket.get('id')} description 업데이트 완료")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 설명 업데이트 실패: {str(e)}")
+                    logger.error(f"❌ 티켓 {ticket.get('id')} description 업데이트 실패: {str(e)}")
+            else:
+                st.info("ℹ️ 변경사항이 없습니다.")
     
     # 레이블 관리 섹션 - langchain_chatbot_app.py에서 직접 구현하므로 여기서는 제거
     # (기존 레이블 관리 기능은 langchain_chatbot_app.py의 "레이블 관리 (직접 구현)" 섹션에서 처리)
@@ -649,20 +705,11 @@ def display_ticket_detail(ticket: Dict[str, Any]):
                 # 메일 내용 표시
                 st.subheader("📄 메일 내용")
                 
-                # 탭으로 원본/정제된 내용 구분
-                tab1, tab2 = st.tabs(["📝 정제된 내용", "📄 원본 내용"])
-                
-                with tab1:
-                    if mail.refined_content:
-                        st.text_area("정제된 내용", mail.refined_content, height=300, disabled=True)
-                    else:
-                        st.info("정제된 내용이 없습니다.")
-                
-                with tab2:
-                    if mail.original_content:
-                        st.text_area("원본 내용", mail.original_content, height=300, disabled=True)
-                    else:
-                        st.info("원본 내용이 없습니다.")
+                # 정제된 내용만 표시
+                if mail.refined_content:
+                    st.text_area("정제된 내용", mail.refined_content, height=300, disabled=True)
+                else:
+                    st.info("정제된 내용이 없습니다.")
                 
                 # 요약 및 핵심 포인트
                 if mail.content_summary:
@@ -714,7 +761,7 @@ def display_ticket_detail(ticket: Dict[str, Any]):
         try:
             with st.spinner("🤖 AI 추천을 생성하고 있습니다..."):
                 # AI 추천 생성
-                from vector_db_models import AIRecommendationEngine
+                from ticket_ai_recommender import get_ticket_ai_recommendation
                 
                 # 메일 내용 가져오기
                 mail_content = ""
@@ -731,14 +778,25 @@ def display_ticket_detail(ticket: Dict[str, Any]):
                 # 티켓 히스토리 (간단한 형태)
                 ticket_history = f"티켓 ID: {ticket.get('ticket_id')}, 상태: {ticket.get('status')}, 우선순위: {ticket.get('priority')}, 제목: {ticket.get('title')}"
                 
-                # AI 추천 엔진 실행
-                ai_engine = AIRecommendationEngine()
-                recommendation = ai_engine.generate_solution_recommendation(mail_content, ticket_history)
+                # AI 추천 생성
+                recommendation_result = get_ticket_ai_recommendation(
+                    ticket_description=ticket.get('description', ''),
+                    mail_content=mail_content,
+                    ticket_history=ticket_history
+                )
                 
-                st.success("✅ AI 추천이 생성되었습니다!")
-                st.markdown("---")
-                st.subheader("🤖 AI 추천 해결방법")
-                st.markdown(recommendation)
+                if recommendation_result and "recommendation" in recommendation_result:
+                    st.success("✅ AI 추천이 생성되었습니다!")
+                    st.markdown("---")
+                    st.subheader("🤖 AI 추천 해결방법")
+                    st.markdown(recommendation_result["recommendation"])
+                    
+                    # 신뢰도 표시 (있는 경우)
+                    if "confidence" in recommendation_result:
+                        confidence = recommendation_result["confidence"]
+                        st.info(f"📊 신뢰도: {confidence:.2f}")
+                else:
+                    st.error("❌ AI 추천 생성에 실패했습니다.")
                 
         except Exception as e:
             st.error(f"AI 추천 생성 중 오류가 발생했습니다: {str(e)}")

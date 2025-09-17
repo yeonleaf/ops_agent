@@ -38,8 +38,9 @@ from vector_db_models import VectorDBManager
 # Memory-Based Ticket Processor Tool import
 from memory_based_ticket_processor import create_memory_based_ticket_processor
 
-# 로깅 설정
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 로깅 설정 개선
+from module.logging_config import setup_logging
+setup_logging(level="INFO", log_file="logs/unified_email_service.log", console_output=True)
 
 # 전역 캐시 변수들
 _integrated_classifier_cache = None

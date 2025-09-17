@@ -73,12 +73,12 @@ class StructuredChunk:
     commenter: Optional[str] = None  # 댓글 작성자 (comment 타입일 때만)
 
 class VectorDBManager:
-    """Vector DB 관리자 - ChromaDB 사용"""
-    
+    """Vector DB 관리자 - ChromaDB 사용 (RRF 통합)"""
+
     def __init__(self, db_path: str = "./vector_db"):
         """ChromaDB 클라이언트 초기화 (싱글톤 사용)"""
         self.db_path = db_path
-        
+
         # 싱글톤 클라이언트 사용
         try:
             self.client = get_chromadb_client()
@@ -92,10 +92,14 @@ class VectorDBManager:
             except Exception as e2:
                 print(f"❌ ChromaDB 싱글톤 재설정 실패: {e2}")
                 raise e2
-        
+
         self.collection_name = "mail_collection"
         self.collection = self._get_or_create_collection()
-        
+
+        # RRF 시스템 초기화
+        self.rrf_system = None
+        self._init_rrf_system()
+
         # ChromaDB 파일 권한 자동 설정
         try:
             chroma_file = os.path.join(db_path, "chroma.sqlite3")
@@ -104,6 +108,19 @@ class VectorDBManager:
                 print(f"✅ ChromaDB 파일 권한 자동 설정: {chroma_file}")
         except Exception as e:
             print(f"⚠️ ChromaDB 파일 권한 설정 실패: {e}")
+
+    def _init_rrf_system(self):
+        """RRF 시스템 초기화"""
+        try:
+            from rrf_fusion_rag_system import RRFRAGSystem
+
+            # file_chunks 컬렉션으로 RRF 시스템 초기화
+            self.rrf_system = RRFRAGSystem("file_chunks")
+            print("✅ RRF 시스템 초기화 완료")
+        except Exception as e:
+            print(f"⚠️ RRF 시스템 초기화 실패: {e}")
+            print("🔄 기본 벡터 검색으로 폴백")
+            self.rrf_system = None
     
     def _ensure_vector_db_permissions(self):
         """Vector DB 폴더 및 파일 권한을 확실히 설정"""
@@ -355,35 +372,76 @@ class VectorDBManager:
             return None
     
     def search_similar_mails(self, query: str, n_results: int = 5) -> List[Mail]:
-        """유사한 메일 검색"""
+        """유사한 메일 검색 (개선된 벡터 검색 + 다중 쿼리)"""
         try:
+            print(f"📧 개선된 메일 검색 시작: '{query}'")
+
             # 쿼리 전처리 적용
             preprocessed_query = preprocess_for_embedding(query)
-            
-            results = self.collection.query(
-                query_texts=[preprocessed_query],
-                n_results=n_results,
-                include=["metadatas", "documents", "distances"]
-            )
-            
+
+            # 다중 쿼리 생성 및 검색
+            query_variations = [
+                preprocessed_query,
+                f"메일 내용: {preprocessed_query}",
+                f"이메일 주제: {preprocessed_query}",
+                f"요청사항: {preprocessed_query}"
+            ]
+
+            all_results = {}  # message_id를 키로 하는 딕셔너리
+
+            for query_variant in query_variations:
+                try:
+                    results = self.collection.query(
+                        query_texts=[query_variant],
+                        n_results=n_results,
+                        include=["metadatas", "documents", "distances"]
+                    )
+
+                    for i, message_id in enumerate(results['ids'][0]):
+                        if message_id not in all_results:
+                            metadata = results['metadatas'][0][i]
+                            document = results['documents'][0][i]
+                            distance = results['distances'][0][i] if results['distances'] else 1.0
+
+                            all_results[message_id] = {
+                                'metadata': metadata,
+                                'document': document,
+                                'distance': distance,
+                                'similarity_score': max(0.0, 1.0 - distance)
+                            }
+                        else:
+                            # 더 좋은 점수가 있으면 업데이트
+                            current_distance = results['distances'][0][i] if results['distances'] else 1.0
+                            if current_distance < all_results[message_id]['distance']:
+                                all_results[message_id]['distance'] = current_distance
+                                all_results[message_id]['similarity_score'] = max(0.0, 1.0 - current_distance)
+
+                except Exception as query_error:
+                    print(f"⚠️ 쿼리 변형 검색 실패: {query_error}")
+                    continue
+
+            # 유사도 점수로 정렬하여 상위 n_results개 선택
+            sorted_results = sorted(all_results.items(),
+                                  key=lambda x: x[1]['similarity_score'], reverse=True)[:n_results]
+
             mails = []
-            for i, message_id in enumerate(results['ids'][0]):
-                metadata = results['metadatas'][0][i]
-                document = results['documents'][0][i]
-                
-                # 메타데이터에서 직접 내용 가져오기 (더 안정적)
+            for message_id, result_data in sorted_results:
+                metadata = result_data['metadata']
+                document = result_data['document']
+
+                # 메타데이터에서 직접 내용 가져오기
                 refined_content = metadata.get("refined_content", "")
                 original_content = metadata.get("original_content", "")
                 content_summary = metadata.get("content_summary", "")
                 key_points_str = metadata.get("key_points", "[]")
-                
-                # key_points가 JSON 문자열인 경우 파싱
+
+                # key_points 파싱
                 try:
                     key_points = json.loads(key_points_str) if key_points_str else []
                 except (json.JSONDecodeError, TypeError):
                     key_points = []
-                
-                # 메타데이터에 내용이 없으면 document에서 파싱 시도
+
+                # 메타데이터에 내용이 없으면 document에서 파싱
                 if not refined_content:
                     lines = document.strip().split('\n')
                     for line in lines:
@@ -394,7 +452,7 @@ class VectorDBManager:
                         elif line.startswith("Key Points:"):
                             key_points_str = line.replace("Key Points:", "").strip()
                             key_points = [kp.strip() for kp in key_points_str.split(',') if kp.strip()]
-                
+
                 mail = Mail(
                     message_id=message_id,
                     original_content=original_content,
@@ -411,11 +469,12 @@ class VectorDBManager:
                     created_at=metadata.get("created_at", "")
                 )
                 mails.append(mail)
-            
+
+            print(f"✅ 개선된 메일 검색 완료: {len(mails)}개 결과 (다중 쿼리)")
             return mails
-            
+
         except Exception as e:
-            print(f"Vector DB 검색 오류: {e}")
+            print(f"❌ 개선된 메일 검색 실패: {e}")
             return []
     
     def update_mail_status(self, message_id: str, new_status: str) -> bool:
@@ -468,35 +527,79 @@ class VectorDBManager:
             return False
     
     def search_similar_file_chunks(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
-        """유사한 파일 청크 검색 (헤더 테이블 필터링 포함)"""
+        """유사한 파일 청크 검색 (RRF 기반 + 헤더 테이블 필터링)"""
         try:
+            # RRF 시스템 사용 (우선)
+            if self.rrf_system:
+                print(f"🚀 RRF 기반 파일 청크 검색 시작: '{query}'")
+                rrf_results = self.rrf_system.rrf_search(query)
+
+                if rrf_results:
+                    # RRF 결과를 기존 형식으로 변환
+                    file_chunks = []
+                    for result in rrf_results[:n_results * 3]:  # 필터링을 위해 더 많이 가져오기
+                        content = result.get('content', '')
+
+                        # 헤더 테이블 필터링
+                        if self._is_header_table_content(content):
+                            print(f"🚫 RRF 헤더 테이블 내용 필터링: {content[:50]}...")
+                            continue
+
+                        metadata = result.get('metadata', {})
+                        file_chunk = {
+                            "chunk_id": result.get('id', ''),
+                            "file_name": metadata.get("file_name", ""),
+                            "file_type": metadata.get("file_type", ""),
+                            "content": content,
+                            "page_number": metadata.get("page_number", 1),
+                            "element_type": metadata.get("element_type", "text"),
+                            "similarity_score": result.get('score', result.get('raw_score', 0.0)),
+                            "created_at": metadata.get("created_at", ""),
+                            "search_method": "rrf",
+                            "rrf_rank": result.get('rrf_rank', 0),
+                            "weight": result.get('weight', 1.0)
+                        }
+                        file_chunks.append(file_chunk)
+
+                        # 원하는 개수만큼 수집되면 중단
+                        if len(file_chunks) >= n_results:
+                            break
+
+                    print(f"✅ RRF 파일 청크 검색 완료: {len(file_chunks)}개 결과 (RRF 기반)")
+                    return file_chunks
+                else:
+                    print("⚠️ RRF 검색 결과 없음, 기본 검색으로 폴백")
+
+            # 폴백: 기본 벡터 검색
+            print(f"🔄 기본 벡터 검색으로 폴백: '{query}'")
+
             # 쿼리 전처리 적용
             preprocessed_query = preprocess_for_embedding(query)
-            
+
             # file_chunks 컬렉션 가져오기
             file_chunks_collection = self.client.get_collection("file_chunks")
-            
+
             # 더 많은 결과를 가져와서 필터링 후 원하는 개수만 반환
             results = file_chunks_collection.query(
                 query_texts=[preprocessed_query],
                 n_results=n_results * 3,  # 필터링을 위해 3배 더 가져오기
                 include=["metadatas", "documents", "distances"]
             )
-            
+
             file_chunks = []
             for i, chunk_id in enumerate(results['ids'][0]):
                 metadata = results['metadatas'][0][i]
                 document = results['documents'][0][i]
                 distance = results['distances'][0][i] if results['distances'] else 0.0
-                
+
                 # 헤더 테이블 필터링 (메타데이터나 짧은 내용 제외)
                 if self._is_header_table_content(document):
                     print(f"🚫 헤더 테이블 내용 필터링: {document[:50]}...")
                     continue
-                
+
                 # 유사도 점수 계산 (거리가 작을수록 유사도 높음)
                 similarity_score = max(0.0, 1.0 - distance)
-                
+
                 file_chunk = {
                     "chunk_id": chunk_id,
                     "file_name": metadata.get("file_name", ""),
@@ -505,17 +608,18 @@ class VectorDBManager:
                     "page_number": metadata.get("page_number", 1),
                     "element_type": metadata.get("element_type", "text"),
                     "similarity_score": similarity_score,
-                    "created_at": metadata.get("created_at", "")
+                    "created_at": metadata.get("created_at", ""),
+                    "search_method": "basic_vector"
                 }
                 file_chunks.append(file_chunk)
-                
+
                 # 원하는 개수만큼 수집되면 중단
                 if len(file_chunks) >= n_results:
                     break
-            
-            print(f"✅ 유사 파일 청크 검색 완료: {len(file_chunks)}개 결과 (헤더 테이블 필터링 적용)")
+
+            print(f"✅ 기본 파일 청크 검색 완료: {len(file_chunks)}개 결과 (기본 벡터)")
             return file_chunks
-            
+
         except Exception as e:
             print(f"❌ 유사 파일 청크 검색 실패: {str(e)}")
             return []

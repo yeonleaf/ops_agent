@@ -12,6 +12,14 @@ from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 # 쿠키 대신 URL 파라미터와 세션 상태 사용
 
+# 로깅 설정 추가
+from module.logging_config import setup_logging
+import logging
+
+# 로깅 초기화
+setup_logging(level="INFO", log_file="logs/fastmcp_chatbot_app.log", console_output=True)
+logger = logging.getLogger(__name__)
+
 # LangChain imports
 from langchain_openai import AzureChatOpenAI
 
@@ -44,7 +52,7 @@ from auth_ui import check_auth_and_show_ui, show_integration_settings
 # --- 1. 토큰 복원 로직 (URL 파라미터 → DB 순서) ---
 # 세션에 토큰이 없을 때 복원 시도
 if 'gmail_access_token' not in st.session_state:
-    print("🍪 세션 토큰 없음. 토큰 복원 시도...")
+    logger.info("🍪 세션 토큰 없음. 토큰 복원 시도...")
     
     # 1단계: URL 파라미터에서 토큰 확인
     access_token = st.query_params.get('access_token')

@@ -19,6 +19,14 @@ import glob
 # .env 파일 로드
 load_dotenv()
 
+# 로깅 설정 추가
+from module.logging_config import setup_logging
+import logging
+
+# 로깅 초기화
+setup_logging(level="INFO", log_file="logs/streamlit_outlook_final.log", console_output=True)
+logger = logging.getLogger(__name__)
+
 # 세션 상태 초기화
 if 'refresh_trigger' not in st.session_state:
     st.session_state.refresh_trigger = 0

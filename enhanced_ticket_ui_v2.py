@@ -12,9 +12,16 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 import json
 import threading
+import logging
 from vector_db_models import VectorDBManager
 from sqlite_ticket_models import SQLiteTicketManager, Ticket
 from mem0_memory_adapter import create_mem0_memory, add_ticket_event
+from module.logging_config import setup_logging
+
+# 로깅 설정 초기화
+setup_logging(level="INFO", log_file="logs/ticket_ui.log", console_output=True)
+logger = logging.getLogger(__name__)
+
 # ticket_ai_recommender는 lazy import로 처리
 def get_ticket_ai_recommendation(*args, **kwargs):
     """AI 추천 기능 (lazy import)"""
@@ -33,9 +40,11 @@ def get_ticket_ai_recommendation(*args, **kwargs):
 #     initial_sidebar_state="expanded"
 # )
 
-# 전역 변수 초기화
-tickets = []
-selected_ticket = None
+# 세션 상태 초기화
+if 'selected_ticket' not in st.session_state:
+    st.session_state.selected_ticket = None
+if 'tickets' not in st.session_state:
+    st.session_state.tickets = []
 
 # mem0_memory 초기화
 mem0_memory = None
@@ -136,8 +145,9 @@ def display_ticket_button_list(tickets: List[Ticket]):
                 with col2:
                     # 상세보기 버튼
                     if st.button("상세보기", key=f"detail_{ticket.ticket_id}"):
-                        global selected_ticket
-                        selected_ticket = ticket
+                        logger.info(f"🔍 상세보기 버튼 클릭: 티켓 #{ticket.ticket_id}")
+                        st.session_state.selected_ticket = ticket
+                        logger.info(f"✅ 선택된 티켓 설정 완료: {ticket.ticket_id}")
                         st.rerun()
                 
                 with col3:
@@ -154,9 +164,15 @@ def display_ticket_button_list(tickets: List[Ticket]):
 
 def display_ticket_detail(ticket: Ticket):
     """선택된 티켓의 상세 정보를 표시합니다."""
+    logger.info(f"🎯 display_ticket_detail 함수 호출됨: 티켓 #{ticket.ticket_id if ticket else 'None'}")
     if not ticket:
+        logger.warning("⚠️ 티켓이 None임")
         st.warning("표시할 티켓이 선택되지 않았습니다.")
         return
+
+    logger.info(f"   - 제목: {ticket.title}")
+    logger.info(f"   - 상태: {ticket.status}")
+    logger.info(f"   - 생성일: {ticket.created_at}")
     
     st.subheader("🎫 티켓 상세 정보")
     
@@ -264,17 +280,102 @@ def display_ticket_detail(ticket: Ticket):
     # 설명 섹션
     st.subheader("📝 설명")
     
-    # 설명 표시 (읽기 전용)
-    if ticket.description:
-        st.text_area(
-            "설명:",
-            value=ticket.description,
-            height=150,
-            disabled=True,
-            key=f"description_readonly_{ticket.ticket_id}"
-        )
-    else:
-        st.info("설명이 없습니다.")
+    # 설명 편집 기능
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        if ticket.description:
+            edited_description = st.text_area(
+                "설명 편집:",
+                value=ticket.description,
+                height=150,
+                key=f"description_edit_{ticket.ticket_id}"
+            )
+        else:
+            edited_description = st.text_area(
+                "설명 편집:",
+                placeholder="설명을 입력하세요...",
+                height=150,
+                key=f"description_edit_{ticket.ticket_id}"
+            )
+    
+    with col2:
+        st.write("")  # 공간 확보
+        st.write("")  # 공간 확보
+        if st.button("💾 저장", key=f"save_description_{ticket.ticket_id}"):
+            if edited_description != ticket.description:
+                # description 업데이트
+                old_description = ticket.description or ""
+                success = update_ticket_description(ticket.ticket_id, edited_description, old_description)
+                
+                if success:
+                    # mem0에 변경사항 기록
+                    record_description_change_to_mem0(ticket, old_description, edited_description)
+                    
+                    # 티켓 객체 업데이트
+                    ticket.description = edited_description
+                    
+                    st.success("✅ 설명이 업데이트되었습니다!")
+                    logger.info(f"✅ 티켓 {ticket.ticket_id} description 업데이트 완료")
+                    st.rerun()
+                else:
+                    st.error("❌ 설명 업데이트에 실패했습니다.")
+            else:
+                st.info("ℹ️ 변경사항이 없습니다.")
+    
+    # AI 추천 섹션
+    st.subheader("🤖 AI 추천")
+    
+    if st.button("AI 추천 생성", type="primary", key="ai_recommend_button"):
+        try:
+            with st.spinner("🤖 AI 추천을 생성하고 있습니다..."):
+                logger.info("🤖 AI 추천 생성 시작")
+                # AI 추천 생성
+                from ticket_ai_recommender import get_ticket_ai_recommendation
+                
+                # 메일 내용 가져오기
+                mail_content = ""
+                message_id = ticket.original_message_id
+                if message_id:
+                    try:
+                        vector_db = VectorDBManager()
+                        mail = vector_db.get_mail_by_id(message_id)
+                        if mail:
+                            mail_content = mail.original_content or mail.refined_content or ""
+                    except Exception as e:
+                        st.warning(f"메일 내용 조회 실패: {str(e)}")
+                
+                # 티켓 히스토리 (간단한 형태)
+                ticket_history = f"티켓 ID: {ticket.ticket_id}, 상태: {ticket.status}, 우선순위: {ticket.priority}, 제목: {ticket.title}"
+                
+                # AI 추천 생성
+                logger.info(f"🤖 AI 추천 호출 - description: {len(ticket.description or '')} chars, mail_content: {len(mail_content)} chars")
+                recommendation_result = get_ticket_ai_recommendation(
+                    ticket_description=ticket.description or "",
+                    mail_content=mail_content,
+                    ticket_history=ticket_history
+                )
+                logger.info(f"🤖 AI 추천 결과: {recommendation_result}")
+                
+                if recommendation_result and "recommendation" in recommendation_result:
+                    st.success("✅ AI 추천이 생성되었습니다!")
+                    st.markdown("---")
+                    st.subheader("🤖 AI 추천 해결방법")
+                    st.markdown(recommendation_result["recommendation"])
+                    
+                    # 신뢰도 표시 (있는 경우)
+                    if "confidence" in recommendation_result:
+                        confidence = recommendation_result["confidence"]
+                        st.info(f"📊 신뢰도: {confidence:.2f}")
+                else:
+                    st.error("❌ AI 추천 생성에 실패했습니다.")
+                
+        except Exception as e:
+            logger.error(f"❌ AI 추천 생성 중 오류: {str(e)}")
+            st.error(f"AI 추천 생성 중 오류가 발생했습니다: {str(e)}")
+            st.info("💡 Azure OpenAI 설정을 확인해주세요.")
+            import traceback
+            st.code(traceback.format_exc())
     
     # 레이블 관리 섹션
     st.subheader("🏷️ 레이블 관리")
@@ -333,61 +434,13 @@ def display_ticket_detail(ticket: Ticket):
             st.rerun()
             st.rerun()
     
-    # 원본 메일 섹션
-    st.subheader("📧 원본 메일")
-    
-    try:
-        vector_db = VectorDBManager()
-        mail = vector_db.get_mail_by_id(ticket.original_message_id)
-        
-        if mail:
-            # 메일 정보 표시
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write(f"**발신자:** {mail.sender}")
-                st.write(f"**제목:** {mail.subject}")
-            
-            with col2:
-                st.write(f"**수신일:** {mail.received_datetime}")
-                st.write(f"**상태:** {mail.status}")
-            
-            # 메일 내용 표시
-            st.subheader("📄 메일 내용")
-            
-            # 탭으로 원본/정제된 내용 구분
-            tab1, tab2 = st.tabs(["📝 정제된 내용", "📄 원본 내용"])
-            
-            with tab1:
-                if mail.refined_content:
-                    st.text_area("정제된 내용", mail.refined_content, height=300, disabled=True)
-                else:
-                    st.info("정제된 내용이 없습니다.")
-            
-            with tab2:
-                if mail.original_content:
-                    st.text_area("원본 내용", mail.original_content, height=300, disabled=True)
-                else:
-                    st.info("원본 내용이 없습니다.")
-            
-            # 요약 및 핵심 포인트
-            if mail.content_summary:
-                st.subheader("📋 요약")
-                st.write(mail.content_summary)
-            
-            if mail.key_points:
-                st.subheader("🎯 핵심 포인트")
-                for point in mail.key_points:
-                    st.write(f"• {point}")
-        else:
-            st.warning("메일을 찾을 수 없습니다.")
-    except Exception as e:
-        st.error(f"메일 로드 중 오류: {str(e)}")
+    # 원본 메일 섹션 제거됨 - 정제된 내용만 필요
     
     # 뒤로가기 버튼
     if st.button("← 목록으로 돌아가기", key=f"back_{ticket.ticket_id}"):
-        global selected_ticket
-        selected_ticket = None
+        logger.info("🔙 뒤로가기 버튼 클릭")
+        st.session_state.selected_ticket = None
+        logger.info("✅ 선택된 티켓 초기화 완료")
         st.rerun()
 
 def update_ticket_labels(ticket_id: int, new_labels: List[str], old_labels: List[str]) -> bool:
@@ -835,11 +888,12 @@ def recommend_jira_project_with_llm_standalone(ticket: Ticket) -> str:
 
 def main():
     st.title("🎫 Enhanced Ticket Management System v2")
-    
+
     # 메인 컨텐츠
-    global selected_ticket
-    if selected_ticket:
-        display_ticket_detail(selected_ticket)
+    logger.info(f"🔍 메인 화면 진입 - 선택된 티켓: {st.session_state.selected_ticket}")
+    if st.session_state.selected_ticket:
+        logger.info(f"📄 상세보기 표시: 티켓 #{st.session_state.selected_ticket.ticket_id}")
+        display_ticket_detail(st.session_state.selected_ticket)
     else:
         # 티켓 목록 표시
         tickets = load_tickets_from_db()
