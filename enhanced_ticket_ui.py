@@ -202,16 +202,39 @@ def load_tickets():
         return []
 
 def update_ticket_status(ticket_id: int, new_status: str):
-    """티켓 상태를 업데이트합니다."""
+    """티켓 상태를 업데이트합니다. (pending에서만 approved/rejected로 변경 가능)"""
     try:
+        # 현재 상태 조회
         conn = sqlite3.connect('tickets.db')
         cursor = conn.cursor()
         
+        cursor.execute("SELECT status FROM tickets WHERE id = ?", (ticket_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            st.error(f"❌ 티켓 ID {ticket_id}를 찾을 수 없습니다.")
+            conn.close()
+            return False
+        
+        old_status = result[0]
+        
+        # 상태 변경 제한 검증
+        if old_status in ["approved", "rejected"]:
+            st.error(f"❌ '{old_status}' 상태의 티켓은 더 이상 상태를 변경할 수 없습니다.")
+            conn.close()
+            return False
+        
+        if old_status != "pending" and new_status in ["approved", "rejected"]:
+            st.error(f"❌ pending 상태가 아닌 티켓은 approved/rejected로 변경할 수 없습니다.")
+            conn.close()
+            return False
+        
+        # 상태 업데이트 실행
         cursor.execute("""
             UPDATE tickets 
-            SET status = ? 
+            SET status = ?, updated_at = ?
             WHERE id = ?
-        """, (new_status, ticket_id))
+        """, (new_status, datetime.now().isoformat(), ticket_id))
         
         conn.commit()
         conn.close()
@@ -534,24 +557,69 @@ def display_ticket_detail(ticket: Dict[str, Any]):
         st.write(f"**ID:** {ticket.get('id', 'N/A')}")
         st.write(f"**제목:** {ticket.get('title', '제목 없음')}")
         
-        # 상태 변경 기능
+        # 상태 변경 기능 (pending에서만 approved/rejected로 변경 가능)
         current_status = ticket.get('status', '상태 없음')
-        status_options = ['new', 'pending', 'in_progress', 'resolved', 'closed']
-        current_index = status_options.index(current_status) if current_status in status_options else 0
-
-        new_status = st.selectbox(
-            "**상태:**",
-            status_options,
-            index=current_index,
-            key=f"status_{ticket.get('id')}"
-        )
-
-        # 상태가 변경되었는지 확인하고 업데이트
-        if new_status != current_status:
-            if update_ticket_status(ticket.get('id'), new_status):
-                ticket['status'] = new_status
-                st.success(f"상태가 '{new_status}'로 변경되었습니다!")
-                st.rerun()
+        
+        # 상태별 표시 및 변경 가능 여부 결정
+        if current_status == "pending":
+            # pending 상태: approved/rejected로만 변경 가능
+            status_options = ["pending", "approved", "rejected"]
+            current_index = 0  # pending이 기본값
+            can_change = True
+            help_text = "pending 상태에서 approved 또는 rejected로 변경할 수 있습니다."
+            status_color = "🟡"
+        elif current_status in ["approved", "rejected"]:
+            # approved/rejected 상태: 변경 불가
+            status_options = [current_status]  # 현재 상태만 표시
+            current_index = 0
+            can_change = False
+            if current_status == "approved":
+                help_text = "승인된 티켓은 더 이상 상태를 변경할 수 없습니다."
+                status_color = "🟢"
+            else:  # rejected
+                help_text = "반려된 티켓은 더 이상 상태를 변경할 수 없습니다."
+                status_color = "🔴"
+        else:
+            # 기타 상태 (new, in_progress, resolved, closed 등)
+            status_options = [current_status]
+            current_index = 0
+            can_change = False
+            help_text = "이 상태에서는 변경이 불가능합니다."
+            status_color = "⚪"
+        
+        # 상태 표시 (색상 아이콘과 함께)
+        st.write(f"**상태:** {status_color} **{current_status.upper()}**")
+        
+        # 상태 변경 UI (변경 가능한 경우에만)
+        if can_change:
+            new_status = st.selectbox(
+                "티켓 상태 변경",
+                options=status_options,
+                index=current_index,
+                key=f"status_select_{ticket.get('id')}",
+                help=help_text
+            )
+            
+            # 상태가 변경되었는지 확인하고 업데이트
+            if new_status != current_status:
+                if update_ticket_status(ticket.get('id'), new_status):
+                    ticket['status'] = new_status
+                    st.success(f"✅ 상태가 '{current_status}'에서 '{new_status}'로 변경되었습니다!")
+                    st.rerun()
+                else:
+                    st.error("❌ 상태 변경에 실패했습니다.")
+        else:
+            # 변경 불가능한 경우 안내 메시지
+            st.info(f"ℹ️ {help_text}")
+            # 현재 상태만 표시하는 selectbox (비활성화)
+            st.selectbox(
+                "티켓 상태",
+                options=status_options,
+                index=current_index,
+                key=f"status_display_{ticket.get('id')}",
+                disabled=True,
+                help=help_text
+            )
     
     with col2:
         created_at = ticket.get('created_at', '날짜 없음')

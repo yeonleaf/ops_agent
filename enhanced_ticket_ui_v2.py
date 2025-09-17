@@ -68,16 +68,27 @@ def load_tickets_from_db() -> List[Ticket]:
         return []
 
 def update_ticket_status(ticket_id: int, new_status: str, old_status: str) -> bool:
-    """티켓 상태를 업데이트합니다."""
+    """티켓 상태를 업데이트합니다. (pending에서만 approved/rejected로 변경 가능)"""
     try:
+        # 상태 변경 제한 검증
+        if old_status in ["approved", "rejected"]:
+            st.error(f"❌ '{old_status}' 상태의 티켓은 더 이상 상태를 변경할 수 없습니다.")
+            return False
+        
+        if old_status != "pending" and new_status in ["approved", "rejected"]:
+            st.error(f"❌ pending 상태가 아닌 티켓은 approved/rejected로 변경할 수 없습니다.")
+            return False
+        
         st.info(f"🔄 상태 변경 시도: 티켓 #{ticket_id}, '{old_status}' → '{new_status}'")
         ticket_manager = SQLiteTicketManager()
         success = ticket_manager.update_ticket_status(ticket_id, new_status, old_status)
         if success:
             st.info(f"📝 데이터베이스에서 티켓 #{ticket_id} 상태를 '{old_status}'에서 '{new_status}'로 변경했습니다.")
             
-            # pending -> accept 상태 변경 시 Jira 업로드
-            if old_status.lower() == 'pending' and new_status.lower() == 'accept':
+            # pending -> approved 상태 변경 시 Jira 업로드
+            if old_status.lower() == 'pending' and new_status.lower() == 'approved':
+                logger.info(f"🚀 JIRA 업로드 시작: 티켓 #{ticket_id}")
+                st.info(f"🚀 티켓 #{ticket_id}를 JIRA에 업로드 중입니다...")
                 upload_to_jira_async(ticket_id)
         else:
             st.warning(f"⚠️ 데이터베이스 업데이트가 실패했습니다.")
@@ -186,28 +197,69 @@ def display_ticket_detail(ticket: Ticket):
         # 상태 변경 섹션
         st.write("**상태:**")
         current_status = ticket.status
-        status_options = ["pending", "approved", "rejected"]
-        current_index = status_options.index(current_status) if current_status in status_options else 0
         
-        new_status = st.selectbox(
-            "티켓 상태 변경",
-            options=status_options,
-            index=current_index,
-            key=f"status_select_{ticket.ticket_id}",
-            help="티켓의 상태를 변경하세요. 변경 시 mem0에 기록됩니다."
-        )
+        # 상태별 표시 및 변경 가능 여부 결정
+        if current_status == "pending":
+            # pending 상태: approved/rejected로만 변경 가능
+            status_options = ["pending", "approved", "rejected"]
+            current_index = 0  # pending이 기본값
+            can_change = True
+            help_text = "pending 상태에서 approved 또는 rejected로 변경할 수 있습니다."
+            status_color = "🟡"
+        elif current_status in ["approved", "rejected"]:
+            # approved/rejected 상태: 변경 불가
+            status_options = [current_status]  # 현재 상태만 표시
+            current_index = 0
+            can_change = False
+            if current_status == "approved":
+                help_text = "승인된 티켓은 더 이상 상태를 변경할 수 없습니다."
+                status_color = "🟢"
+            else:  # rejected
+                help_text = "반려된 티켓은 더 이상 상태를 변경할 수 없습니다."
+                status_color = "🔴"
+        else:
+            # 기타 상태
+            status_options = [current_status]
+            current_index = 0
+            can_change = False
+            help_text = "이 상태에서는 변경이 불가능합니다."
+            status_color = "⚪"
         
-        if new_status != current_status:
-            if st.button("🔄 상태 변경", key=f"change_status_{ticket.ticket_id}", type="primary"):
-                success = update_ticket_status(ticket.ticket_id, new_status, current_status)
-                if success:
-                    st.success(f"✅ 상태가 '{current_status}'에서 '{new_status}'로 변경되었습니다!")
-                    # mem0에 상태 변경 이벤트 기록
-                    record_status_change_to_mem0(ticket, current_status, new_status)
-                    st.rerun()
-                    st.rerun()
-                else:
-                    st.error("❌ 상태 변경에 실패했습니다.")
+        # 상태 표시 (색상 아이콘과 함께)
+        st.write(f"{status_color} **{current_status.upper()}**")
+        
+        # 상태 변경 UI (변경 가능한 경우에만)
+        if can_change:
+            new_status = st.selectbox(
+                "티켓 상태 변경",
+                options=status_options,
+                index=current_index,
+                key=f"status_select_{ticket.ticket_id}",
+                help=help_text
+            )
+            
+            if new_status != current_status:
+                if st.button("🔄 상태 변경", key=f"change_status_{ticket.ticket_id}", type="primary"):
+                    success = update_ticket_status(ticket.ticket_id, new_status, current_status)
+                    if success:
+                        st.success(f"✅ 상태가 '{current_status}'에서 '{new_status}'로 변경되었습니다!")
+                        # mem0에 상태 변경 이벤트 기록
+                        record_status_change_to_mem0(ticket, current_status, new_status)
+                        st.rerun()
+                    else:
+                        st.error("❌ 상태 변경에 실패했습니다.")
+        else:
+            # 변경 불가능한 경우 안내 메시지
+            st.info(f"ℹ️ {help_text}")
+            # 현재 상태만 표시하는 selectbox (비활성화)
+            st.selectbox(
+                "티켓 상태",
+                options=status_options,
+                index=current_index,
+                key=f"status_display_{ticket.ticket_id}",
+                disabled=True,
+                help=help_text
+            )
         
         st.write(f"**우선순위:** {ticket.priority}")
         st.write(f"**타입:** {ticket.ticket_type}")
@@ -561,31 +613,46 @@ def upload_to_jira_async(ticket_id: int):
     """백그라운드에서 비동기적으로 Jira에 티켓 업로드"""
     def _upload_worker():
         try:
+            logger.info(f"🎫 JIRA 업로드 워커 시작: 티켓 #{ticket_id}")
+            print(f"🎫 JIRA 업로드 워커 시작: 티켓 #{ticket_id}")
+            
             # 티켓 정보 조회
             ticket_manager = SQLiteTicketManager()
             ticket = ticket_manager.get_ticket_by_id(ticket_id)
             
             if not ticket:
+                logger.error(f"❌ 티켓 ID {ticket_id}를 찾을 수 없습니다.")
                 print(f"❌ 티켓 ID {ticket_id}를 찾을 수 없습니다.")
                 return
                 
-            # Jira 연동 상태 확인
-            from auth_client import auth_client
-            if not auth_client.is_logged_in():
-                print(f"❌ 로그인이 필요합니다.")
+            # Jira 연동 상태 확인 (.env 파일에서 직접 읽기)
+            import os
+            from dotenv import load_dotenv
+            
+            # .env 파일 로드
+            load_dotenv()
+            
+            jira_endpoint = os.getenv("JIRA_ENDPOINT")
+            jira_token = os.getenv("JIRA_TOKEN")
+            jira_account = os.getenv("JIRA_ACCOUNT")
+            
+            logger.info(f"🔗 JIRA 설정 확인 중...")
+            if not all([jira_endpoint, jira_token, jira_account]):
+                logger.error(f"❌ JIRA 설정이 .env 파일에 없습니다. JIRA_ENDPOINT, JIRA_TOKEN, JIRA_ACCOUNT를 확인해주세요.")
+                print(f"❌ JIRA 설정이 .env 파일에 없습니다. JIRA_ENDPOINT, JIRA_TOKEN, JIRA_ACCOUNT를 확인해주세요.")
                 return
             
-            # Jira 연동 정보 조회
-            jira_integration = auth_client.get_jira_integration()
-            if not jira_integration.get('success', False) or not jira_integration.get('jira_endpoint'):
-                print(f"❌ Jira 연동 정보가 없습니다. 설정을 확인해주세요.")
-                return
+            logger.info(f"✅ JIRA 설정 확인 완료: {jira_endpoint}")
+            print(f"✅ JIRA 설정 확인 완료: {jira_endpoint}")
             
+            logger.info(f"🎫 티켓 #{ticket_id} Jira 업로드 시작...")
             print(f"🎫 티켓 #{ticket_id} Jira 업로드 시작...")
             
-            # Jira 커넥터 초기화 (환경변수에서 자동으로 설정 읽음)
+            # Jira 커넥터 초기화 (.env 파일에서 자동으로 설정 읽음)
+            logger.info(f"🔧 JIRA 커넥터 초기화 중...")
             from jira_connector import JiraConnector
             
+            # JiraConnector는 .env 파일에서 자동으로 설정을 읽습니다
             with JiraConnector() as jira:
                 # 티켓 데이터 준비
                 ticket_data = {
@@ -642,8 +709,10 @@ Labels: {', '.join(ticket.labels) if ticket.labels else 'None'}
                 pass  # Streamlit 컨텍스트가 없는 경우 무시
     
     # 백그라운드 스레드에서 실행
+    logger.info(f"🧵 JIRA 업로드 스레드 시작: 티켓 #{ticket_id}")
     thread = threading.Thread(target=_upload_worker, daemon=True)
     thread.start()
+    logger.info(f"✅ JIRA 업로드 스레드 시작 완료: 티켓 #{ticket_id}")
     
     # 사용자에게 즉시 알림 표시
     st.info(f"🚀 티켓 #{ticket_id} Jira 업로드를 시작합니다... (백그라운드 처리)")

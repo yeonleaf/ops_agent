@@ -1039,13 +1039,17 @@ class JiraConnector:
             # 사용자 정의 필드로 실제 시작일 설정 시도 (선택사항)
             # 대부분의 Jira 인스턴스에서 customfield_xxxxx 형태로 시작일 필드가 있을 수 있음
             
-            # 우선순위 설정 (선택사항)
-            if ticket_data.get('priority'):
-                priorities = self.jira.priorities()
-                for priority in priorities:
-                    if priority.name.lower() == ticket_data['priority'].lower():
-                        issue_dict['priority'] = {'name': priority.name}
-                        break
+            # 우선순위 설정 (선택사항) - JIRA 프로젝트에서 Priority 필드가 비활성화된 경우 주석 처리
+            # if ticket_data.get('priority'):
+            #     try:
+            #         priorities = self.jira.priorities()
+            #         for priority in priorities:
+            #             if priority.name.lower() == ticket_data['priority'].lower():
+            #                 issue_dict['priority'] = {'name': priority.name}
+            #                 logger.info(f"✅ 우선순위 설정: {priority.name}")
+            #                 break
+            #     except Exception as e:
+            #         logger.warning(f"⚠️ 우선순위 설정 실패: {e}")
             
             # Jira 이슈 생성
             new_issue = self.jira.create_issue(fields=issue_dict)
