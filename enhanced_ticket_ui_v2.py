@@ -53,8 +53,13 @@ try:
     if hasattr(sys.modules['__main__'], 'mem0_memory'):
         mem0_memory = sys.modules['__main__'].mem0_memory
     else:
-        mem0_memory = None
-except:
+        # mem0_memory가 없으면 새로 생성
+        mem0_memory = create_mem0_memory("ticket_ui")
+        # 전역 변수로 설정하여 다른 모듈에서도 사용할 수 있도록 함
+        sys.modules['__main__'].mem0_memory = mem0_memory
+        print(f"✅ mem0_memory 초기화 완료: {mem0_memory}")
+except Exception as e:
+    print(f"❌ mem0_memory 초기화 실패: {e}")
     mem0_memory = None
 
 def load_tickets_from_db() -> List[Ticket]:
@@ -80,10 +85,23 @@ def update_ticket_status(ticket_id: int, new_status: str, old_status: str) -> bo
             return False
         
         st.info(f"🔄 상태 변경 시도: 티켓 #{ticket_id}, '{old_status}' → '{new_status}'")
+        # 터미널 보장 로그
+        try:
+            import sys
+            print(f"[UI] 상태 변경 시도 -> ticket_id={ticket_id}, {old_status} → {new_status}")
+            sys.stdout.flush()
+        except Exception:
+            pass
         ticket_manager = SQLiteTicketManager()
         success = ticket_manager.update_ticket_status(ticket_id, new_status, old_status)
         if success:
             st.info(f"📝 데이터베이스에서 티켓 #{ticket_id} 상태를 '{old_status}'에서 '{new_status}'로 변경했습니다.")
+            try:
+                import sys
+                print(f"[UI] DB 업데이트 성공 -> ticket_id={ticket_id}, new_status={new_status}")
+                sys.stdout.flush()
+            except Exception:
+                pass
             
             # pending -> approved 상태 변경 시 Jira 업로드
             if old_status.lower() == 'pending' and new_status.lower() == 'approved':
@@ -106,21 +124,90 @@ def record_status_change_to_mem0(ticket: Ticket, old_status: str, new_status: st
         status_change_event = f"티켓 #{ticket.ticket_id} 상태 변경: '{old_status}' → '{new_status}'"
         
         # mem0에 이벤트 기록
-        if mem0_memory:
-            add_ticket_event(
-                memory=mem0_memory,
-                event_type="status_change",
-                description=status_change_event,
-                ticket_id=str(ticket.ticket_id),
-            message_id=ticket.message_id,
-            old_value=old_status,
-            new_value=new_status
-        )
+        # 터미널 보장 로그 (시작)
+        try:
+            import sys
+            print(f"[UI] mem0 기록 시작 -> ticket_id={ticket.ticket_id}, event={old_status}->{new_status}")
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+        mem = mem0_memory
+        if not mem:
+            try:
+                from mem0_memory_adapter import create_mem0_memory
+                mem = create_mem0_memory("ticket_ui")
+                # 전역에도 반영
+                import sys as _sys
+                _sys.modules['__main__'].mem0_memory = mem
+                print(f"[UI] mem0가 없어서 새로 생성했습니다: {mem}")
+            except Exception as _e:
+                print(f"[UI] mem0 생성 실패: {_e}")
+                mem = None
+
+        if mem:
+            # 옵션 A: approve/reject를 별도 이벤트로 저장
+            if new_status == "approved":
+                _mid = add_ticket_event(
+                    memory=mem,
+                    event_type="ticket_approved",
+                    description=status_change_event,
+                    ticket_id=str(ticket.ticket_id),
+                    message_id=ticket.original_message_id,
+                    old_value=old_status,
+                    new_value=new_status
+                )
+                try:
+                    import sys
+                    print(f"✅ mem0 저장 완료(approved): memory_id={_mid}")
+                    sys.stdout.flush()
+                except Exception:
+                    pass
+            elif new_status == "rejected":
+                memory_id = add_ticket_event(
+                    memory=mem,
+                    event_type="ticket_rejected",
+                    description=status_change_event,
+                    ticket_id=str(ticket.ticket_id),
+                    message_id=ticket.original_message_id,
+                    old_value=old_status,
+                    new_value=new_status
+                )
+                print(f"✅ 티켓 reject 이벤트가 mem0에 저장되었습니다: {memory_id}")
+                logging.info(f"✅ 티켓 #{ticket.ticket_id} reject 이벤트가 mem0에 저장됨: {memory_id}")
+            else:
+                _mid = add_ticket_event(
+                    memory=mem,
+                    event_type="status_change",
+                    description=status_change_event,
+                    ticket_id=str(ticket.ticket_id),
+                    message_id=ticket.original_message_id,
+                    old_value=old_status,
+                    new_value=new_status
+                )
+                try:
+                    import sys
+                    print(f"✅ mem0 저장 완료(status_change): memory_id={_mid}")
+                    sys.stdout.flush()
+                except Exception:
+                    pass
         
         st.info(f"🧠 mem0에 상태 변경 이벤트를 기록했습니다: {status_change_event}")
+        try:
+            import sys
+            print(f"[UI] mem0 기록 완료 -> ticket_id={ticket.ticket_id}, event={old_status}->{new_status}")
+            sys.stdout.flush()
+        except Exception:
+            pass
         
     except Exception as e:
         st.error(f"mem0 기록 중 오류: {str(e)}")
+        try:
+            import sys, traceback as _tb
+            print(f"[UI] mem0 기록 오류: {e}\n{_tb.format_exc()}")
+            sys.stdout.flush()
+        except Exception:
+            pass
 
 def display_ticket_button_list(tickets: List[Ticket]):
     """버튼 리스트 형태로 티켓 목록을 표시합니다."""
@@ -877,7 +964,7 @@ def recommend_jira_project_with_llm_standalone(ticket: Ticket) -> str:
         mem0_context = ""
         try:
             from mem0_memory_adapter import create_mem0_memory
-            mem0_memory = create_mem0_memory("ai_system")
+            mem0_memory = create_mem0_memory("ticket_ui")
             
             # 티켓 관련 기록 검색
             search_query = f"티켓 {ticket.title} {ticket.description[:100]} 프로젝트"

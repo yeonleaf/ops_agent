@@ -180,7 +180,7 @@ def record_user_correction_to_mem0(email: Dict[str, Any], ticket_id: str) -> Non
         from mem0_memory_adapter import create_mem0_memory, add_ticket_event
 
         # Mem0 메모리 인스턴스 생성
-        mem0_memory = create_mem0_memory(llm_client=None, user_id="default_user")
+        mem0_memory = create_mem0_memory(llm_client=None, user_id="ticket_ui")
 
         # 사용자 정정 이벤트 기록
         event_description = f"User Correction: AI가 '업무용이 아님'으로 분류한 메일 '{email.get('subject')}' (발신자: {email.get('sender')})를 사용자가 '업무용'으로 정정하여 티켓 {ticket_id} 생성함."

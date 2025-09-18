@@ -216,13 +216,50 @@ class IntegratedMailClassifier:
             'llm_type': type(self.llm).__name__ if self.llm else None
         }
     
-    def should_create_ticket(self, email_data: Dict[str, Any], user_query: str = "") -> Tuple[TicketCreationStatus, str, Dict[str, Any]]:
+    def _create_few_shot_prompt(self, examples: Dict[str, List[Dict[str, Any]]]) -> str:
+        """
+        Few-shot Learning을 위한 동적 프롬프트를 생성합니다.
+        
+        Args:
+            examples: {'accept': [...], 'reject': [...]} 형태의 예시 데이터
+            
+        Returns:
+            Few-shot 프롬프트 문자열
+        """
+        prompt_parts = []
+        
+        # Accept 예시들
+        if examples.get('accept'):
+            prompt_parts.append("## 업무용 메일 예시 (사용자가 승인한 사례):")
+            for i, example in enumerate(examples['accept'], 1):
+                prompt_parts.append(f"{i}. 제목: '{example['subject']}'")
+                prompt_parts.append(f"   판단: 업무용 (사용자 승인)")
+                prompt_parts.append(f"   이유: {example['reason']}")
+                prompt_parts.append("")
+        
+        # Reject 예시들
+        if examples.get('reject'):
+            prompt_parts.append("## 비업무용 메일 예시 (사용자가 거부한 사례):")
+            for i, example in enumerate(examples['reject'], 1):
+                prompt_parts.append(f"{i}. 제목: '{example['subject']}'")
+                prompt_parts.append(f"   판단: 비업무용 (사용자 거부)")
+                prompt_parts.append(f"   이유: {example['reason']}")
+                prompt_parts.append("")
+        
+        if prompt_parts:
+            prompt_parts.insert(0, "다음은 사용자의 과거 피드백을 바탕으로 한 학습 예시입니다:")
+            prompt_parts.append("위 예시들을 참고하여 메일을 분류해주세요.")
+        
+        return "\n".join(prompt_parts)
+    
+    def should_create_ticket(self, email_data: Dict[str, Any], user_query: str = "", few_shot_examples: Dict[str, List[Dict[str, Any]]] = None) -> Tuple[TicketCreationStatus, str, Dict[str, Any]]:
         """
         LM을 사용하여 해당 메일이 티켓 생성 대상인지 판단
         
         Args:
             email_data: 메일 데이터
             user_query: 사용자 쿼리
+            few_shot_examples: Few-shot Learning용 사용자 피드백 예시
             
         Returns:
             (티켓생성상태, 이유, 추가정보) 튜플
@@ -237,10 +274,22 @@ class IntegratedMailClassifier:
             self._safe_log(f"   - 사용자 쿼리: '{user_query}'", "info")
             self._safe_log(f"   - 메일 제목: '{email_data.get('subject', '')}'", "info")
             
+            # Few-shot Learning 프롬프트 생성
+            few_shot_prompt = ""
+            if few_shot_examples:
+                few_shot_prompt = self._create_few_shot_prompt(few_shot_examples)
+                self._safe_log(f"📚 Few-shot 예시 적용: Accept {len(few_shot_examples.get('accept', []))}개, Reject {len(few_shot_examples.get('reject', []))}개", "info")
+                if few_shot_prompt:
+                    self._safe_log(f"📝 Few-shot 프롬프트 길이: {len(few_shot_prompt)} 문자", "info")
+            else:
+                self._safe_log("📝 Few-shot 예시가 없어서 기본 프롬프트를 사용합니다.", "info")
+            
             # LM 프롬프트 구성 (개별 메일 내용 기반 판단)
-            system_prompt = """당신은 메일 관리 시스템의 티켓 생성 판단 전문가입니다.
+            system_prompt = f"""당신은 메일 관리 시스템의 티켓 생성 판단 전문가입니다.
 
 개별 메일의 내용을 분석하여 업무 관련 티켓 생성이 필요한지 판단해주세요.
+
+{few_shot_prompt}
 
 티켓 생성이 필요한 메일:
 - 업무 관련 요청이나 지시사항
@@ -288,6 +337,12 @@ JSON 형식으로만 응답해주세요:
 
 이 메일 내용이 업무 관련이고 티켓 생성이 필요한 내용인가요?
 사용자가 티켓/업무 관련 요청을 했고, 이 메일이 업무 관련이라면 티켓을 생성해야 합니다."""
+            
+            # 최종 프롬프트 로깅
+            self._safe_log(f"📝 최종 시스템 프롬프트 길이: {len(system_prompt)} 문자", "info")
+            self._safe_log(f"📝 사용자 프롬프트 길이: {len(user_prompt)} 문자", "info")
+            if few_shot_prompt:
+                self._safe_log(f"📝 Few-shot 부분 길이: {len(few_shot_prompt)} 문자", "info")
             
             # LLM 호출
             messages = [

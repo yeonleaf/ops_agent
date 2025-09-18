@@ -8,6 +8,7 @@
 
 import os
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -25,6 +26,56 @@ from email_models import EmailMessage, EmailSearchResult, EmailPriority
 from memory_based_ticket_processor import MemoryBasedTicketProcessorTool
 from mem0_memory_adapter import create_mem0_memory, add_ticket_event, search_related_memories
 from typing import List
+
+# 전용 Few-shot 로거 설정
+def _fewshot_logfile_path():
+    from pathlib import Path as _Path
+    base = _Path(__file__).resolve().parent
+    return base / "logs" / "fewshot.log"
+
+def _get_fewshot_logger():
+    import logging as _logging
+    logger = _logging.getLogger("fewshot")
+    if not getattr(logger, "_initialized", False):
+        logger.setLevel(_logging.INFO)
+        # 파일 핸들러 추가 (logs/fewshot.log)
+        try:
+            log_path = _fewshot_logfile_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            # 파일 존재 보장 (touch)
+            try:
+                log_path.touch(exist_ok=True)
+            except Exception:
+                pass
+            fh = _logging.FileHandler(str(log_path), encoding="utf-8")
+            fh.setLevel(_logging.INFO)
+            fmt = _logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+            fh.setFormatter(fmt)
+            # 중복 추가 방지
+            if all(not isinstance(h, _logging.FileHandler) or getattr(h, 'baseFilename', '') != fh.baseFilename for h in logger.handlers):
+                logger.addHandler(fh)
+            logger._initialized = True
+        except Exception:
+            # 파일 핸들러 실패 시 무시 (기존 루트 로거로만 출력)
+            pass
+    return logger
+
+# Few-shot 파일 직접 쓰기(fallback)
+def _fewshot_write(line: str) -> None:
+    try:
+        from pathlib import Path as _Path
+        p = _fewshot_logfile_path()
+        _Path(p).parent.mkdir(parents=True, exist_ok=True)
+        with open(p, 'a', encoding='utf-8') as f:
+            from datetime import datetime as _dt
+            f.write(f"{_dt.now().strftime('%Y-%m-%d %H:%M:%S')} - {line}\n")
+    except Exception:
+        pass
+# Few-shot logger bootstrap on module import
+try:
+    _get_fewshot_logger().info("fewshot logger bootstrap")
+except Exception:
+    pass
 
 # TicketCreationStatus enum 정의 (memory_based_ticket_processor에서 가져옴)
 class TicketCreationStatus(str):
@@ -736,7 +787,8 @@ def get_previous_ticket_statuses(mem0_memory=None):
             # 여전히 None이면 새로 생성
             if mem0_memory is None:
                 from mem0_memory_adapter import create_mem0_memory
-                mem0_memory = create_mem0_memory("ticket_processor")
+                # UI와 동일 스코프(user_id)로 정렬
+                mem0_memory = create_mem0_memory("ticket_ui")
         
         # mem0에서 상태 변경 이벤트 조회
         status_events = mem0_memory.search(
@@ -794,6 +846,176 @@ def get_previous_ticket_statuses(mem0_memory=None):
             "sender_status_stats": {}
         }
 
+def _get_user_feedback_examples(mem0_memory, limit_per_type: int = 3) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    mem0에서 사용자 피드백 예시를 조회하여 Few-shot Learning용 데이터를 반환합니다.
+    
+    Args:
+        mem0_memory: mem0 메모리 인스턴스
+        limit_per_type: 타입별 최대 예시 수
+        
+    Returns:
+        {'accept': [...], 'reject': [...]} 형태의 딕셔너리
+    """
+    examples = {'accept': [], 'reject': []}
+    
+    try:
+        # 터미널 보장 로그 (함수 진입)
+        fewlog = _get_fewshot_logger()
+        fewlog.info("예시 조회 시작")
+        _fewshot_write("예시 조회 시작")
+        if not mem0_memory:
+            logging.warning("⚠️ mem0_memory가 없어서 피드백 예시를 조회할 수 없습니다.")
+            return examples
+            
+        # mem0에서 모든 메모리 조회
+        all_memories = mem0_memory.get_all_memories(limit=100)
+        logging.info(f"🔍 mem0에서 총 {len(all_memories)}개의 메모리를 조회했습니다.")
+        fewlog.info(f"mem0 전체 메모리 수: {len(all_memories)}")
+        _fewshot_write(f"mem0 전체 메모리 수: {len(all_memories)}")
+        
+        # mem0 메모리 상태 디버깅
+        if len(all_memories) == 0:
+            logging.warning("⚠️ mem0에 저장된 메모리가 없습니다. 메모리 상태를 확인합니다...")
+            try:
+                # mem0 메모리 통계 조회
+                stats = mem0_memory.get_memory_stats()
+                logging.info(f"📊 mem0 메모리 통계: {stats}")
+            except Exception as e:
+                logging.error(f"❌ mem0 메모리 통계 조회 실패: {e}")
+        
+        # 액션 타입 분포 집계
+        action_type_counts = {}
+        
+        for memory in all_memories:
+            try:
+                metadata = memory.get('metadata', {})
+                action_type = metadata.get('action_type', '')
+                memory_text = memory.get('memory', '')
+                action_type_counts[action_type] = action_type_counts.get(action_type, 0) + 1
+                
+                logging.debug(f"🔍 메모리 분석: action_type='{action_type}', text='{memory_text[:100]}...'")
+                
+                # 사용자 정정 이벤트인 경우
+                if action_type == 'user_correction':
+                    # 정정된 메일 정보 추출
+                    if '업무용으로 재분류' in memory_text or '정정하여 티켓' in memory_text:
+                        # Accept 예시 (사용자가 업무용으로 정정한 경우)
+                        subject_match = re.search(r"'([^']+)'", memory_text)
+                        if subject_match:
+                            subject = subject_match.group(1)
+                            examples['accept'].append({
+                                'subject': subject,
+                                'reason': '사용자가 업무용으로 정정',
+                                'confidence': 0.9,
+                                'memory_text': memory_text
+                            })
+                            logging.info(f"✅ Accept 예시 발견: '{subject}'")
+                
+                # AI 판단이 거부된 경우 (사용자가 티켓을 거부한 경우)
+                elif action_type in ['ticket_rejected', 'user_rejection', 'status_change', 'ticket_approved']:
+                    # Reject 예시 (사용자가 비업무용으로 판단한 경우)
+                    # ticket_rejected: 무조건 reject
+                    # status_change: description에 'rejected' 포함 시 reject, 'approved' 포함 시 accept로 분류
+                    subject_match = re.search(r"'([^']+)'", memory_text)
+                    detected_subject = subject_match.group(1) if subject_match else None
+                    desc_lower = memory_text.lower()
+                    if action_type == 'ticket_rejected' or 'rejected' in desc_lower:
+                        examples['reject'].append({
+                            'subject': detected_subject or '(제목 미상)',
+                            'reason': '사용자가 비업무용으로 판단 (rejected)',
+                            'confidence': 0.9,
+                            'memory_text': memory_text
+                        })
+                        logging.info(f"❌ Reject 예시 발견: '{detected_subject or '(제목 미상)'}'")
+                    elif action_type == 'ticket_approved' or 'approved' in desc_lower:
+                        examples['accept'].append({
+                            'subject': detected_subject or '(제목 미상)',
+                            'reason': '사용자가 업무용으로 승인 (approved)',
+                            'confidence': 0.9,
+                            'memory_text': memory_text
+                        })
+                        logging.info(f"✅ Accept 예시 발견(승인): '{detected_subject or '(제목 미상)'}'")
+                        
+            except Exception as e:
+                logging.warning(f"⚠️ 메모리 파싱 실패: {str(e)}")
+                continue
+        
+        # 액션 타입 분포 로깅
+        try:
+            fewlog.info(f"액션 타입 분포: {action_type_counts}")
+            _fewshot_write(f"액션 타입 분포: {action_type_counts}")
+            
+            # 디버깅: 모든 메모리 내용 출력
+            fewlog.info("=== mem0 메모리 상세 내용 ===")
+            _fewshot_write("=== mem0 메모리 상세 내용 ===")
+            for i, memory in enumerate(all_memories):
+                fewlog.info(f"메모리 {i+1}: {memory}")
+                _fewshot_write(f"메모리 {i+1}: {memory}")
+        except Exception as e:
+            fewlog.error(f"디버깅 로그 출력 실패: {e}")
+            _fewshot_write(f"디버깅 로그 출력 실패: {e}")
+
+        # 각 타입별로 limit만큼만 반환
+        examples['accept'] = examples['accept'][:limit_per_type]
+        examples['reject'] = examples['reject'][:limit_per_type]
+        
+        logging.info(f"📚 사용자 피드백 예시 수집 완료: Accept {len(examples['accept'])}개, Reject {len(examples['reject'])}개")
+        fewlog.info(f"예시 수집 완료 -> Accept={len(examples['accept'])}, Reject={len(examples['reject'])}")
+        _fewshot_write(f"예시 수집 완료 -> Accept={len(examples['accept'])}, Reject={len(examples['reject'])}")
+
+        # 정상 종료 로그 및 반환
+        fewlog.info("예시 조회 종료")
+        _fewshot_write("예시 조회 종료")
+        return examples
+        
+    except Exception as e:
+        logging.error(f"❌ 사용자 피드백 예시 조회 실패: {str(e)}")
+    
+        # 터미널 보장 로그 (함수 종료)
+        try:
+            fewlog.info("예시 조회 종료")
+            _fewshot_write("예시 조회 종료")
+        except Exception:
+            pass
+        return examples
+
+def _create_few_shot_prompt(examples: Dict[str, List[Dict[str, Any]]]) -> str:
+    """
+    Few-shot Learning을 위한 동적 프롬프트를 생성합니다.
+    
+    Args:
+        examples: {'accept': [...], 'reject': [...]} 형태의 예시 데이터
+        
+    Returns:
+        Few-shot 프롬프트 문자열
+    """
+    prompt_parts = []
+    
+    # Accept 예시들
+    if examples['accept']:
+        prompt_parts.append("## 업무용 메일 예시 (사용자가 승인한 사례):")
+        for i, example in enumerate(examples['accept'], 1):
+            prompt_parts.append(f"{i}. 제목: '{example['subject']}'")
+            prompt_parts.append(f"   판단: 업무용 (사용자 승인)")
+            prompt_parts.append(f"   이유: {example['reason']}")
+            prompt_parts.append("")
+    
+    # Reject 예시들
+    if examples['reject']:
+        prompt_parts.append("## 비업무용 메일 예시 (사용자가 거부한 사례):")
+        for i, example in enumerate(examples['reject'], 1):
+            prompt_parts.append(f"{i}. 제목: '{example['subject']}'")
+            prompt_parts.append(f"   판단: 비업무용 (사용자 거부)")
+            prompt_parts.append(f"   이유: {example['reason']}")
+            prompt_parts.append("")
+    
+    if prompt_parts:
+        prompt_parts.insert(0, "다음은 사용자의 과거 피드백을 바탕으로 한 학습 예시입니다:")
+        prompt_parts.append("위 예시들을 참고하여 메일을 분류해주세요.")
+    
+    return "\n".join(prompt_parts)
+
 def process_emails_with_ticket_logic(provider_name: str, user_query: str = None, mem0_memory=None, access_token: str = None) -> Dict[str, Any]:
     """안 읽은 메일을 가져와서 업무용 메일만 필터링하고, 유사 메일 검색을 통해 레이블을 생성한 후 티켓을 생성합니다."""
     try:
@@ -806,9 +1028,25 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                 import sys
                 if hasattr(sys.modules['__main__'], 'mem0_memory'):
                     mem0_memory = sys.modules['__main__'].mem0_memory
-            except:
-                pass
+                    logging.info(f"✅ 전역 mem0_memory 사용: {mem0_memory}")
+                else:
+                    # 전역에 없으면 새로 생성 (UI와 동일 스코프로 통일)
+                    mem0_memory = create_mem0_memory("ticket_ui")
+                    sys.modules['__main__'].mem0_memory = mem0_memory
+                    logging.info(f"✅ 새로운 mem0_memory 생성: {mem0_memory}")
+            except Exception as e:
+                logging.error(f"❌ mem0_memory 초기화 실패: {e}")
+                mem0_memory = None
         
+        # [FewShot] 캐시 확인 전에 전용 로그에 사전 조회 기록 남기기
+        try:
+            fewlog = _get_fewshot_logger()
+            fewlog.info("예시 사전 조회 시작 (pre-cache)")
+            _pre_examples = _get_user_feedback_examples(mem0_memory)
+            fewlog.info(f"사전 조회 결과 -> Accept={len(_pre_examples['accept'])}, Reject={len(_pre_examples['reject'])}")
+        except Exception as _e:
+            logging.debug(f"Few-shot 사전 조회 스킵/실패(무시): {_e}")
+
         # Gmail API 중복 호출 방지를 위한 캐시 확인
         cache_key = f"unread_emails_{provider_name}"
         if hasattr(process_emails_with_ticket_logic, '_cache') and cache_key in process_emails_with_ticket_logic._cache:
@@ -972,40 +1210,67 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                 context_info += f"- 대기 중인 티켓: {status_stats.get('pending', 0)}개\n"
                 context_info += f"- 총 티켓: {status_stats.get('total', 0)}개\n"
             
-            # 1단계: IntegratedMailClassifier를 사용한 정교한 메일 분류
-            logging.info("🔍 2a. IntegratedMailClassifier를 사용한 정교한 메일 분류 시작...")
-            work_related_emails = []
-            non_work_emails = []
+        # 1단계: mem0에서 사용자 피드백 예시 조회 (Few-shot Learning)
+        logging.info("🔍 2a. mem0에서 사용자 피드백 예시 조회 중...")
+        few_shot_examples = _get_user_feedback_examples(mem0_memory)
+        logging.info(f"📚 Few-shot 예시 조회 완료: Accept {len(few_shot_examples['accept'])}개, Reject {len(few_shot_examples['reject'])}개")
+        
+        # Few-shot 예시 상세 로깅
+        if few_shot_examples['accept']:
+            logging.info("✅ Accept 예시들:")
+            for i, example in enumerate(few_shot_examples['accept'], 1):
+                logging.info(f"   {i}. '{example['subject']}' - {example['reason']}")
+        
+        if few_shot_examples['reject']:
+            logging.info("❌ Reject 예시들:")
+            for i, example in enumerate(few_shot_examples['reject'], 1):
+                logging.info(f"   {i}. '{example['subject']}' - {example['reason']}")
+        
+        # 동적 프롬프트 생성 및 로깅
+        few_shot_prompt = _create_few_shot_prompt(few_shot_examples)
+        if few_shot_prompt:
+            logging.info("📝 생성된 Few-shot 프롬프트:")
+            logging.info("=" * 80)
+            for line in few_shot_prompt.split('\n'):
+                logging.info(f"   {line}")
+            logging.info("=" * 80)
+        else:
+            logging.info("📝 Few-shot 예시가 없어서 기본 프롬프트를 사용합니다.")
+        
+        # 2단계: IntegratedMailClassifier를 사용한 정교한 메일 분류
+        logging.info("🔍 2b. IntegratedMailClassifier를 사용한 정교한 메일 분류 시작...")
+        work_related_emails = []
+        non_work_emails = []
 
-            # 분류기 초기화 및 확인 (전역 캐시 사용 - 강제 재초기화)
-            global _integrated_classifier_cache
-            # 환경 변수 로드 기능 추가로 인한 강제 재초기화
-            try:
-                from integrated_mail_classifier import IntegratedMailClassifier
-                _integrated_classifier_cache = IntegratedMailClassifier()
-                logging.info("✅ IntegratedMailClassifier 재초기화 완료 (환경변수 로드 기능 포함)")
-                logging.info(f"   - LLM 사용 가능: {_integrated_classifier_cache.is_llm_available()}")
-                if _integrated_classifier_cache.is_llm_available():
-                    logging.info("   - ✅ LLM 기반 분류 활성화됨")
-                else:
-                    logging.warning("   - ❌ LLM 기반 분류 비활성화됨 (fallback 사용)")
-            except Exception as e:
-                logging.error(f"❌ IntegratedMailClassifier 초기화 실패: {e}")
-                _integrated_classifier_cache = None
+        # 분류기 초기화 및 확인 (전역 캐시 사용 - 강제 재초기화)
+        global _integrated_classifier_cache
+        # 환경 변수 로드 기능 추가로 인한 강제 재초기화
+        try:
+            from integrated_mail_classifier import IntegratedMailClassifier
+            _integrated_classifier_cache = IntegratedMailClassifier()
+            logging.info("✅ IntegratedMailClassifier 재초기화 완료 (환경변수 로드 기능 포함)")
+            logging.info(f"   - LLM 사용 가능: {_integrated_classifier_cache.is_llm_available()}")
+            if _integrated_classifier_cache.is_llm_available():
+                logging.info("   - ✅ LLM 기반 분류 활성화됨")
+            else:
+                logging.warning("   - ❌ LLM 기반 분류 비활성화됨 (fallback 사용)")
+        except Exception as e:
+            logging.error(f"❌ IntegratedMailClassifier 초기화 실패: {e}")
+            _integrated_classifier_cache = None
+        
+        classifier = _integrated_classifier_cache
+        if classifier:
+            logging.info("✅ IntegratedMailClassifier를 사용한 복잡한 분류 로직 적용")
             
-            classifier = _integrated_classifier_cache
-            if classifier:
-                logging.info("✅ IntegratedMailClassifier를 사용한 복잡한 분류 로직 적용")
-                
-                # 안전장치: 매우 관대한 제한 (실질적으로 제한 없음)
-                import time
-                classification_start_time = time.time()
-                max_classification_time = 1800  # 30분 제한 (실질적 무제한)
-                
-                processed_emails = 0
-                max_emails_per_batch = len(unread_emails)  # 모든 메일 처리
-                
-                for email_idx, email in enumerate(unread_emails):
+            # 안전장치: 매우 관대한 제한 (실질적으로 제한 없음)
+            import time
+            classification_start_time = time.time()
+            max_classification_time = 1800  # 30분 제한 (실질적 무제한)
+            
+            processed_emails = 0
+            max_emails_per_batch = len(unread_emails)  # 모든 메일 처리
+            
+            for email_idx, email in enumerate(unread_emails):
                     # 안전장치 체크 (매우 관대한 제한)
                     if time.time() - classification_start_time > max_classification_time:
                         logging.warning(f"⚠️ 분류 시간 안전장치 작동 ({max_classification_time//60}분 초과), 처리 중단")
@@ -1027,10 +1292,10 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                             'has_attachments': email.has_attachments
                         }
 
-                        # IntegratedMailClassifier로 티켓 생성 여부 판단
+                        # IntegratedMailClassifier로 티켓 생성 여부 판단 (Few-shot Learning 적용)
                         user_query = user_query if user_query else "안 읽은 메일 처리"
                         ticket_status, reason, details = classifier.should_create_ticket(
-                            email_data, user_query
+                            email_data, user_query, few_shot_examples
                         )
 
                         # 결과 분석 정보 추가
@@ -1219,7 +1484,7 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         try:
             # mem0 메모리 인스턴스 생성
             if mem0_memory is None:
-                mem0_memory = create_mem0_memory("ai_system")
+                mem0_memory = create_mem0_memory("ticket_ui")
             
             # Memory-Based Ticket Processor 사용하여 각 메일에 대해 고도화된 레이블 추천
             # 안전장치: 매우 관대한 제한 (실질적으로 제한 없음)
@@ -1895,7 +2160,7 @@ def create_ticket_from_single_email(
         if bypass:
             # 1) 정정 이벤트를 mem0에 먼저 기록
             try:
-                mem0 = create_mem0_memory("user")
+                mem0 = create_mem0_memory("ticket_ui")
                 desc = correction_reason or "사용자 정정: 메일을 업무용으로 재분류하여 티켓 강제 생성"
                 add_ticket_event(
                     memory=mem0,

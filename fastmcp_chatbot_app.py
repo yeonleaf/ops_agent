@@ -139,7 +139,8 @@ if 'llm_client' not in st.session_state:
     st.session_state.llm_client = create_llm_client()
 
 if 'mem0_memory' not in st.session_state:
-    st.session_state.mem0_memory = create_mem0_memory(st.session_state.llm_client, "chatbot_user")
+    # 통일: 커스텀 Mem0 백엔드 사용 (llm_client 미전달) + 동일 user_id
+    st.session_state.mem0_memory = create_mem0_memory("ticket_ui")
 
 # mem0 메모리를 전역적으로 사용할 수 있도록 설정
 import sys
@@ -281,19 +282,25 @@ def display_correction_ui(non_work_emails: List[Dict[str, Any]]):
                 if st.button(f"정정", key=f"correction_{i}", type="primary"):
                     # 정정 요청 처리
                     try:
-                        from specialist_agents import create_ticketing_agent
-                        
-                        ticketing_agent = create_ticketing_agent()
-                        correction_result = ticketing_agent.execute(
-                            f"correction_tool을 사용해서 다음 메일을 정정해주세요: "
-                            f"email_id={email.get('id')}, "
-                            f"email_subject='{email.get('subject')}', "
-                            f"email_sender='{email.get('sender')}', "
-                            f"email_body='{email.get('body')}'"
+                        # 에이전트 경유 대신 서비스 함수를 직접 호출하여 강제 생성 (도구 인자 오류 회피)
+                        from unified_email_service import create_ticket_from_single_email
+                        email_data = {
+                            'id': email.get('id'),
+                            'subject': email.get('subject'),
+                            'sender': email.get('sender'),
+                            'body': email.get('body')
+                        }
+                        result = create_ticket_from_single_email(
+                            email_data=email_data,
+                            access_token=st.session_state.get('gmail_access_token', ''),
+                            force_create=True,
+                            correction_reason="사용자 정정: 비업무로 분류된 메일을 업무용으로 처리"
                         )
-                        
-                        st.success("✅ 정정 완료!")
-                        st.info(correction_result)
+                        if result.get('success'):
+                            st.success("✅ 정정 완료! 티켓이 생성되었습니다.")
+                            st.info(f"티켓 ID: {result.get('ticket_id')}")
+                        else:
+                            st.error(f"❌ 정정 실패: {result.get('error', '알 수 없는 오류')}")
                         
                         # non_work_emails에서 해당 메일 제거
                         if hasattr(st.session_state, 'non_work_emails') and st.session_state.non_work_emails:

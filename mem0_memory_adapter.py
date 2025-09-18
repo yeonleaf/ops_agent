@@ -27,9 +27,17 @@ class AzureOpenAIMemory:
     
     def __init__(self):
         self.memories = []
+        self.storage_dir = os.path.join("./vector_db", "mem0_fallback")
         self.memory_id_counter = 1
         self.azure_client = None
         self._initialize_azure_client()
+        self._ensure_storage_dir()
+    
+    def _ensure_storage_dir(self):
+        try:
+            os.makedirs(self.storage_dir, exist_ok=True)
+        except Exception:
+            pass
     
     def _initialize_azure_client(self):
         """Azure OpenAI 클라이언트 초기화"""
@@ -46,6 +54,30 @@ class AzureOpenAIMemory:
             print(f"⚠️ Azure OpenAI 클라이언트 초기화 실패: {e}")
             self.azure_client = None
     
+    def _storage_path(self, user_id: str) -> str:
+        safe_user = (user_id or "default_user").replace("/", "_")
+        return os.path.join(self.storage_dir, f"{safe_user}.json")
+
+    def _load_user_memories(self, user_id: str):
+        path = self._storage_path(user_id)
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+            except Exception:
+                return []
+        return []
+
+    def _save_user_memories(self, user_id: str, memories: list):
+        path = self._storage_path(user_id)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(memories, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def add(self, messages, user_id=None, metadata=None):
         """메모리 추가"""
         memory_id = f"azure_{self.memory_id_counter}"
@@ -59,7 +91,12 @@ class AzureOpenAIMemory:
             "user_id": user_id,
             "created_at": datetime.now().isoformat()
         }
+        # 인메모리 보관
         self.memories.append(memory_data)
+        # 사용자별 파일에 영속화
+        user_memories = self._load_user_memories(user_id)
+        user_memories.append(memory_data)
+        self._save_user_memories(user_id, user_memories)
         
         return {"id": memory_id}
     
@@ -148,7 +185,14 @@ class AzureOpenAIMemory:
         results = []
         query_lower = query.lower()
         
-        for memory in self.memories:
+        # 디스크 + 인메모리 병합 후 검색
+        combined = []
+        # 파일에서 불러오기
+        combined.extend(self._load_user_memories(user_id))
+        # 인메모리 추가
+        combined.extend([m for m in self.memories if (user_id is None or m["user_id"] == user_id)])
+
+        for memory in combined:
             if user_id is None or memory["user_id"] == user_id:
                 memory_text = memory["memory"].lower()
                 # 간단한 키워드 매칭으로 점수 계산
@@ -172,6 +216,16 @@ class AzureOpenAIMemory:
     def get_all(self, user_id=None, limit=100):
         """모든 메모리 조회"""
         filtered_memories = []
+        # 파일에서 불러오기
+        for memory in self._load_user_memories(user_id):
+            if user_id is None or memory["user_id"] == user_id:
+                filtered_memories.append({
+                    "memory": memory["memory"],
+                    "metadata": memory["metadata"],
+                    "id": memory["id"],
+                    "created_at": memory["created_at"]
+                })
+        # 인메모리 포함
         for memory in self.memories:
             if user_id is None or memory["user_id"] == user_id:
                 filtered_memories.append({
@@ -578,8 +632,17 @@ class Mem0Memory:
 
 
 # 편의 함수들
-def create_mem0_memory(llm_client, user_id: str = "default_user") -> Mem0Memory:
-    """Mem0Memory 인스턴스 생성 헬퍼 함수"""
+def create_mem0_memory(llm_client=None, user_id: str = "default_user") -> Mem0Memory:
+    """Mem0Memory 인스턴스 생성 헬퍼 함수
+    - 하위 호환: 첫 번째 인자로 문자열이 오면 user_id로 간주
+    - dict 등 비정상 타입이 오면 llm_client=None으로 처리 (커스텀 메모리로 폴백)
+    """
+    # 첫 인자가 user_id로 잘못 전달된 경우 보정
+    if isinstance(llm_client, str) and user_id == "default_user":
+        user_id, llm_client = llm_client, None
+    # dict 같은 잘못된 타입이 들어오면 무시하고 폴백
+    if not (llm_client is None or hasattr(llm_client, "invoke")):
+        llm_client = None
     return Mem0Memory(llm_client=llm_client, user_id=user_id)
 
 
