@@ -860,7 +860,7 @@ def get_mail_content_by_id_tool(message_id: str) -> Optional[Dict[str, Any]]:
 @mcp.tool()
 def create_ticket_from_single_email_tool(email_data: Dict[str, Any]) -> Dict[str, Any]:
     """단일 이메일을 티켓으로 변환하는 함수입니다."""
-    return create_ticket_from_single_email(email_data)
+    return create_ticket_from_single_email(email_data, access_token=None)
 
 @mcp.tool()
 def fetch_emails_sync_tool(provider_name: str, use_classifier: bool = False, max_results: int = 50) -> Dict[str, Any]:

@@ -1584,24 +1584,60 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                 }
                 tickets.append(ticket_data)
             
-            # 업무용이 아니라고 판단된 메일들 수집 (confidence가 높은 것들만)
+            # 업무용이 아니라고 판단된 메일들 수집
+            # - LLM 분석이 없는 경우(IntegratedClassifier에서 비업무로 분류된 경우)도 포함
+            # - 이미 티켓이 생성된 메일은 제외
             non_work_emails_display = []
+            existing_message_ids = set()
+            try:
+                for t in tickets:
+                    mid = t.get('original_message_id') or t.get('message_id')
+                    if mid:
+                        existing_message_ids.add(mid)
+            except Exception:
+                pass
+
             for email in non_work_emails:
-                if hasattr(email, '_llm_analysis') and email._llm_analysis:
-                    analysis = email._llm_analysis
-                    if not analysis.get('is_work_related', True) and analysis.get('confidence', 0) > 0.5:
+                try:
+                    if email.id in existing_message_ids:
+                        continue
+
+                    # 우선 LLM 분석이 있으면 우선 사용
+                    analysis = getattr(email, '_llm_analysis', None)
+                    if analysis:
+                        is_non_work = not analysis.get('is_work_related', True)
+                        confidence = analysis.get('confidence', 0)
+                        reason = analysis.get('reason', '')
+                        priority = analysis.get('priority', 'Low')
+                        suggested_labels = analysis.get('suggested_labels', [])
+                        ticket_type = analysis.get('ticket_type', 'Task')
+                    else:
+                        # LLM 분석이 없으면 IntegratedClassifier 결과 사용
+                        i_analysis = getattr(email, '_integrated_analysis', {})
+                        # ticket_status가 should_create가 아니면 비업무로 간주
+                        is_non_work = i_analysis.get('ticket_status') != 'should_create'
+                        # 신뢰도 값이 없으므로 기본값 부여
+                        confidence = i_analysis.get('confidence', 0.8)
+                        reason = i_analysis.get('reason', '')
+                        priority = 'Low'
+                        suggested_labels = []
+                        ticket_type = 'Task'
+
+                    if is_non_work and confidence >= 0.5:
                         non_work_emails_display.append({
                             'id': email.id,
                             'subject': email.subject,
                             'sender': email.sender,
                             'body': email.body[:200] + '...' if len(email.body) > 200 else email.body,
                             'received_date': str(email.received_date),
-                            'confidence': analysis.get('confidence', 0),
-                            'reason': analysis.get('reason', ''),
-                            'priority': analysis.get('priority', 'Low'),
-                            'suggested_labels': analysis.get('suggested_labels', []),
-                            'ticket_type': analysis.get('ticket_type', 'Task')
+                            'confidence': confidence,
+                            'reason': reason,
+                            'priority': priority,
+                            'suggested_labels': suggested_labels,
+                            'ticket_type': ticket_type
                         })
+                except Exception:
+                    continue
             
             # confidence 순으로 정렬 (높은 것부터)
             non_work_emails_display.sort(key=lambda x: x['confidence'], reverse=True)
@@ -1826,7 +1862,12 @@ def test_ticket_creation_logic(provider_name: str) -> Dict[str, Any]:
             'error': str(e)
         }
 
-def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
+def create_ticket_from_single_email(
+    email_data: dict,
+    access_token: str = None,
+    force_create: bool = False,
+    correction_reason: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     단일 이메일을 티켓으로 변환하는 함수
     
@@ -1840,56 +1881,34 @@ def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
         import logging
         logging.info(f"create_ticket_from_single_email 시작: {email_data.get('subject', '제목 없음')}")
         
-        # 기본 제공자로 UnifiedEmailService 생성
-        service = UnifiedEmailService()
+        # OAuth 토큰을 사용해서 UnifiedEmailService 생성
+        service = UnifiedEmailService(access_token=access_token)
         service._init_classifier()
         
         if not service.classifier:
             logging.error("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
             raise RuntimeError("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
         
-        # Memory-Based 학습 시스템으로 티켓 생성
-        try:
-            result_json = service.classifier._run(
-                email_content=email_data.get('body', ''),
-                email_subject=email_data.get('subject', ''),
-                email_sender=email_data.get('sender', ''),
-                message_id=email_data.get('id', '')
-            )
-            
-            # 결과 파싱
-            import json
-            result = json.loads(result_json)
-            
-            if result.get('success'):
-                decision = result.get('decision', {})
-                ticket_creation_decision = decision.get('ticket_creation_decision', {})
-                
-                if ticket_creation_decision.get('decision') == 'create_ticket':
-                    # 티켓 데이터 생성
-                    ticket = {
-                        'title': email_data.get('subject', '제목 없음'),
-                        'description': email_data.get('body', '내용 없음'),
-                        'status': 'pending',
-                        'priority': ticket_creation_decision.get('priority', 'Medium'),
-                        'type': ticket_creation_decision.get('ticket_type', 'Task'),
-                        'reporter': email_data.get('sender', '알 수 없음'),
-                        'labels': ticket_creation_decision.get('labels', ['일반', '업무']),
-                        'created_at': datetime.now().isoformat(),
-                        'message_id': email_data.get('id', ''),
-                        'memory_based_decision': True,
-                        'ai_reasoning': ticket_creation_decision.get('reason', 'AI 판단')
-                    }
-                else:
-                    logging.error("AI가 티켓 생성이 불필요하다고 판단했습니다.")
-                    raise RuntimeError("AI 판단: 티켓 생성 불필요")
-            else:
-                logging.error(f"Memory-Based 시스템 실행 실패: {result.get('error')}")
-                raise RuntimeError(f"Memory-Based 시스템 오류: {result.get('error')}")
-                
-        except Exception as e:
-            logging.error(f"Memory-Based 시스템 실행 중 오류: {str(e)}")
-            # 폴백: 기본 티켓 생성
+        # 정정(bypass) 모드 여부 판단: 파라미터 또는 email_data 플래그로 활성화
+        bypass = force_create or bool(email_data.get('force_create'))
+
+        if bypass:
+            # 1) 정정 이벤트를 mem0에 먼저 기록
+            try:
+                mem0 = create_mem0_memory("user")
+                desc = correction_reason or "사용자 정정: 메일을 업무용으로 재분류하여 티켓 강제 생성"
+                add_ticket_event(
+                    memory=mem0,
+                    event_type="user_correction",
+                    description=f"{desc} | subject='{email_data.get('subject','')}'",
+                    ticket_id=None,
+                    message_id=email_data.get('id', '')
+                )
+                logging.info("✅ mem0에 사용자 정정 이벤트 기록 완료")
+            except Exception as mem_err:
+                logging.warning(f"⚠️ mem0 정정 이벤트 기록 실패: {mem_err}")
+
+            # 2) 분류기를 건너뛰고 즉시 티켓 생성
             ticket = {
                 'title': email_data.get('subject', '제목 없음'),
                 'description': email_data.get('body', '내용 없음'),
@@ -1897,12 +1916,66 @@ def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
                 'priority': 'Medium',
                 'type': 'Task',
                 'reporter': email_data.get('sender', '알 수 없음'),
-                'labels': ['일반', '업무'],
+                'labels': ['정정요청', '사용자판단'],
                 'created_at': datetime.now().isoformat(),
                 'message_id': email_data.get('id', ''),
+                'original_message_id': email_data.get('id', ''),
                 'memory_based_decision': False,
-                'fallback_reason': 'Memory-Based 시스템 오류'
+                'fallback_reason': 'user_correction_force_create'
             }
+        else:
+            # Memory-Based 학습 시스템으로 티켓 생성
+            try:
+                # IntegratedMailClassifier의 classify_email 메서드 사용
+                result = service.classifier.classify_email({
+                    'subject': email_data.get('subject', ''),
+                    'sender': email_data.get('sender', ''),
+                    'body': email_data.get('body', ''),
+                    'id': email_data.get('id', '')
+                })
+                
+                # classify_email 결과에서 티켓 생성 여부 판단
+                category = result.get('category', 'unknown')
+                requires_action = result.get('requires_action', False)
+                
+                # 업무용 메일이고 액션이 필요한 경우에만 티켓 생성
+                if category in ['work_urgent', 'work_normal', 'work_low'] and requires_action:
+                    # 티켓 데이터 생성
+                    ticket = {
+                        'title': email_data.get('subject', '제목 없음'),
+                        'description': email_data.get('body', '내용 없음'),
+                        'status': 'pending',
+                        'priority': result.get('priority', 'Medium'),
+                        'type': 'Task',
+                        'reporter': email_data.get('sender', '알 수 없음'),
+                        'labels': ['일반', '업무'],
+                        'created_at': datetime.now().isoformat(),
+                        'message_id': email_data.get('id', ''),
+                        'original_message_id': email_data.get('id', ''),
+                        'memory_based_decision': True,
+                        'ai_reasoning': result.get('reasoning', 'AI 판단')
+                    }
+                else:
+                    logging.error(f"AI가 티켓 생성이 불필요하다고 판단했습니다. 카테고리: {category}, 액션 필요: {requires_action}")
+                    raise RuntimeError("AI 판단: 티켓 생성 불필요")
+                    
+            except Exception as e:
+                logging.error(f"Memory-Based 시스템 실행 중 오류: {str(e)}")
+                # 폴백: 기본 티켓 생성
+                ticket = {
+                    'title': email_data.get('subject', '제목 없음'),
+                    'description': email_data.get('body', '내용 없음'),
+                    'status': 'pending',
+                    'priority': 'Medium',
+                    'type': 'Task',
+                    'reporter': email_data.get('sender', '알 수 없음'),
+                    'labels': ['일반', '업무'],
+                    'created_at': datetime.now().isoformat(),
+                    'message_id': email_data.get('id', ''),
+                    'original_message_id': email_data.get('id', ''),
+                    'memory_based_decision': False,
+                    'fallback_reason': 'Memory-Based 시스템 오류'
+                }
         
         if not ticket:
             logging.error("티켓 생성에 실패했습니다.")
@@ -1916,7 +1989,7 @@ def create_ticket_from_single_email(email_data: dict) -> Dict[str, Any]:
             # Ticket 객체 생성
             db_ticket = Ticket(
                 ticket_id=None,  # SQLite에서 자동 생성
-                original_message_id=ticket.get('original_message_id', ''),
+                original_message_id=ticket.get('original_message_id', ticket.get('message_id', '')),
                 status=ticket.get('status', 'pending'),
                 title=ticket.get('title', ''),
                 description=ticket.get('description', ''),

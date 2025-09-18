@@ -519,6 +519,7 @@ class TicketingAgent:
     def _create_process_tickets_tool(self) -> Tool:
         """티켓 처리 도구 생성"""
         def process_tickets_tool(query: str) -> str:
+            print(f"🎫 process_tickets_tool 호출됨! query: {query[:100]}")
             """
             이메일을 분석하여 티켓을 생성하고 처리합니다.
             
@@ -587,7 +588,10 @@ class TicketingAgent:
                 
                 print(f"🍪 TicketAgent 최종 토큰 상태: {'성공' if access_token else '실패'}")
                 
+                print(f"🔍 SpecialistAgent: process_emails_with_ticket_logic 호출 시작")
                 result = process_emails_with_ticket_logic(provider_name, query, mem0_memory, access_token)
+                print(f"🔍 SpecialistAgent: process_emails_with_ticket_logic 결과: {type(result)}, display_mode: {result.get('display_mode')}")
+                print(f"🔍 SpecialistAgent: non_work_emails 개수: {len(result.get('non_work_emails', []))}")
                 
                 if result.get('display_mode') == 'tickets':
                     tickets = result.get('tickets', [])
@@ -625,6 +629,13 @@ class TicketingAgent:
                         if len(non_work_emails) > 3:
                             response += f"... 외 {len(non_work_emails) - 3}개 더\n"
                     
+                    # Streamlit 세션에 non_work_emails 저장 (전역 접근)
+                    import streamlit as st
+                    if hasattr(st, 'session_state'):
+                        st.session_state.non_work_emails = non_work_emails
+                        st.session_state.has_non_work_emails = len(non_work_emails) > 0
+                        print(f"✅ SpecialistAgent에서 non_work_emails 세션에 저장: {len(non_work_emails)}개")
+
                     return response
                 else:
                     return result.get('message', '티켓 처리 결과를 가져올 수 없습니다.')
@@ -745,56 +756,30 @@ class TicketingAgent:
                 정정 결과 및 티켓 생성 정보
             """
             try:
-                from sqlite_ticket_models import SQLiteTicketManager
-                from datetime import datetime
-                from mem0_memory_adapter import create_mem0_memory, add_ticket_event
+                from unified_email_service import create_ticket_from_single_email
                 
-                # 1. 티켓 생성
-                ticket_manager = SQLiteTicketManager()
-                
-                # 이미 해당 메일로 티켓이 생성되었는지 확인
-                existing_tickets = ticket_manager.get_all_tickets()
-                for ticket in existing_tickets:
-                    if ticket.original_message_id == email_id:
-                        return f"❌ 이미 해당 메일로 티켓이 생성되어 있습니다: {ticket.ticket_id}"
-                
-                # 새 티켓 생성
-                ticket_data = {
-                    'title': email_subject,
-                    'description': f"정정 요청으로 생성된 티켓\n\n발신자: {email_sender}\n내용: {email_body[:500]}...",
-                    'status': 'pending',
-                    'priority': 'Medium',
-                    'ticket_type': 'Task',
-                    'reporter': 'system',
-                    'labels': ['정정요청', '사용자판단'],
-                    'original_message_id': email_id
+                # 이메일 데이터를 티켓 생성 함수에 전달할 형태로 변환
+                email_data = {
+                    'id': email_id,
+                    'subject': email_subject,
+                    'sender': email_sender,
+                    'body': email_body,
+                    'force_create': True  # 정정 요청이므로 강제 생성
                 }
                 
-                new_ticket = ticket_manager.create_ticket(**ticket_data)
+                # unified_email_service의 create_ticket_from_single_email 사용
+                # force_create=True로 설정하여 분류기 우회
+                result = create_ticket_from_single_email(
+                    email_data=email_data,
+                    force_create=True,
+                    correction_reason="사용자 요청으로 정정 생성"
+                )
                 
-                # 2. mem0에 정정 행동 저장
-                try:
-                    mem0_memory = create_mem0_memory("ai_system")
-                    
-                    # 정정 이벤트 저장
-                    correction_event = f"사용자 정정: '{email_subject}' 메일을 업무용으로 재분류하여 티켓 생성. AI는 업무용이 아니라고 판단했으나 사용자가 정정 요청."
-                    
-                    add_ticket_event(
-                        memory=mem0_memory,
-                        event_type="user_correction",
-                        description=correction_event,
-                        ticket_id=str(new_ticket.ticket_id),
-                        message_id=email_id,
-                        old_value="no_ticket_created",
-                        new_value="ticket_created_by_correction"
-                    )
-                    
-                    logging.info(f"✅ 정정 행동이 mem0에 저장되었습니다: {new_ticket.ticket_id}")
-                    
-                except Exception as mem_error:
-                    logging.error(f"⚠️ mem0 저장 실패: {str(mem_error)}")
-                
-                return f"✅ 정정 완료!\n\n📋 생성된 티켓:\n- ID: {new_ticket.ticket_id}\n- 제목: {email_subject}\n- 상태: pending\n- 우선순위: Medium\n- 레이블: 정정요청, 사용자판단\n\n💾 정정 행동이 학습 데이터로 저장되었습니다."
+                if result.get('success'):
+                    ticket_id = result.get('ticket_id')
+                    return f"✅ 정정 완료!\n\n📋 생성된 티켓:\n- ID: {ticket_id}\n- 제목: {email_subject}\n- 상태: pending\n- 우선순위: Medium\n- 레이블: 정정요청, 사용자판단\n\n💾 정정 행동이 학습 데이터로 저장되었습니다."
+                else:
+                    return f"❌ 정정 실패: {result.get('error', '알 수 없는 오류')}"
                 
             except Exception as e:
                 logging.error(f"❌ 정정 실패: {str(e)}")

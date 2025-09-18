@@ -1800,6 +1800,13 @@ def main():
                 else:
                     # enhanced_ticket_ui의 테이블 형태 사용
                     display_ticket_list_with_sidebar(response_data.get('tickets', []), 'table')
+
+                # 업무용이 아닌 메일 표시 추가
+                non_work_emails = response_data.get('non_work_emails', [])
+                if non_work_emails:
+                    st.markdown("---")
+                    from non_work_emails_ui import display_non_work_emails
+                    display_non_work_emails(non_work_emails)
                 
                 # 선택된 티켓이 있으면 상세 정보 표시
                 if 'selected_ticket' in st.session_state and st.session_state.selected_ticket:
