@@ -569,10 +569,9 @@ def parse_query_to_parameters(query: str) -> Dict[str, Any]:
         logging.info(safe_format_string("Fallback 규칙 기반 파싱 결과: {result}", result=result))
         return result
 
-def _parse_query_with_llm(query: str) -> Dict[str, Any]:
-    """LLM을 사용하여 자연어 쿼리를 Gmail API 파라미터로 변환합니다."""
+def _parse_query_with_llm_direct(query: str, llm) -> Dict[str, Any]:
+    """LLM 인스턴스를 직접 받아서 쿼리를 파싱합니다 (ViewingAgent용)"""
     try:
-        llm = st.session_state.llm
         
         # LLM에게 전달할 시스템 프롬프트
         system_prompt = """당신은 Gmail API 쿼리 생성 전문가입니다.

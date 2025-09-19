@@ -225,12 +225,26 @@ class RouterAgent:
             """
             try:
                 logging.info(f"🎫 TicketingAgent에게 작업 위임: {query}")
+
+                # 티켓 생성 관련 쿼리인지 확인
+                ticket_creation_keywords = ["티켓으로 생성", "티켓을 생성", "티켓 만들어", "이메일을 티켓으로", "메일을 티켓으로", "수신된 이메일"]
+                is_ticket_creation = any(keyword in query for keyword in ticket_creation_keywords)
+
+                if is_ticket_creation:
+                    print("🔒 티켓 생성 전용 모드 활성화 - read_emails_tool 차단")
+                    self.ticketing_agent.set_ticket_creation_mode(True)
+                else:
+                    self.ticketing_agent.set_ticket_creation_mode(False)
+
                 # 현재 컨텍스트에서 쿠키 정보 가져오기
                 cookies = getattr(self, '_current_context', {}).get('cookies', '')
                 print(f"🍪 RouterAgent에서 TicketingAgent로 쿠키 전달: {'있음' if cookies else '없음'}")
                 if cookies:
                     print(f"🍪 RouterAgent에서 전달할 쿠키 내용: {cookies[:100]}...")
                 result = self.ticketing_agent.execute(query, cookies=cookies)
+
+                # 작업 완료 후 모드 초기화
+                self.ticketing_agent.set_ticket_creation_mode(False)
                 return f"🎫 티켓 처리 전문가 결과:\n{result}"
             except Exception as e:
                 logging.error(f"❌ TicketingAgent 실행 실패: {str(e)}")

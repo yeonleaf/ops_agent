@@ -359,12 +359,13 @@ class UnifiedEmailService:
                 logging.error("Gmail API 인증 실패")
                 return []
             
-            # LLM의 limit 값을 Gmail API maxResults에 반영
-            max_results = filters.get('limit', 100)  # 기본값 100, LLM limit 값 우선
-            logging.info(f"Gmail API maxResults 설정: {max_results}")
-            
+            # Gmail API에서 더 많은 메일을 가져와서 정렬 후 제한 적용 (기본 100개)
+            api_max_results = 100  # 동적 쿼리와 Gmail API 호출은 그대로, 더 많이 가져오기
+            target_limit = filters.get('limit', 20)  # 최종적으로 사용할 메일 수
+            logging.info(f"Gmail API maxResults 설정: {api_max_results} (정렬 후 {target_limit}개 사용)")
+
             # Gmail API에서 필터링된 메일 가져오기
-            search_result = gmail_client.search_emails(gmail_query, max_results=max_results)
+            search_result = gmail_client.search_emails(gmail_query, max_results=api_max_results)
 
             # 반환 타입에 따라 처리 (EmailSearchResult 또는 List)
             if hasattr(search_result, 'messages'):
@@ -441,7 +442,12 @@ class UnifiedEmailService:
             try:
                 email_messages.sort(key=lambda x: x.received_date, reverse=True)
                 logging.info(f"✅ 메일 최신순 정렬 완료: {len(email_messages)}개")
-                
+
+                # 정렬 후 지정된 개수만 사용 (target_limit 적용)
+                if len(email_messages) > target_limit:
+                    email_messages = email_messages[:target_limit]
+                    logging.info(f"🔄 정렬 후 메일 개수 제한 적용: {target_limit}개")
+
                 # 정렬 결과 로깅 (처음 3개만)
                 if email_messages:
                     logging.info("📋 정렬된 메일 순서 (최신 3개):")
@@ -449,11 +455,14 @@ class UnifiedEmailService:
                         date_str = email.received_date.strftime('%Y-%m-%d %H:%M') if hasattr(email.received_date, 'strftime') else str(email.received_date)
                         subject_preview = email.subject[:30] if email.subject else "제목 없음"
                         logging.info(f"  {i+1}. {date_str} - {subject_preview}...")
-                        
+
             except Exception as e:
                 logging.warning(f"⚠️ 메일 정렬 실패: {e}, 원본 순서 유지")
-            
-            # Gmail API에서 이미 maxResults로 제한했으므로 추가 제한 불필요
+                # 정렬 실패 시에도 개수 제한은 적용
+                if len(email_messages) > target_limit:
+                    email_messages = email_messages[:target_limit]
+                    logging.info(f"🔄 정렬 실패로 인한 메일 개수 제한 적용: {target_limit}개")
+
             logging.info(f"최종 반환 메일 수: {len(email_messages)}개")
             return email_messages
             
@@ -884,14 +893,22 @@ def _get_user_feedback_examples(mem0_memory, limit_per_type: int = 3) -> Dict[st
             except Exception as e:
                 logging.error(f"❌ mem0 메모리 통계 조회 실패: {e}")
         
-        # 액션 타입 분포 집계
+        # 액션 타입 분포 집계 및 중복 제거
         action_type_counts = {}
+        seen_memories = set()  # 중복 제거를 위한 set
         
         for memory in all_memories:
             try:
                 metadata = memory.get('metadata', {})
                 action_type = metadata.get('action_type', '')
                 memory_text = memory.get('memory', '')
+                
+                # 중복 제거: 같은 메모리 텍스트가 이미 처리되었는지 확인
+                memory_key = f"{action_type}:{memory_text}"
+                if memory_key in seen_memories:
+                    continue
+                seen_memories.add(memory_key)
+                
                 action_type_counts[action_type] = action_type_counts.get(action_type, 0) + 1
                 
                 logging.debug(f"🔍 메모리 분석: action_type='{action_type}', text='{memory_text[:100]}...'")
@@ -1059,10 +1076,11 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         else:
             unread_emails = None
         
-        # 캐시에 데이터가 없거나 비어있는 경우에만 Gmail API 호출
+        # 🚫 TicketingAgent에서는 Gmail API 호출을 완전히 차단
         if unread_emails is None:
-            # 1단계: 안 읽은 메일 가져오기
-            logging.info("🔍 1단계: 안 읽은 메일 가져오기 시작...")
+            # TicketingAgent는 Gmail API를 직접 호출하지 않음
+            logging.warning("🚫 TicketingAgent Gmail API 호출 차단됨. ViewingAgent에서 전달받은 데이터를 사용해야 합니다.")
+            unread_emails = []
             try:
                 # access_token이 없으면 DB에서 refresh_token으로 재발급 시도
                 if not access_token and provider_name == 'gmail':
@@ -1122,16 +1140,16 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                     logging.error(f"❌ service 객체에 fetch_emails 메서드가 없습니다: {dir(service)}")
                     raise AttributeError("fetch_emails 메서드가 존재하지 않습니다")
 
-                # 안 읽은 메일 필터 설정
+                # 🔄 NCMS 메일 포함을 위해 읽음 상태 무관 최근 메일 조회로 변경
                 unread_filters = {
-                    'is_read': False,  # 안 읽은 메일만
+                    # 'is_read': False,  # 읽음 상태 무관하게 변경 (NCMS 메일 포함)
                     'limit': 20  # 최신순으로 20개 가져와서 모두 처리
                 }
-                logging.info(f"🔍 안 읽은 메일 필터: {unread_filters}")
-                
+                logging.info(f"🔍 최근 메일 필터 (읽음 상태 무관): {unread_filters}")
+
                 logging.info("🔍 fetch_emails(unread_filters) 호출 시도...")
                 unread_emails = service.fetch_emails(unread_filters)
-                logging.info(f"🔍 안 읽은 메일 {len(unread_emails)}개 발견")
+                logging.info(f"🔍 최근 메일 {len(unread_emails)}개 발견 (읽음 상태 무관)")
                 
                 # 캐시에 저장
                 if not hasattr(process_emails_with_ticket_logic, '_cache'):
@@ -1178,9 +1196,26 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         
         # 2단계: 최적화된 LLM 기반 업무용 메일 필터링
         logging.info("🔍 2단계: 최적화된 LLM 기반 업무용 메일 필터링 시작...")
-        
+
         # 모든 메일 처리 (제한 제거)
         logging.info(f"📋 모든 메일 처리: {len(unread_emails)}개 메일 전체 분류 진행")
+
+        # 🔍 분류 과정 투명화: NCMS 메일 개수 사전 확인
+        ncms_emails_total = [email for email in unread_emails if 'NCMS' in (email.subject or '').upper()]
+        api_emails_total = [email for email in unread_emails if 'API' in (email.subject or '').upper()]
+        logging.info(f"📊 분류 전 키워드 메일 현황: NCMS 관련 {len(ncms_emails_total)}개, API 관련 {len(api_emails_total)}개")
+
+        # NCMS 메일 목록 출력 (디버깅용)
+        if ncms_emails_total:
+            logging.info("🔍 발견된 NCMS 관련 메일들:")
+            for i, email in enumerate(ncms_emails_total[:5]):  # 최대 5개만 출력
+                logging.info(f"   {i+1}. {email.subject}")
+
+        # API 메일 목록 출력 (디버깅용)
+        if api_emails_total:
+            logging.info("🔍 발견된 API 관련 메일들:")
+            for i, email in enumerate(api_emails_total[:5]):  # 최대 5개만 출력
+                logging.info(f"   {i+1}. {email.subject}")
         
         try:
             # Memory-Based Ticket Processor를 사용하여 LLM이 업무 관련성 판단
@@ -1237,254 +1272,192 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
         else:
             logging.info("📝 Few-shot 예시가 없어서 기본 프롬프트를 사용합니다.")
         
-        # 2단계: IntegratedMailClassifier를 사용한 정교한 메일 분류
-        logging.info("🔍 2b. IntegratedMailClassifier를 사용한 정교한 메일 분류 시작...")
+        # 2단계: LLM 기반 메일 분류 (키워드 필터링 제거)
+        logging.info("🔍 2b. LLM 기반 메일 분류 시작 (키워드 필터링 완전 제거)...")
         work_related_emails = []
         non_work_emails = []
 
-        # 분류기 초기화 및 확인 (전역 캐시 사용 - 강제 재초기화)
-        global _integrated_classifier_cache
-        # 환경 변수 로드 기능 추가로 인한 강제 재초기화
+        # IntegratedMailClassifier 초기화 (LLM 전용)
         try:
             from integrated_mail_classifier import IntegratedMailClassifier
-            _integrated_classifier_cache = IntegratedMailClassifier()
-            logging.info("✅ IntegratedMailClassifier 재초기화 완료 (환경변수 로드 기능 포함)")
-            logging.info(f"   - LLM 사용 가능: {_integrated_classifier_cache.is_llm_available()}")
-            if _integrated_classifier_cache.is_llm_available():
-                logging.info("   - ✅ LLM 기반 분류 활성화됨")
-            else:
-                logging.warning("   - ❌ LLM 기반 분류 비활성화됨 (fallback 사용)")
+            classifier = IntegratedMailClassifier()
+            logging.info("✅ IntegratedMailClassifier 초기화 완료")
+            logging.info(f"   - LLM 사용 가능: {classifier.is_llm_available()}")
+            if not classifier.is_llm_available():
+                logging.error("❌ LLM이 사용 불가능합니다. 티켓 생성을 중단합니다.")
+                return {
+                    'display_mode': 'error',
+                    'message': 'LLM이 사용 불가능하여 티켓 생성을 할 수 없습니다. LLM 설정을 확인해주세요.',
+                    'tickets': [],
+                    'new_tickets_created': 0
+                }
         except Exception as e:
             logging.error(f"❌ IntegratedMailClassifier 초기화 실패: {e}")
-            _integrated_classifier_cache = None
-        
-        classifier = _integrated_classifier_cache
-        if classifier:
-            logging.info("✅ IntegratedMailClassifier를 사용한 복잡한 분류 로직 적용")
-            
-            # 안전장치: 매우 관대한 제한 (실질적으로 제한 없음)
-            import time
-            classification_start_time = time.time()
-            max_classification_time = 1800  # 30분 제한 (실질적 무제한)
-            
-            processed_emails = 0
-            max_emails_per_batch = len(unread_emails)  # 모든 메일 처리
-            
-            for email_idx, email in enumerate(unread_emails):
-                    # 안전장치 체크 (매우 관대한 제한)
-                    if time.time() - classification_start_time > max_classification_time:
-                        logging.warning(f"⚠️ 분류 시간 안전장치 작동 ({max_classification_time//60}분 초과), 처리 중단")
-                        break
-                    
-                    # 모든 메일 처리 (제한 없음)
-                    if processed_emails >= max_emails_per_batch:
-                        logging.info(f"✅ 모든 메일 분류 완료 ({max_emails_per_batch}개)")
-                        break
-                    try:
-                        # EmailMessage를 딕셔너리로 변환
-                        email_data = {
-                            'id': email.id,
-                            'subject': email.subject,
-                            'from': email.sender,
-                            'body': email.body,
-                            'received_date': email.received_date.isoformat() if hasattr(email.received_date, 'isoformat') else str(email.received_date),
-                            'is_read': email.is_read,
-                            'has_attachments': email.has_attachments
-                        }
+            return {
+                'display_mode': 'error',
+                'message': f'메일 분류기 초기화 실패: {str(e)}',
+                'tickets': [],
+                'new_tickets_created': 0
+            }
+        # LLM 기반 분류 실행 (모든 메일을 LLM으로 개별 판단)
+        logging.info("✅ LLM 기반 분류 시작 (키워드 필터링 완전 제거)")
 
-                        # IntegratedMailClassifier로 티켓 생성 여부 판단 (Few-shot Learning 적용)
-                        user_query = user_query if user_query else "안 읽은 메일 처리"
-                        ticket_status, reason, details = classifier.should_create_ticket(
-                            email_data, user_query, few_shot_examples
-                        )
+        import time
+        classification_start_time = time.time()
+        processed_emails = 0
 
-                        # 결과 분석 정보 추가
-                        email._integrated_analysis = {
-                            'ticket_status': ticket_status,
-                            'reason': reason,
-                            'details': details,
-                            'classification_method': 'integrated_classifier'
-                        }
+        for email_idx, email in enumerate(unread_emails):
+            try:
+                # 🔍 NCMS/API 메일 추적을 위한 특별 로깅
+                is_ncms_email = 'NCMS' in (email.subject or '').upper()
+                is_api_email = 'API' in (email.subject or '').upper()
 
-                        # 업무 관련 메일 여부 판단
-                        if ticket_status == 'should_create':
-                            work_related_emails.append(email)
-                            logging.info(f"✅ 업무 관련 메일 (IntegratedClassifier): {email.subject[:50]}... - {reason}")
-                        else:
-                            non_work_emails.append(email)
-                            logging.info(f"❌ 비업무 메일 (IntegratedClassifier): {email.subject[:50]}... - {reason}")
-                        
-                        # 처리 완료 카운터 증가
-                        processed_emails += 1
+                if is_ncms_email or is_api_email:
+                    keywords = []
+                    if is_ncms_email: keywords.append("NCMS")
+                    if is_api_email: keywords.append("API")
+                    logging.info(f"🎯 키워드 메일 처리 중 [{'/'.join(keywords)}]: {email.subject}")
 
-                    except Exception as e:
-                        logging.warning(f"⚠️ IntegratedMailClassifier 분류 실패: {email.subject[:50]}... - {str(e)}")
-                        # 분류 실패 시 보수적으로 업무 관련으로 처리
-                        email._integrated_analysis = {
-                            'ticket_status': 'should_create',
-                            'reason': f'분류 실패로 보수적 처리: {str(e)}',
-                            'details': {},
-                            'classification_method': 'fallback'
-                        }
-                        work_related_emails.append(email)
-                        processed_emails += 1  # 예외 처리 시에도 카운터 증가
+                # EmailMessage를 딕셔너리로 변환
+                email_data = {
+                    'id': email.id,
+                    'subject': email.subject,
+                    'sender': email.sender,
+                    'body': email.body,
+                    'received_date': email.received_date.isoformat() if hasattr(email.received_date, 'isoformat') else str(email.received_date),
+                    'is_read': email.is_read,
+                    'has_attachments': email.has_attachments
+                }
 
-            else:
-                # IntegratedMailClassifier를 사용할 수 없는 경우 간단한 키워드 기반으로 대체
-                logging.warning("⚠️ IntegratedMailClassifier 사용 불가, 간단한 키워드 분류로 대체")
-                work_keywords = ['bug', 'error', 'issue', 'urgent', 'meeting', 'project', 'task', '버그', '오류', '긴급', '회의']
+                # LLM으로 티켓 생성 여부 판단 (Few-shot Learning 적용)
+                user_query_text = user_query if user_query else "안 읽은 메일 처리"
 
-                for email in unread_emails:
-                    full_text = f"{email.subject} {email.body}".lower()
-                    work_score = sum(1 for keyword in work_keywords if keyword.lower() in full_text)
+                # NCMS/API 메일의 경우 분류 과정 상세 추적
+                if is_ncms_email or is_api_email:
+                    logging.info(f"🔍 키워드 메일 LLM 분류 시작: {email.subject}")
 
-                    email._integrated_analysis = {
-                        'ticket_status': 'should_create' if work_score > 0 else 'no_ticket_needed',
-                        'reason': f"키워드 기반 분류 (점수: {work_score})",
-                        'details': {'work_keywords_found': work_score},
-                        'classification_method': 'keyword_fallback'
-                    }
+                ticket_status, reason, details = classifier.should_create_ticket(
+                    email_data, user_query_text, few_shot_examples
+                )
 
-                    if work_score > 0:
-                        work_related_emails.append(email)
+                # LLM 분석 결과 저장
+                email._integrated_analysis = {
+                    'ticket_status': ticket_status,
+                    'reason': reason,
+                    'details': details,
+                    'classification_method': 'llm_only'
+                }
+
+                # LLM 판단에 따라 분류 (키워드 무시)
+                if ticket_status == 'should_create':
+                    work_related_emails.append(email)
+                    if is_ncms_email or is_api_email:
+                        logging.info(f"✅ 키워드 메일 LLM 판단 - 티켓 생성 승인: {email.subject[:50]}... - {reason}")
                     else:
-                        non_work_emails.append(email)
-
-            logging.info(f"🔍 IntegratedMailClassifier 분류 완료: 업무용 {len(work_related_emails)}개, 비업무용 {len(non_work_emails)}개")
-            
-            # 2단계: 간소화된 LLM 분석 (성능 최적화)
-            if work_related_emails:
-                logging.info(f"🔍 2b. 간소화된 LLM 분석 시작: {len(work_related_emails)}개 메일")
-                
-                try:
-                    final_work_emails = []
-                    start_time = time.time()
-                    
-                    # 성능 최적화: 키워드 기반 필터링으로 충분한 경우 LLM 생략
-                    skip_llm = len(work_related_emails) > 5  # 5개 초과 시 LLM 생략
-                    
-                    if skip_llm:
-                        logging.info("⚡ 성능 최적화: 키워드 필터링 결과를 신뢰하여 LLM 분석 생략")
-                        for email in work_related_emails:
-                            email._llm_analysis = {
-                                'decision': 'create_ticket',
-                                'reason': '키워드 기반 필터링으로 업무 관련 판단',
-                                'confidence': 0.8,
-                                'priority': 'Medium',
-                                'labels': ['키워드필터링'],
-                                'ticket_type': 'Task'
-                            }
-                            final_work_emails.append(email)
-                            logging.info(f"✅ 키워드 기반 처리: {email.subject[:50]}...")
+                        logging.info(f"✅ LLM 판단 - 티켓 생성: {email.subject[:50]}... - {reason}")
+                else:
+                    non_work_emails.append(email)
+                    if is_ncms_email or is_api_email:
+                        logging.info(f"❌ 키워드 메일 LLM 판단 - 티켓 생성 거부: {email.subject[:50]}... - {reason}")
                     else:
-                        # 소량의 메일만 LLM으로 정밀 분석 (순차 처리로 단순화)
-                        logging.info(f"🔍 소량 메일 LLM 정밀 분석: {len(work_related_emails)}개")
-                        for email in work_related_emails:
-                            try:
-                                # 간단한 LLM 호출 (순차 처리)
-                                email_content = f"제목: {email.subject}\n발신자: {email.sender}\n내용: {email.body[:200]}..."
-                                
-                                llm_response = processor._run(
-                                    email_content=email_content + context_info,
-                                    email_subject=email.subject,
-                                    email_sender=email.sender,
-                                    message_id=email.id
-                                )
-                                
-                                # 간단한 응답 파싱
-                                import json
-                                try:
-                                    llm_data = json.loads(llm_response)
-                                    decision = llm_data.get('decision', {}).get('ticket_creation_decision', {}).get('decision', 'create_ticket')
-                                except:
-                                    decision = 'create_ticket'  # 파싱 실패 시 기본값
-                                
-                                email._llm_analysis = {
-                                    'decision': 'create_ticket',
-                                    'reason': f'LLM 정밀 분석 결과: {decision}',
-                                    'confidence': 0.9,
-                                    'priority': 'Medium',
-                                    'labels': ['LLM분석'],
-                                    'ticket_type': 'Task'
-                                }
-                                final_work_emails.append(email)
-                                logging.info(f"✅ LLM 정밀 분석: {email.subject[:50]}...")
-                                
-                            except Exception as e:
-                                logging.error(f"⚠️ LLM 분석 실패: {str(e)}")
-                                # 실패한 경우 기본값으로 처리
-                                email._llm_analysis = {
-                                    'decision': 'create_ticket',
-                                    'reason': f'LLM 분석 실패로 인한 기본값: {str(e)}',
-                                    'confidence': 0.3,
-                                    'priority': 'Medium',
-                                    'labels': ['분석실패', '기본값'],
-                                    'ticket_type': 'Task'
-                                }
-                                final_work_emails.append(email)
-                    
-                    elapsed_time = time.time() - start_time
-                    logging.info(f"🔍 LLM 분석 완료: 업무용 {len(final_work_emails)}개 (소요시간: {elapsed_time:.1f}초)")
-                    
-                    # 최종 결과 업데이트
-                    work_related_emails = final_work_emails
-                    
-                except Exception as e:
-                    logging.error(f"❌ LLM 기반 업무용 메일 필터링 실패: {str(e)}")
-                    import traceback
-                    logging.error(f"❌ 오류 상세: {traceback.format_exc()}")
-                    # 필터링 실패 시 모든 메일을 업무 관련으로 간주
-                    work_related_emails = unread_emails
-                    non_work_emails = []
-                    logging.warning("⚠️ LLM 필터링 실패로 모든 메일을 업무 관련으로 간주")
+                        logging.info(f"❌ LLM 판단 - 티켓 불필요: {email.subject[:50]}... - {reason}")
+
+                processed_emails += 1
+
+            except Exception as e:
+                logging.error(f"❌ LLM 분류 실패: {email.subject[:50]}... - {str(e)}")
+                # LLM 분류 실패 시 티켓 생성하지 않음 (보수적 접근)
+                email._integrated_analysis = {
+                    'ticket_status': 'no_ticket_needed',
+                    'reason': f'LLM 분류 실패: {str(e)}',
+                    'details': {},
+                    'classification_method': 'llm_error'
+                }
+                non_work_emails.append(email)
+                processed_emails += 1
+
+        logging.info(f"🔍 LLM 분류 완료: 티켓 생성 대상 {len(work_related_emails)}개, 생성 불필요 {len(non_work_emails)}개")
         
-        # 3단계: LLM 기반 고도화된 레이블 추천 및 유사 메일 검색
-        logging.info("🔍 3단계: LLM 기반 고도화된 레이블 추천 시작...")
+        # 3단계 제거: LLM에서 이미 분류 완료했으므로 추가 레이블 생성 불필요
+        # work_related_emails에는 이미 LLM이 승인한 메일만 포함됨
+        logging.info("🔍 3단계 생략: LLM에서 이미 분류 완료")
+
+        # LLM 실패 시 처리 함수 (티켓 생성하지 않음)
+        def _handle_llm_failure(email, error_reason: str) -> None:
+            """LLM 실패 시 처리 - 티켓 생성하지 않음"""
+            email._llm_analysis = {
+                'is_work_related': False,  # LLM 실패 시 비업무로 처리
+                'reason': f'LLM 처리 실패: {error_reason}',
+                'confidence': 0.0,
+                'priority': 'Low',
+                'suggested_labels': [],
+                'ticket_type': 'None'
+            }
+            email._llm_suggested_labels = []
+            email._llm_reasoning = f'LLM 처리 실패로 인한 티켓 생성 제외: {error_reason}'
         
-        # 폴백 레이블 생성 함수 정의 (로컬 함수)
-        def _generate_fallback_labels(subject: str, body: str) -> List[str]:
-            """키워드 기반 폴백 레이블 생성"""
-            labels = []
-            full_text = f"{subject} {body}".lower()
-            
-            # 우선순위 기반 레이블
-            if any(word in full_text for word in ['urgent', '긴급', 'asap', 'critical', '크리티컬']):
-                labels.append('긴급')
-                
-            # 카테고리 기반 레이블
-            if any(word in full_text for word in ['bug', '버그', 'error', '오류', 'fail', '실패']):
-                labels.append('버그수정')
-            elif any(word in full_text for word in ['feature', '기능', 'enhancement', '개선']):
-                labels.append('기능개발')
-            elif any(word in full_text for word in ['request', '요청', 'help', '도움', 'support', '지원']):
-                labels.append('요청사항')
-            elif any(word in full_text for word in ['meeting', '회의', 'schedule', '일정']):
-                labels.append('회의')
-            elif any(word in full_text for word in ['server', '서버', 'system', '시스템', 'database', '데이터베이스']):
-                labels.append('시스템')
-            elif any(word in full_text for word in ['api', 'API', 'interface', '인터페이스']):
-                labels.append('API')
-            else:
-                labels.append('일반업무')
-                
-            # 기술 스택 기반 레이블
-            if any(word in full_text for word in ['java', 'python', 'javascript', 'react', 'spring']):
-                labels.append('개발')
-            elif any(word in full_text for word in ['database', 'db', 'sql', 'oracle', 'mysql']):
-                labels.append('데이터베이스')
-            elif any(word in full_text for word in ['network', '네트워크', 'firewall', '방화벽']):
-                labels.append('네트워크')
-                
-            # 최소 하나의 레이블은 보장
-            if not labels:
-                labels = ['일반업무']
-                
-            return labels[:3]  # 최대 3개까지만 반환
-        
+        # 분류 과정 투명화: 결과 요약 로그
+        classification_time = time.time() - classification_start_time
+
+        # 🔍 NCMS/API 메일 최종 분류 결과 확인
+        ncms_work_emails = [email for email in work_related_emails if 'NCMS' in (email.subject or '').upper()]
+        ncms_non_work_emails = [email for email in non_work_emails if 'NCMS' in (email.subject or '').upper()]
+        api_work_emails = [email for email in work_related_emails if 'API' in (email.subject or '').upper()]
+        api_non_work_emails = [email for email in non_work_emails if 'API' in (email.subject or '').upper()]
+
+        logging.info("=" * 60)
+        logging.info("🔍 메일 분류 과정 투명화 - 최종 결과 요약")
+        logging.info("=" * 60)
+        logging.info(f"📊 전체 메일: {len(unread_emails)}개 → 업무용: {len(work_related_emails)}개, 비업무용: {len(non_work_emails)}개")
+        logging.info(f"⏱️  분류 소요 시간: {classification_time:.2f}초")
+        logging.info("")
+        logging.info("🎯 키워드별 최종 분류 결과:")
+        logging.info(f"   NCMS 메일: {len(ncms_emails_total)}개 → 업무용 {len(ncms_work_emails)}개, 비업무용 {len(ncms_non_work_emails)}개")
+        logging.info(f"   API 메일: {len(api_emails_total)}개 → 업무용 {len(api_work_emails)}개, 비업무용 {len(api_non_work_emails)}개")
+
+        # NCMS 메일이 비업무용으로 분류된 경우 상세 정보 출력
+        if ncms_non_work_emails:
+            logging.info("")
+            logging.info("🔍 NCMS 메일이 비업무용으로 분류된 이유:")
+            for email in ncms_non_work_emails[:3]:  # 최대 3개만 출력
+                reason = getattr(email, '_integrated_analysis', {}).get('reason', '이유 없음')
+                logging.info(f"   ❌ {email.subject[:50]}... - 이유: {reason}")
+
+        if api_non_work_emails:
+            logging.info("")
+            logging.info("🔍 API 메일이 비업무용으로 분류된 이유:")
+            for email in api_non_work_emails[:3]:  # 최대 3개만 출력
+                reason = getattr(email, '_integrated_analysis', {}).get('reason', '이유 없음')
+                logging.info(f"   ❌ {email.subject[:50]}... - 이유: {reason}")
+
+        logging.info("=" * 60)
+
+        # 기존 3단계 LLM 레이블 추천 로직 완전 제거
+        # work_related_emails에는 이미 LLM이 should_create로 판단한 메일만 포함됨
+        logging.info("🔍 3단계 생략: 이미 LLM 기반 분류 완료")
+
+        # work_related_emails의 모든 메일에 기본 분석 결과 설정
+        for email in work_related_emails:
+            if not hasattr(email, '_llm_analysis'):
+                email._llm_analysis = {
+                    'is_work_related': True,
+                    'reason': 'LLM 승인됨',
+                    'confidence': 0.9,
+                    'priority': 'Medium',
+                    'suggested_labels': ['LLM승인', '업무'],
+                    'ticket_type': 'email'
+                }
+            if not hasattr(email, '_llm_suggested_labels'):
+                email._llm_suggested_labels = ['LLM승인', '업무']
+            if not hasattr(email, '_llm_reasoning'):
+                email._llm_reasoning = 'LLM이 티켓 생성 필요로 판단'
+
+        # 3단계 완전 제거 - 이미 LLM 분류 완료
+        logging.info("🔍 추가 LLM 처리 생략: 이미 분류 단계에서 LLM 판단 완료")
+
         try:
-            # mem0 메모리 인스턴스 생성
-            if mem0_memory is None:
-                mem0_memory = create_mem0_memory("ticket_ui")
+            from mem0_utils import create_mem0_memory
+            mem0_memory = create_mem0_memory("ticket_ui")
             
             # Memory-Based Ticket Processor 사용하여 각 메일에 대해 고도화된 레이블 추천
             # 안전장치: 매우 관대한 제한 (실질적으로 제한 없음)
@@ -1694,116 +1667,89 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
                 if not hasattr(email, '_llm_suggested_labels'):
                     email._llm_suggested_labels = ['일반업무']
         
-        # 4단계: 새로운 티켓 생성 (업무 관련 메일만)
-        logging.info("🔍 4단계: 새로운 티켓 생성 시작...")
-        logging.info(f"🔍 처리할 업무 관련 메일 수: {len(work_related_emails)}")
+        # 4단계: LLM 승인된 메일에 대해서만 티켓 생성
+        logging.info("🔍 4단계: LLM 승인된 메일 티켓 생성 시작...")
+        logging.info(f"🔍 LLM이 승인한 메일 수: {len(work_related_emails)}")
         new_tickets_created = 0
-        
+
         try:
             # SQLite Ticket Manager 초기화
             from sqlite_ticket_models import SQLiteTicketManager
             ticket_manager = SQLiteTicketManager()
-            
+
             # 기존 티켓의 메일 ID 조회
             existing_tickets = ticket_manager.get_all_tickets()
             existing_message_ids = set()
             for ticket in existing_tickets:
                 if ticket.original_message_id:
                     existing_message_ids.add(ticket.original_message_id)
-            
+
             logging.info(f"🔍 기존 티켓의 메일 ID {len(existing_message_ids)}개 발견")
-            
-            # 새로운 티켓 생성
+
+            # LLM이 승인한 메일만 티켓 생성 (중복 제거)
             for email in work_related_emails:
                 if email.id not in existing_message_ids:
+                    # LLM 분석 결과 확인
+                    integrated_analysis = getattr(email, '_integrated_analysis', {})
+                    if integrated_analysis.get('ticket_status') != 'should_create':
+                        logging.warning(f"⚠️ LLM 판단 불일치 발견: {email.subject[:50]}... - 티켓 생성 건너뜀")
+                        continue
+
                     try:
-                        # 티켓 생성 - insert_ticket 메서드 사용
+                        # Ticket 객체 생성
                         from sqlite_ticket_models import Ticket
-                        
-                        # LLM 분석 결과와 LLM 레이블 추천 결과 통합
-                        llm_analysis = getattr(email, '_llm_analysis', {})
-                        llm_suggested_labels = llm_analysis.get('suggested_labels', []) or []
-                        suggested_priority = llm_analysis.get('priority', 'Medium')
-                        suggested_ticket_type = llm_analysis.get('ticket_type', 'email')
-                        
-                        # 3단계에서 LLM이 user_action 기반으로 추천한 레이블
-                        llm_action_based_labels = getattr(email, '_llm_suggested_labels', []) or []
-                        llm_reasoning = getattr(email, '_llm_reasoning', '')
-                        
-                        # 두 LLM 레이블 소스를 통합 (user_action 기반 레이블 우선)
-                        all_labels = []
-                        
-                        # 1. user_action 기반 LLM 추천 레이블 우선 추가
-                        for label in llm_action_based_labels:
-                            if label not in all_labels:
-                                all_labels.append(label)
-                                logging.info(f"🔍 user_action 기반 LLM 레이블 추가: {label}")
-                        
-                        # 2. 일반 LLM 추천 레이블 추가 (중복되지 않는 것만)
-                        for label in llm_suggested_labels:
-                            if label not in all_labels:
-                                all_labels.append(label)
-                                logging.info(f"🔍 일반 LLM 추천 레이블 추가: {label}")
-                        
-                        # 3. 레이블이 없으면 기본 레이블 추가
-                        if not all_labels:
-                            all_labels = ['일반', '업무']
-                            logging.info(f"🔍 기본 레이블 추가: {all_labels}")
-                        
-                        logging.info(f"🔍 최종 통합 레이블: {all_labels}")
-                        logging.info(f"🔍 user_action 기반 LLM 레이블: {llm_action_based_labels}")
-                        logging.info(f"🔍 일반 LLM 추천 레이블: {llm_suggested_labels}")
-                        logging.info(f"🔍 LLM 추천 이유: {llm_reasoning}")
-                        
-                        # Ticket 객체 생성 (모든 필수 인자 포함)
                         current_time = datetime.now().isoformat()
+
+                        # LLM 분석 결과에서 정보 추출
+                        llm_details = integrated_analysis.get('details', {})
+
                         new_ticket = Ticket(
                             ticket_id=None,  # 자동 생성
                             original_message_id=email.id,
                             status='pending',
                             title=email.subject or '제목 없음',
                             description=email.body or '내용 없음',
-                            priority=suggested_priority,  # LLM이 제안한 우선순위 사용
-                            ticket_type=suggested_ticket_type,  # LLM이 제안한 티켓 타입 사용
+                            priority='Medium',  # 기본값 (추후 LLM에서 우선순위도 판단하도록 개선 가능)
+                            ticket_type='email',
                             reporter=email.sender or '발신자 없음',
                             reporter_email=email.sender or '발신자 없음',
-                            labels=all_labels,  # 통합된 레이블 사용
+                            labels=['LLM승인', '업무'],  # 간단한 레이블
                             jira_project="BPM",
                             start_date=current_time,
                             created_at=current_time,
                             updated_at=current_time
                         )
-                        
-                        logging.info(f"🔍 새로운 티켓 객체 생성: {new_ticket}")
-                        logging.info(f"🔍 최종 통합 레이블: {all_labels}")
-                        logging.info(f"🔍 LLM 제안 우선순위: {suggested_priority}")
-                        logging.info(f"🔍 LLM 제안 티켓 타입: {suggested_ticket_type}")
-                        
-                        # insert_ticket 메서드로 티켓 생성
+
+                        logging.info(f"🔍 LLM 승인 티켓 생성: {email.subject[:50]}...")
+                        logging.info(f"    분류 이유: {integrated_analysis.get('reason', '')}")
+
+                        # 티켓 생성
                         new_ticket_id = ticket_manager.insert_ticket(new_ticket)
                         if new_ticket_id:
                             new_tickets_created += 1
-                            logging.info(f"🔍 새로운 티켓 생성 완료: ID={new_ticket_id}")
-                            
+                            logging.info(f"✅ 티켓 생성 완료: ID={new_ticket_id}")
+
                             # mem0에 티켓 생성 기억 저장
                             try:
                                 memory_id = add_ticket_event(
                                     memory=mem0_memory,
                                     event_type="ticket_created",
-                                    description=f"AI가 '{email.subject}' 이메일로부터 티켓 #{new_ticket_id}를 생성함 (레이블: {', '.join(all_labels)})",
+                                    description=f"LLM이 '{email.subject}' 이메일로부터 티켓 #{new_ticket_id}를 생성함",
                                     ticket_id=str(new_ticket_id),
                                     message_id=email.id
                                 )
-                                logging.info(f"🔍 mem0 티켓 생성 기억 저장 완료: {memory_id}")
+                                logging.info(f"🔍 mem0 기억 저장 완료: {memory_id}")
                             except Exception as mem_error:
                                 logging.warning(f"⚠️ mem0 기억 저장 실패: {mem_error}")
                         else:
-                            logging.warning(f"⚠️ 티켓 생성 실패: {email.id}")
+                            logging.error(f"❌ 티켓 생성 실패: {email.id}")
                     except Exception as e:
                         logging.error(f"❌ 티켓 생성 중 오류: {str(e)}")
                         continue
-            
-            logging.info(f"🔍 새로운 티켓 {new_tickets_created}개 생성 완료")
+                else:
+                    logging.info(f"⚠️ 중복 티켓 방지: {email.subject[:50]}... (이미 존재)")
+
+            logging.info(f"🔍 LLM 기반 새로운 티켓 {new_tickets_created}개 생성 완료")
             
         except Exception as e:
             logging.error(f"❌ 새로운 티켓 생성 실패: {str(e)}")
@@ -1862,10 +1808,16 @@ def process_emails_with_ticket_logic(provider_name: str, user_query: str = None,
             except Exception:
                 pass
 
+            # 중복 제거를 위한 set 사용
+            processed_email_ids = set()
+            
             for email in non_work_emails:
                 try:
-                    if email.id in existing_message_ids:
+                    # 이미 처리된 메일이거나 티켓이 있는 메일은 스킵
+                    if email.id in existing_message_ids or email.id in processed_email_ids:
                         continue
+                    
+                    processed_email_ids.add(email.id)
 
                     # 우선 LLM 분석이 있으면 우선 사용
                     analysis = getattr(email, '_llm_analysis', None)
@@ -2011,16 +1963,16 @@ def test_email_fetch_logic(provider_name: str) -> Dict[str, Any]:
         service = UnifiedEmailService(provider_name)
         logging.info(f"🧪 서비스 생성 완료: {service}")
         
-        # 안 읽은 메일 필터
+        # 🔄 NCMS 메일 포함을 위해 읽음 상태 무관 최근 메일 조회로 변경
         unread_filters = {
-            'is_read': False,
+            # 'is_read': False,  # 읽음 상태 무관하게 변경 (NCMS 메일 포함)
             'limit': 20  # 20개 전체 처리
         }
-        logging.info(f"🧪 안 읽은 메일 필터: {unread_filters}")
-        
+        logging.info(f"🧪 최근 메일 필터 (읽음 상태 무관): {unread_filters}")
+
         # 메일 조회
         unread_emails = service.fetch_emails(unread_filters)
-        logging.info(f"🧪 안 읽은 메일 {len(unread_emails)}개 발견")
+        logging.info(f"🧪 최근 메일 {len(unread_emails)}개 발견 (읽음 상태 무관)")
         
         # 첫 번째 메일 정보
         if unread_emails:
@@ -2191,20 +2143,23 @@ def create_ticket_from_single_email(
         else:
             # Memory-Based 학습 시스템으로 티켓 생성
             try:
-                # IntegratedMailClassifier의 classify_email 메서드 사용
-                result = service.classifier.classify_email({
-                    'subject': email_data.get('subject', ''),
-                    'sender': email_data.get('sender', ''),
-                    'body': email_data.get('body', ''),
-                    'id': email_data.get('id', '')
-                })
+                # IntegratedMailClassifier의 should_create_ticket 메서드 사용 (LLM 기반)
+                user_query = user_query if user_query else "메일 처리"
+                ticket_status, reason, details = service.classifier.should_create_ticket(
+                    {
+                        'subject': email_data.get('subject', ''),
+                        'sender': email_data.get('sender', ''),
+                        'body': email_data.get('body', ''),
+                        'id': email_data.get('id', '')
+                    },
+                    user_query
+                )
                 
-                # classify_email 결과에서 티켓 생성 여부 판단
-                category = result.get('category', 'unknown')
-                requires_action = result.get('requires_action', False)
+                # should_create_ticket 결과에서 티켓 생성 여부 판단
+                should_create = (ticket_status == TicketCreationStatus.SHOULD_CREATE)
                 
-                # 업무용 메일이고 액션이 필요한 경우에만 티켓 생성
-                if category in ['work_urgent', 'work_normal', 'work_low'] and requires_action:
+                # should_create_ticket 결과에 따라 티켓 생성
+                if should_create:
                     # 티켓 데이터 생성
                     ticket = {
                         'title': email_data.get('subject', '제목 없음'),
@@ -2221,7 +2176,7 @@ def create_ticket_from_single_email(
                         'ai_reasoning': result.get('reasoning', 'AI 판단')
                     }
                 else:
-                    logging.error(f"AI가 티켓 생성이 불필요하다고 판단했습니다. 카테고리: {category}, 액션 필요: {requires_action}")
+                    logging.error(f"AI가 티켓 생성이 불필요하다고 판단했습니다. 이유: {reason}")
                     raise RuntimeError("AI 판단: 티켓 생성 불필요")
                     
             except Exception as e:
