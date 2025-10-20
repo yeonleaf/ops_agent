@@ -35,6 +35,15 @@ class FastMCPDirectClient:
             # 이메일 에이전트는 별도로 구현
             from fastmcp_email_agent import email_agent_logic
             
+            # FastMCP 서버의 비동기 도구들도 import (Raw implementations)
+            from fastmcp_server import (
+                process_emails_with_ticket_logic_async_raw,
+                get_async_task_status_raw,
+                list_active_tasks_raw,
+                resume_paused_task_raw,
+                check_oauth_authentication
+            )
+
             # 도구들을 딕셔너리에 저장
             self.tools = {
                 'get_raw_emails': original_get_raw_emails,
@@ -43,7 +52,13 @@ class FastMCPDirectClient:
                 'get_mail_content_by_id': original_get_mail_content,
                 'create_ticket_from_single_email': original_create_ticket,
                 'fetch_emails_sync': original_fetch_emails,
-                'email_agent': email_agent_logic
+                'email_agent': email_agent_logic,
+                # 비동기 도구들 (Raw implementations)
+                'process_emails_with_ticket_logic_async': process_emails_with_ticket_logic_async_raw,
+                'get_async_task_status': get_async_task_status_raw,
+                'list_active_tasks': list_active_tasks_raw,
+                'resume_paused_task': resume_paused_task_raw,
+                'check_oauth_status': check_oauth_authentication
             }
             
             logging.info("✅ 원본 함수들 import 성공")

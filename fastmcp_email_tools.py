@@ -216,7 +216,6 @@ def get_mail_content_by_id(message_id: str) -> Optional[Dict[str, Any]]:
         logging.error(f"❌ 메일 내용 조회 실패: {str(e)}")
         return None
 
-@mcp.tool()
 def create_ticket_from_single_email(email_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     단일 이메일을 티켓으로 변환하는 함수입니다.

@@ -421,41 +421,65 @@ class AgentNetworkChatBot:
 
 def main():
     """메인 애플리케이션"""
-    
+
     print(f"🍪 main() 함수 시작")
     print(f"🍪 check_auth_and_show_ui() 호출 전")
-    
+
     # 인증 체크 - 로그인하지 않은 사용자는 인증 UI만 표시
     if not check_auth_and_show_ui():
         print(f"🍪 인증 실패 - main() 함수 종료")
         return
-    
-    print(f"🍪 인증 성공 - 메인 UI 표시")
-    
+
+    print(f"🍪 인증 성공 - 온보딩 체크 시작")
+
+    # 온보딩 완료 여부 확인
+    if 'onboarding_completed' not in st.session_state:
+        st.session_state.onboarding_completed = False
+
+    # 온보딩 미완료 시 온보딩 화면만 표시
+    if not st.session_state.onboarding_completed:
+        print(f"🚀 온보딩 미완료 - 온보딩 UI 표시")
+        from onboarding_ui import show_onboarding_process
+
+        # 현재 로그인된 사용자 이메일 가져오기
+        user_email = st.session_state.get('user_email', '')
+
+        # 온보딩 프로세스 표시
+        is_complete = show_onboarding_process(user_email)
+
+        # 온보딩 완료 시 세션 상태 업데이트
+        if is_complete and st.session_state.get('onboarding_completed', False):
+            print(f"✅ 온보딩 완료 - 메인 UI로 이동")
+            st.rerun()
+
+        return
+
+    print(f"🍪 온보딩 완료 - 메인 UI 표시")
+
     # 제목
     st.title("🤖 에이전트 네트워크 메일 챗봇")
-    
+
     st.markdown("---")
-    
+
     # 챗봇 인스턴스 생성
     chatbot = AgentNetworkChatBot(st.session_state.llm_client)
-    
+
     # 탭 생성
     tab1, tab2, tab3 = st.tabs(["💬 AI 챗봇", "🎫 티켓 관리", "📚 RAG 데이터 관리자"])
-    
+
     # 자동 탭 전환 처리
     if st.session_state.auto_switch_to_tickets:
         st.session_state.auto_switch_to_tickets = False
         st.success(st.session_state.ticket_message)
         st.info("🎫 티켓 관리 탭으로 이동합니다...")
         st.rerun()
-    
+
     with tab1:
         display_chat_interface(chatbot)
-    
+
     with tab2:
-        display_ticket_management()
-    
+        display_ticket_management_with_async()
+
     with tab3:
         create_rag_manager_tab()
     
@@ -621,6 +645,81 @@ def display_ticket_management():
             del st.session_state["bulk_recommendations"]
             st.rerun()
     
+    # 티켓 목록 또는 상세 보기
+    if st.session_state.selected_ticket:
+        display_ticket_detail(st.session_state.selected_ticket)
+    else:
+        # 티켓 목록 표시
+        tickets = load_tickets_from_db()
+        st.session_state.tickets = tickets
+        display_ticket_button_list(tickets)
+
+def display_ticket_management_with_async():
+    """비동기 기능이 통합된 티켓 관리 인터페이스"""
+    st.header("🎫 티켓 관리 시스템 (비동기 지원)")
+
+    # 비동기 티켓 생성 섹션 추가
+    try:
+        from async_ticket_mcp_ui import display_async_ticket_section
+        display_async_ticket_section()
+    except Exception as e:
+        st.error(f"❌ 비동기 티켓 UI 로드 실패: {e}")
+        st.info("기존 동기식 티켓 관리만 사용 가능합니다.")
+
+    # 기존 티켓 관리 기능 유지
+    st.markdown("---")
+    st.subheader("📋 기존 티켓 관리")
+
+    # 새로고침 버튼
+    col1, col2, col3 = st.columns([1, 1, 3])
+    with col1:
+        if st.button("🔄 새로고침", key="legacy_refresh"):
+            st.session_state.refresh_trigger += 1
+            st.rerun()
+
+    with col2:
+        if st.button("🤖 전체 AI 추천", key="legacy_ai_recommend"):
+            with st.spinner("모든 티켓에 대한 AI 추천을 생성하고 있습니다..."):
+                tickets = load_tickets_from_db()
+                if tickets:
+                    recommendations = []
+                    for ticket in tickets[:3]:  # 최대 3개 티켓만 처리
+                        recommendation = get_ticket_ai_recommendation(ticket.ticket_id)
+                        if recommendation.get("success"):
+                            recommendations.append({
+                                "ticket_id": ticket.ticket_id,
+                                "title": ticket.title,
+                                "recommendation": recommendation.get("recommendation", "")
+                            })
+
+                    if recommendations:
+                        st.session_state["bulk_recommendations"] = recommendations
+                        st.success(f"✅ {len(recommendations)}개 티켓의 AI 추천이 생성되었습니다!")
+                    else:
+                        st.info("추천할 티켓이 없습니다.")
+                else:
+                    st.info("추천할 티켓이 없습니다.")
+
+    # 정정 UI 표시 (non_work_emails가 있는 경우)
+    if hasattr(st.session_state, 'has_non_work_emails') and st.session_state.has_non_work_emails:
+        # 세션 상태에 저장된 non_work_emails 데이터 사용 (중복 실행 방지)
+        non_work_emails = st.session_state.get('non_work_emails', [])
+        if non_work_emails:
+            display_correction_ui(non_work_emails)
+
+    # 대량 AI 추천 결과 표시
+    if "bulk_recommendations" in st.session_state:
+        st.subheader("🤖 전체 AI 추천 결과")
+        recommendations = st.session_state["bulk_recommendations"]
+
+        for rec in recommendations:
+            with st.expander(f"🎫 티켓 #{rec['ticket_id']}: {rec['title']}", expanded=False):
+                st.markdown(rec["recommendation"])
+
+        if st.button("🗑️ 추천 결과 지우기", key="clear_bulk_recommendations"):
+            del st.session_state["bulk_recommendations"]
+            st.rerun()
+
     # 티켓 목록 또는 상세 보기
     if st.session_state.selected_ticket:
         display_ticket_detail(st.session_state.selected_ticket)

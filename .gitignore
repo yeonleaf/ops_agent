@@ -18,3 +18,5 @@ debug_logs_*.txt
 whoosh_index/
 *.xls
 *.md
+*.db*
+*.xlsx

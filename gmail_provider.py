@@ -609,28 +609,41 @@ def refresh_gmail_token() -> Dict[str, Any]:
             user = db_manager.get_user_by_email(user_info['email'])
             print(f"🍪 DB 사용자 정보: {user}")
             print(f"🍪 사용자 정보 타입: {type(user)}")
-            if user:
-                print(f"🍪 사용자 ID: {user.id}")
-                print(f"🍪 사용자 이메일: {user.email}")
-                print(f"🍪 google_refresh_token: {user.google_refresh_token}")
-            else:
+            if not user:
                 print("❌ DB에서 사용자 정보를 찾을 수 없음")
+                return {"success": False, "message": "DB에서 사용자 정보를 찾을 수 없음"}
+
+            print(f"🍪 사용자 ID: {user.id}")
+            print(f"🍪 사용자 이메일: {user.email}")
+
+            # Integration 테이블에서 Gmail 토큰 조회
+            gmail_integrations = db_manager.get_integrations_by_source(user.id, 'gmail')
+            print(f"🍪 gmail_integrations: {gmail_integrations}")
+
+            if not gmail_integrations:
+                print("❌ DB에 Google 토큰이 없음")
+                print("ℹ️ Gmail 기능을 사용하려면 OAuth 인증이 필요합니다.")
+                print("ℹ️ 사이드바의 'Gmail 로그인' 버튼을 클릭하세요.")
+                return {"success": False, "message": "DB에 Google 토큰이 없음", "needs_oauth": True}
+
+            # 토큰 찾기
+            refresh_token = None
+            for integration in gmail_integrations:
+                if integration.type == 'token':
+                    refresh_token = integration.value
+                    break
+
+            if not refresh_token:
+                print("❌ Integration 테이블에 Gmail 토큰이 없음")
+                return {"success": False, "message": "Gmail 토큰이 없음", "needs_oauth": True}
+
         except Exception as db_error:
             print(f"❌ DB 조회 중 오류: {db_error}")
             return {"success": False, "message": f"DB 조회 실패: {str(db_error)}"}
-        
-        if not user or not user.google_refresh_token:  # google_refresh_token이 없음
-            print("❌ DB에 Google 토큰이 없음")
-            print("ℹ️ Gmail 기능을 사용하려면 OAuth 인증이 필요합니다.")
-            print("ℹ️ 사이드바의 'Gmail 로그인' 버튼을 클릭하세요.")
-            return {"success": False, "message": "DB에 Google 토큰이 없음", "needs_oauth": True}
-        
+
         # 토큰 가져오기 (POC 모드: 암호화 비활성화)
         print("🔓 POC 모드: 토큰을 그대로 사용")
-        print(f"🍪 저장된 토큰 (처음 50자): {user.google_refresh_token[:50] if user.google_refresh_token else 'None'}")
-        
-        # POC 모드에서는 토큰을 그대로 사용
-        refresh_token = user.google_refresh_token
+        print(f"🍪 저장된 토큰 (처음 50자): {refresh_token[:50] if refresh_token else 'None'}")
         print(f"🍪 사용할 refresh_token: {refresh_token[:20]}..." if refresh_token else "None")
         
         if not refresh_token:
@@ -696,7 +709,7 @@ def refresh_gmail_token() -> Dict[str, Any]:
                 # 만료된 토큰을 DB에서 제거
                 try:
                     from fastmcp_server import db_manager
-                    db_manager.update_user_google_token(user[0], None)  # user[0]는 user_id
+                    db_manager.update_user_google_token(user.id, None)  # User 객체의 id 속성 사용
                     print("🗑️ 만료된 refresh_token을 DB에서 제거했습니다")
                 except Exception as cleanup_error:
                     print(f"⚠️ 토큰 정리 중 오류: {cleanup_error}")
@@ -717,7 +730,7 @@ def refresh_gmail_token() -> Dict[str, Any]:
         try:
             from fastmcp_server import db_manager
             # POC 모드: 토큰을 평문으로 저장
-            db_manager.update_user_google_token(user[0], credentials.refresh_token)
+            db_manager.update_user_google_token(user.id, credentials.refresh_token)
             print(f"✅ 새로운 refresh_token이 DB에 저장되었습니다 (평문)")
         except Exception as e:
             print(f"⚠️ refresh_token DB 저장 중 오류: {e}")

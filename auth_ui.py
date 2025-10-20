@@ -125,8 +125,16 @@ def show_auth_required_message():
 def check_auth_and_show_ui():
     """인증 상태 확인 및 UI 표시"""
     print(f"🍪 check_auth_and_show_ui() 호출됨")
+
+    # 세션 ID 체크 - 없으면 로그인 상태 초기화
+    if 'session_id' not in st.session_state:
+        print(f"🍪 세션 ID 없음 - 로그인 상태 초기화")
+        st.session_state.is_logged_in = False
+        if 'user_email' in st.session_state:
+            del st.session_state.user_email
+
     print(f"🍪 auth_client.is_logged_in() 호출 전")
-    
+
     if not auth_client.is_logged_in():
         print(f"🍪 로그인되지 않음 - 인증 UI 표시")
         show_auth_required_message()

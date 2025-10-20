@@ -2098,16 +2098,9 @@ def create_ticket_from_single_email(
         import logging
         logging.info(f"create_ticket_from_single_email 시작: {email_data.get('subject', '제목 없음')}")
         
-        # OAuth 토큰을 사용해서 UnifiedEmailService 생성
-        service = UnifiedEmailService(access_token=access_token)
-        service._init_classifier()
-        
-        if not service.classifier:
-            logging.error("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
-            raise RuntimeError("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
-        
         # 정정(bypass) 모드 여부 판단: 파라미터 또는 email_data 플래그로 활성화
         bypass = force_create or bool(email_data.get('force_create'))
+        logging.info(f"bypass: {bypass}")
 
         if bypass:
             # 1) 정정 이벤트를 mem0에 먼저 기록
@@ -2141,6 +2134,15 @@ def create_ticket_from_single_email(
                 'fallback_reason': 'user_correction_force_create'
             }
         else:
+
+            # OAuth 토큰을 사용해서 UnifiedEmailService 생성
+            service = UnifiedEmailService(access_token=access_token)
+            service._init_classifier()
+            
+            if not service.classifier:
+                logging.error("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
+                raise RuntimeError("티켓 생성을 위한 분류기를 사용할 수 없습니다.")
+            
             # Memory-Based 학습 시스템으로 티켓 생성
             try:
                 # IntegratedMailClassifier의 should_create_ticket 메서드 사용 (LLM 기반)

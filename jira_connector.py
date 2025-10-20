@@ -83,48 +83,49 @@ class JiraConnector:
     def __init__(self, url: str = None, email: str = None, token: str = None):
         """
         JiraConnector 초기화
-        
+
         Args:
             url: Jira 서버 URL (예: https://your-domain.atlassian.net)
-            email: Jira 계정 이메일
-            token: Jira API 토큰
-            
+            email: Jira 계정 이메일 (Bearer token 방식에서는 사용 안 함)
+            token: Jira API Bearer 토큰
+
         Note:
             인자가 제공되지 않으면 .env 파일에서 자동으로 읽어옵니다.
+            Bearer Token 인증 방식을 사용합니다.
         """
         # .env 파일 로드
         load_dotenv()
-        
+
         # 환경 변수에서 Jira 설정 읽기
         self.url = url or os.getenv('JIRA_ENDPOINT', '').replace('/rest/api/3/', '').replace('/rest/api/2/', '')
-        self.email = email or os.getenv('JIRA_ACCOUNT')
+        self.email = email or os.getenv('JIRA_ACCOUNT')  # Bearer token에서는 불필요
         self.token = token or os.getenv('JIRA_TOKEN')
-        
-        # 설정 검증
-        if not all([self.url, self.email, self.token]):
+
+        # 설정 검증 (Bearer token 방식에서는 URL과 토큰만 필요)
+        if not all([self.url, self.token]):
             raise ValueError(
                 "Jira 설정이 완전하지 않습니다. "
-                "URL, 이메일, 토큰을 직접 제공하거나 .env 파일에 설정해주세요."
+                "URL과 토큰을 직접 제공하거나 .env 파일에 설정해주세요."
             )
-        
+
         # URL 정리 (끝의 슬래시 제거)
         self.url = self.url.rstrip('/')
-        
+
         # API 토큰 형식 검증
         if not self._validate_api_token(self.token):
             logger.warning("⚠️ API 토큰 형식이 예상과 다릅니다. 인증이 실패할 수 있습니다.")
-        
-        logger.info(f"🔗 Jira 설정 로드 완료: {self.url}, {self.email}")
-        
-        # Jira 클라이언트 초기화
+
+        logger.info(f"🔗 Jira 설정 로드 완료: {self.url}")
+        logger.info(f"🔐 인증 방식: Bearer Token")
+
+        # Jira 클라이언트 초기화 (Bearer Token 방식)
         try:
             logger.info(f"🔗 Jira 서버에 연결 시도: {self.url}")
-            logger.info(f"📧 사용자 이메일: {self.email}")
             logger.info(f"🔑 API 토큰 길이: {len(self.token) if self.token else 0}자")
-            
+
             self.jira = JIRA(
                 server=self.url,
-                basic_auth=(self.email, self.token),
+                token_auth=self.token,
                 options={'verify': True}  # SSL 인증서 검증
             )
             
@@ -148,16 +149,16 @@ class JiraConnector:
             # 인증 오류 상세 분석
             if "401" in str(e) or "Unauthorized" in str(e):
                 logger.error("🔐 인증 오류 (HTTP 401) - 가능한 원인:")
-                logger.error("  1. API 토큰이 만료되었거나 잘못됨")
-                logger.error("  2. 이메일 주소가 잘못됨")
+                logger.error("  1. Bearer API 토큰이 만료되었거나 잘못됨")
+                logger.error("  2. 토큰 형식이 올바르지 않음")
                 logger.error("  3. Jira 계정에 API 접근 권한이 없음")
                 logger.error("  4. 해당 Jira 인스턴스에 대한 접근 권한이 없음")
-                
+
                 # 사용자 친화적인 오류 메시지
                 raise ValueError(
                     "Jira 인증에 실패했습니다. 다음을 확인해주세요:\n"
-                    "1. API 토큰이 유효한지 확인\n"
-                    "2. 이메일 주소가 정확한지 확인\n"
+                    "1. Bearer API 토큰이 유효한지 확인\n"
+                    "2. 토큰이 올바른 형식인지 확인\n"
                     "3. Jira 계정에 API 접근 권한이 있는지 확인\n"
                     "4. 해당 프로젝트에 대한 접근 권한이 있는지 확인"
                 )
@@ -1078,6 +1079,303 @@ class JiraConnector:
                 "message": "이슈 생성 중 오류가 발생했습니다."
             }
     
+    def validate_credentials(self) -> Dict[str, Any]:
+        """
+        /myself API를 호출하여 Jira 인증 정보 검증 (Bearer Token 사용)
+
+        Returns:
+            검증 결과 (성공 여부, 사용자 정보 등)
+        """
+        try:
+            logger.info("🔐 Jira 인증 정보 검증 시작 (Bearer Token)")
+
+            # requests를 사용하여 직접 /myself API 호출 (Bearer Token)
+            import requests
+
+            url = f"{self.url}/rest/api/2/myself"
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+
+            logger.info(f"🔗 API 호출: {url}")
+            logger.info(f"🔑 Authorization: Bearer {self.token[:10]}...")
+
+            response = requests.get(url, headers=headers, verify=True, timeout=30)
+
+            logger.info(f"📊 응답 상태 코드: {response.status_code}")
+            logger.info(f"📊 응답 헤더: {dict(response.headers)}")
+            logger.info(f"📊 응답 본문 (처음 200자): {response.text[:200]}")
+
+            # 상태 코드 확인
+            if response.status_code == 401:
+                logger.error("❌ 401 Unauthorized: Bearer 토큰이 잘못되었거나 만료됨")
+                return {
+                    "success": False,
+                    "error": "인증 실패: Bearer API 토큰이 잘못되었거나 만료되었습니다.",
+                    "message": "Bearer API 토큰을 확인해주세요."
+                }
+            elif response.status_code == 403:
+                logger.error("❌ 403 Forbidden: 권한 부족")
+                return {
+                    "success": False,
+                    "error": "권한 부족: Jira 접근 권한이 없습니다.",
+                    "message": "Jira 계정 권한을 확인해주세요."
+                }
+            elif response.status_code != 200:
+                logger.error(f"❌ HTTP {response.status_code}: {response.text}")
+                return {
+                    "success": False,
+                    "error": f"Jira API 오류 (HTTP {response.status_code}): {response.text[:100]}",
+                    "message": "인증 중 오류가 발생했습니다."
+                }
+
+            # JSON 파싱
+            try:
+                myself = response.json()
+                logger.info(f"✅ Jira 인증 성공: {myself.get('displayName', 'Unknown')}")
+
+                return {
+                    "success": True,
+                    "user_info": {
+                        "account_id": myself.get('accountId', ''),
+                        "email": myself.get('emailAddress', ''),
+                        "display_name": myself.get('displayName', ''),
+                        "active": myself.get('active', False)
+                    },
+                    "message": f"인증 성공: {myself.get('displayName', 'Unknown')}"
+                }
+            except ValueError as json_error:
+                logger.error(f"❌ JSON 파싱 실패: {json_error}")
+                logger.error(f"📊 응답 본문 전체: {response.text}")
+                return {
+                    "success": False,
+                    "error": f"응답 파싱 실패: {str(json_error)}",
+                    "message": "Jira 응답을 처리할 수 없습니다."
+                }
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ HTTP 요청 실패: {e}")
+            return {
+                "success": False,
+                "error": f"네트워크 오류: {str(e)}",
+                "message": "Jira 서버에 연결할 수 없습니다."
+            }
+        except Exception as e:
+            logger.error(f"❌ 인증 검증 중 예상치 못한 오류: {e}")
+            import traceback
+            logger.error(f"📊 스택 트레이스:\n{traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "인증 검증 중 오류가 발생했습니다."
+            }
+
+    def get_projects(self) -> Dict[str, Any]:
+        """
+        /project API를 호출하여 접근 가능한 프로젝트 목록 조회 (Bearer Token 사용)
+
+        Returns:
+            프로젝트 목록 (성공 여부, 프로젝트 리스트 등)
+        """
+        try:
+            logger.info("📁 Jira 프로젝트 목록 조회 시작 (Bearer Token)")
+
+            # requests를 사용하여 직접 /project API 호출
+            import requests
+
+            url = f"{self.url}/rest/api/2/project"
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+
+            logger.info(f"🔗 API 호출: {url}")
+
+            response = requests.get(url, headers=headers, verify=True, timeout=30)
+
+            logger.info(f"📊 응답 상태 코드: {response.status_code}")
+
+            # 상태 코드 확인
+            if response.status_code == 401:
+                logger.error("❌ 401 Unauthorized")
+                return {
+                    "success": False,
+                    "error": "인증 실패: Bearer API 토큰이 만료되었거나 잘못되었습니다.",
+                    "message": "Bearer API 토큰을 다시 확인해주세요."
+                }
+            elif response.status_code == 403:
+                logger.error("❌ 403 Forbidden")
+                return {
+                    "success": False,
+                    "error": "권한 부족: 프로젝트 조회 권한이 없습니다.",
+                    "message": "프로젝트 접근 권한을 확인해주세요."
+                }
+            elif response.status_code != 200:
+                logger.error(f"❌ HTTP {response.status_code}: {response.text}")
+                return {
+                    "success": False,
+                    "error": f"Jira API 오류 (HTTP {response.status_code}): {response.text[:100]}",
+                    "message": "프로젝트 조회 중 오류가 발생했습니다."
+                }
+
+            # JSON 파싱
+            try:
+                projects = response.json()
+
+                project_list = []
+                for project in projects:
+                    project_list.append({
+                        "key": project.get("key", ""),
+                        "name": project.get("name", ""),
+                        "id": project.get("id", ""),
+                        "project_type": project.get("projectTypeKey", "unknown")
+                    })
+
+                logger.info(f"✅ {len(project_list)}개의 프로젝트 조회 완료")
+
+                return {
+                    "success": True,
+                    "projects": project_list,
+                    "count": len(project_list),
+                    "message": f"{len(project_list)}개의 프로젝트를 찾았습니다."
+                }
+            except ValueError as json_error:
+                logger.error(f"❌ JSON 파싱 실패: {json_error}")
+                logger.error(f"📊 응답 본문: {response.text[:200]}")
+                return {
+                    "success": False,
+                    "error": f"응답 파싱 실패: {str(json_error)}",
+                    "message": "Jira 응답을 처리할 수 없습니다."
+                }
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ HTTP 요청 실패: {e}")
+            return {
+                "success": False,
+                "error": f"네트워크 오류: {str(e)}",
+                "message": "Jira 서버에 연결할 수 없습니다."
+            }
+        except Exception as e:
+            logger.error(f"❌ 프로젝트 조회 중 예상치 못한 오류: {e}")
+            import traceback
+            logger.error(f"📊 스택 트레이스:\n{traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "프로젝트 조회 중 오류가 발생했습니다."
+            }
+
+    def validate_jql_with_labels(self, project_key: str, labels: List[str]) -> Dict[str, Any]:
+        """
+        프로젝트와 레이블 조합으로 JQL 쿼리를 생성하고 검증 (Bearer Token 사용)
+
+        Args:
+            project_key: Jira 프로젝트 키
+            labels: 필터링할 레이블 리스트
+
+        Returns:
+            검증 결과 (성공 여부, 이슈 개수 등)
+        """
+        try:
+            logger.info(f"🔍 JQL 쿼리 검증 시작 (Bearer Token): {project_key} - {labels}")
+
+            # JQL 쿼리 생성
+            if labels:
+                label_condition = " OR ".join([f'labels = "{label}"' for label in labels])
+                jql_query = f'project = {project_key} AND ({label_condition}) ORDER BY updated DESC'
+            else:
+                jql_query = f'project = {project_key} ORDER BY updated DESC'
+
+            logger.info(f"📝 생성된 JQL 쿼리: {jql_query}")
+
+            # requests를 사용하여 직접 JQL 검색 API 호출
+            import requests
+
+            url = f"{self.url}/rest/api/2/search"
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            params = {
+                "jql": jql_query,
+                "maxResults": 10,
+                "fields": "key,summary"
+            }
+
+            logger.info(f"🔗 API 호출: {url}")
+
+            response = requests.get(url, headers=headers, params=params, verify=True, timeout=30)
+
+            logger.info(f"📊 응답 상태 코드: {response.status_code}")
+
+            # 상태 코드 확인
+            if response.status_code == 400:
+                logger.error("❌ 400 Bad Request: JQL 쿼리 오류")
+                return {
+                    "success": False,
+                    "error": "잘못된 JQL 쿼리: 프로젝트 키 또는 레이블이 잘못되었습니다.",
+                    "message": "프로젝트 키와 레이블을 확인해주세요.",
+                    "jql_query": jql_query
+                }
+            elif response.status_code == 401:
+                logger.error("❌ 401 Unauthorized")
+                return {
+                    "success": False,
+                    "error": "인증 실패: Bearer API 토큰이 만료되었거나 잘못되었습니다.",
+                    "message": "Bearer API 토큰을 다시 확인해주세요."
+                }
+            elif response.status_code != 200:
+                logger.error(f"❌ HTTP {response.status_code}: {response.text}")
+                return {
+                    "success": False,
+                    "error": f"Jira API 오류 (HTTP {response.status_code}): {response.text[:100]}",
+                    "message": "JQL 쿼리 검증 중 오류가 발생했습니다."
+                }
+
+            # JSON 파싱
+            try:
+                result = response.json()
+                issue_count = result.get("total", 0)
+
+                logger.info(f"✅ JQL 쿼리 검증 성공: {issue_count}개 이슈 발견")
+
+                return {
+                    "success": True,
+                    "issue_count": issue_count,
+                    "jql_query": jql_query,
+                    "has_issues": issue_count > 0,
+                    "message": f"{issue_count}개의 이슈를 찾았습니다." if issue_count > 0 else "조회된 이슈가 없습니다."
+                }
+            except ValueError as json_error:
+                logger.error(f"❌ JSON 파싱 실패: {json_error}")
+                logger.error(f"📊 응답 본문: {response.text[:200]}")
+                return {
+                    "success": False,
+                    "error": f"응답 파싱 실패: {str(json_error)}",
+                    "message": "Jira 응답을 처리할 수 없습니다."
+                }
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ HTTP 요청 실패: {e}")
+            return {
+                "success": False,
+                "error": f"네트워크 오류: {str(e)}",
+                "message": "Jira 서버에 연결할 수 없습니다."
+            }
+        except Exception as e:
+            logger.error(f"❌ JQL 쿼리 검증 중 예상치 못한 오류: {e}")
+            import traceback
+            logger.error(f"📊 스택 트레이스:\n{traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "JQL 쿼리 검증 중 오류가 발생했습니다."
+            }
+
     def close(self):
         """리소스 정리"""
         try:
@@ -1086,9 +1384,9 @@ class JiraConnector:
             logger.info("✅ JiraConnector 리소스 정리 완료")
         except Exception as e:
             logger.error(f"❌ 리소스 정리 중 오류: {e}")
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close() 

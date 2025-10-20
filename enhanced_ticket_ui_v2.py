@@ -376,7 +376,7 @@ def display_ticket_detail(ticket: Ticket):
                     else:
                         st.error("❌ 프로젝트 설정에 실패했습니다.")
         
-        # 사용 가능한 프로젝트 목록 조회
+        # 사용 가능한 프로젝트 목록 조회 (참고용)
         available_projects = []
         try:
             from jira_connector import JiraConnector
@@ -385,24 +385,24 @@ def display_ticket_detail(ticket: Ticket):
                 available_projects = [p.key for p in projects]
         except Exception as e:
             available_projects = ["BPM"]  # 기본값
-        
-        # 프로젝트 변경 UI
-        if current_project in available_projects:
-            current_index = available_projects.index(current_project)
+
+        # 프로젝트 변경 UI - text_input 사용
+        if available_projects:
+            help_text = f"사용 가능한 프로젝트: {', '.join(available_projects)}"
         else:
-            current_index = 0
-            
-        new_project = st.selectbox(
+            help_text = "Jira 프로젝트 키를 직접 입력하세요 (예: BPM, PROJ, DEV)"
+
+        new_project = st.text_input(
             "Jira 프로젝트 변경",
-            options=available_projects,
-            index=current_index,
-            key=f"project_select_{ticket.ticket_id}",
-            help="티켓을 업로드할 Jira 프로젝트를 선택하세요."
+            value=current_project,
+            key=f"project_input_{ticket.ticket_id}",
+            help=help_text,
+            placeholder="프로젝트 키를 입력하세요 (예: BPM)"
         )
         
-        if new_project != current_project:
+        if new_project.strip() != current_project.strip() and new_project.strip():
             if st.button("🔄 프로젝트 변경", key=f"change_project_{ticket.ticket_id}", type="secondary"):
-                success = update_ticket_jira_project(ticket.ticket_id, new_project, current_project)
+                success = update_ticket_jira_project(ticket.ticket_id, new_project.strip(), current_project)
                 if success:
                     st.success(f"✅ 프로젝트가 '{current_project or '미설정'}'에서 '{new_project}'로 변경되었습니다!")
                     st.rerun()

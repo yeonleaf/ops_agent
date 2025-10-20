@@ -56,14 +56,22 @@ class TicketEvent:
 
 @dataclass
 class User:
-    """사용자 데이터 모델 (RDB용)"""
+    """사용자 데이터 모델 (RDB용) - 연동 정보는 Integration 테이블 사용"""
     id: Optional[int]
     email: str
     password_hash: str
-    google_refresh_token: Optional[str] = None
-    jira_endpoint: Optional[str] = None
-    jira_api_token: Optional[str] = None
     created_at: Optional[str] = None
+
+@dataclass
+class Integration:
+    """통합 서비스 데이터 모델 (RDB용)"""
+    id: Optional[int]
+    user_id: int  # 사용자 ID
+    source: str  # 'jira', 'gmail', 'kakao', 'slack' 등
+    type: str  # 'token', 'endpoint', 'botUserKey', 'apiKey' 등
+    value: str  # 설정 값 (암호화된 토큰, URL 등)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 @dataclass
 class UserAction:
@@ -135,16 +143,28 @@ class DatabaseManager:
                 )
             """)
             
-            # users 테이블 생성
+            # users 테이블 생성 (연동 정보는 integrations 테이블에 저장)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255) UNIQUE NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
-                    google_refresh_token TEXT NULL,
-                    jira_endpoint VARCHAR(255) NULL,
-                    jira_api_token TEXT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # integrations 테이블 생성
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS integrations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    source VARCHAR(50) NOT NULL,
+                    type VARCHAR(50) NOT NULL,
+                    value TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, source, type)
                 )
             """)
             
@@ -192,12 +212,223 @@ class DatabaseManager:
             """)
             
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_users_email 
+                CREATE INDEX IF NOT EXISTS idx_users_email
                 ON users(email)
             """)
-            
+
+            # Integration 테이블 스키마 확인 후 인덱스 생성
+            cursor.execute("PRAGMA table_info(integrations)")
+            integration_columns = [col[1] for col in cursor.fetchall()]
+
+            # 새 스키마인 경우에만 인덱스 생성
+            if 'user_id' in integration_columns:
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_integrations_user_id
+                    ON integrations(user_id)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_integrations_source
+                    ON integrations(source)
+                """)
+            elif 'email' in integration_columns:
+                # 구 스키마 인덱스 (마이그레이션 전)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_integrations_email
+                    ON integrations(email)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_integrations_source_type
+                    ON integrations(source_type)
+                """)
+
             conn.commit()
-    
+
+    def migrate_integrations_to_new_schema(self):
+        """기존 Integration 테이블 데이터를 새 스키마로 마이그레이션"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            print("🔄 Integration 테이블 마이그레이션 시작...")
+
+            # 1. 기존 integrations 테이블이 존재하는지 확인
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='integrations'
+            """)
+            if not cursor.fetchone():
+                print("⚠️  기존 integrations 테이블이 없습니다. 마이그레이션을 건너뜁니다.")
+                return
+
+            # 2. 기존 스키마 확인 (email 컬럼이 있는지 확인)
+            cursor.execute("PRAGMA table_info(integrations)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'email' not in columns:
+                print("⚠️  이미 새 스키마로 마이그레이션되었거나, 기존 데이터가 없습니다.")
+                return
+
+            # 3. 기존 데이터를 임시 테이블에 백업
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS integrations_old AS
+                SELECT * FROM integrations
+            """)
+            print("✅ 기존 데이터 백업 완료")
+
+            # 4. 기존 integrations 테이블 삭제
+            cursor.execute("DROP TABLE integrations")
+            print("✅ 기존 integrations 테이블 삭제")
+
+            # 5. 새 스키마로 integrations 테이블 생성
+            cursor.execute("""
+                CREATE TABLE integrations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    source VARCHAR(50) NOT NULL,
+                    type VARCHAR(50) NOT NULL,
+                    value TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, source, type)
+                )
+            """)
+            print("✅ 새 스키마로 integrations 테이블 생성")
+
+            # 6. 인덱스 생성
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_integrations_user_id
+                ON integrations(user_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_integrations_source
+                ON integrations(source)
+            """)
+            print("✅ 인덱스 생성 완료")
+
+            # 7. 기존 데이터를 새 테이블로 마이그레이션
+            # Gmail 데이터 마이그레이션
+            cursor.execute("""
+                SELECT i.email, i.source_type, i.token, i.created_at, u.id
+                FROM integrations_old i
+                JOIN users u ON i.email = u.email
+                WHERE i.source_type = 'gmail'
+            """)
+            gmail_data = cursor.fetchall()
+
+            for email, source_type, token, created_at, user_id in gmail_data:
+                try:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO integrations (user_id, source, type, value, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_id, 'gmail', 'token', token, created_at, datetime.now().isoformat()))
+                    print(f"✅ {email}의 Gmail 토큰 마이그레이션 완료")
+                except Exception as e:
+                    print(f"⚠️  {email}의 Gmail 마이그레이션 실패: {e}")
+
+            # Jira/Atlassian 데이터 마이그레이션
+            cursor.execute("""
+                SELECT i.email, i.source_type, i.token, i.created_at, u.id, u.jira_endpoint
+                FROM integrations_old i
+                JOIN users u ON i.email = u.email
+                WHERE i.source_type = 'atlassian'
+            """)
+            jira_data = cursor.fetchall()
+
+            for email, source_type, token, created_at, user_id, jira_endpoint in jira_data:
+                try:
+                    # Jira API 토큰 저장
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO integrations (user_id, source, type, value, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_id, 'jira', 'token', token, created_at, datetime.now().isoformat()))
+                    print(f"✅ {email}의 Jira 토큰 마이그레이션 완료")
+
+                    # Jira Endpoint도 함께 저장
+                    if jira_endpoint:
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO integrations (user_id, source, type, value, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (user_id, 'jira', 'endpoint', jira_endpoint, created_at, datetime.now().isoformat()))
+                        print(f"✅ {email}의 Jira 엔드포인트 마이그레이션 완료")
+                except Exception as e:
+                    print(f"⚠️  {email}의 Jira 마이그레이션 실패: {e}")
+
+            # 8. 임시 테이블 삭제
+            cursor.execute("DROP TABLE integrations_old")
+            print("✅ 백업 테이블 삭제")
+
+            conn.commit()
+            print("🎉 Integration 테이블 마이그레이션 완료!")
+
+    def migrate_user_data_to_integrations(self):
+        """기존 User 테이블의 통합 정보를 Integration 테이블로 마이그레이션 (레거시)"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            print("🔄 User 테이블에서 Integration 테이블로 마이그레이션 시작...")
+
+            # 1. mail_type 컬럼 추가 (이미 존재하는 경우 무시)
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN mail_type VARCHAR(50) NULL")
+                print("✅ users 테이블에 mail_type 컬럼 추가 완료")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    print("⚠️  mail_type 컬럼이 이미 존재합니다")
+                else:
+                    raise e
+
+            # 2. google_refresh_token이 있는 사용자들을 integration 테이블로 마이그레이션
+            cursor.execute("""
+                SELECT id, email, google_refresh_token
+                FROM users
+                WHERE google_refresh_token IS NOT NULL AND google_refresh_token != ''
+            """)
+            gmail_users = cursor.fetchall()
+
+            for user_id, email, token in gmail_users:
+                try:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO integrations (user_id, source, type, value, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_id, 'gmail', 'token', token, datetime.now().isoformat(), datetime.now().isoformat()))
+                    print(f"✅ {email}의 Gmail 통합 정보 마이그레이션 완료")
+                except Exception as e:
+                    print(f"⚠️  {email}의 Gmail 마이그레이션 실패: {e}")
+
+            # 3. jira 정보가 있는 사용자들을 integration 테이블로 마이그레이션
+            cursor.execute("""
+                SELECT id, email, jira_endpoint, jira_api_token
+                FROM users
+                WHERE jira_api_token IS NOT NULL AND jira_api_token != ''
+            """)
+            jira_users = cursor.fetchall()
+
+            for user_id, email, endpoint, token in jira_users:
+                try:
+                    # Jira API 토큰 저장
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO integrations (user_id, source, type, value, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_id, 'jira', 'token', token, datetime.now().isoformat(), datetime.now().isoformat()))
+                    print(f"✅ {email}의 Jira API 토큰 마이그레이션 완료")
+
+                    # Jira Endpoint 저장
+                    if endpoint:
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO integrations (user_id, source, type, value, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (user_id, 'jira', 'endpoint', endpoint, datetime.now().isoformat(), datetime.now().isoformat()))
+                        print(f"✅ {email}의 Jira 엔드포인트 마이그레이션 완료")
+                except Exception as e:
+                    print(f"⚠️  {email}의 Jira 마이그레이션 실패: {e}")
+
+            conn.commit()
+            print("🎉 데이터 마이그레이션 완료!")
+
     def insert_ticket(self, ticket: Ticket) -> int:
         """티켓 삽입"""
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
@@ -510,18 +741,16 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             cursor = conn.cursor()
-            
+
             cursor.execute("""
                 INSERT INTO users (
-                    email, password_hash, google_refresh_token, 
-                    jira_endpoint, jira_api_token, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    email, password_hash, created_at
+                ) VALUES (?, ?, ?)
             """, (
-                user.email, user.password_hash, user.google_refresh_token,
-                user.jira_endpoint, user.jira_api_token, 
+                user.email, user.password_hash,
                 user.created_at or datetime.now().isoformat()
             ))
-            
+
             user_id = cursor.lastrowid
             conn.commit()
             return user_id
@@ -531,23 +760,19 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             cursor = conn.cursor()
-            
+
             cursor.execute("""
-                SELECT id, email, password_hash, google_refresh_token,
-                       jira_endpoint, jira_api_token, created_at
+                SELECT id, email, password_hash, created_at
                 FROM users WHERE email = ?
             """, (email,))
-            
+
             row = cursor.fetchone()
             if row:
                 return User(
                     id=row[0],
                     email=row[1],
                     password_hash=row[2],
-                    google_refresh_token=row[3],
-                    jira_endpoint=row[4],
-                    jira_api_token=row[5],
-                    created_at=row[6]
+                    created_at=row[3]
                 )
             return None
     
@@ -556,37 +781,34 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             cursor = conn.cursor()
-            
+
             cursor.execute("""
-                SELECT id, email, password_hash, google_refresh_token,
-                       jira_endpoint, jira_api_token, created_at
+                SELECT id, email, password_hash, created_at
                 FROM users WHERE id = ?
             """, (user_id,))
-            
+
             row = cursor.fetchone()
             if row:
                 return User(
                     id=row[0],
                     email=row[1],
                     password_hash=row[2],
-                    google_refresh_token=row[3],
-                    jira_endpoint=row[4],
-                    jira_api_token=row[5],
-                    created_at=row[6]
+                    created_at=row[3]
                 )
             return None
     
     def update_user_google_token(self, user_id: int, google_refresh_token: str):
-        """사용자의 Google Refresh Token 업데이트"""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                UPDATE users SET google_refresh_token = ? WHERE id = ?
-            """, (google_refresh_token, user_id))
-            
-            conn.commit()
+        """
+        [DEPRECATED] 사용자의 Google Refresh Token 업데이트
+
+        이 메서드는 더 이상 사용되지 않습니다.
+        대신 Integration 테이블을 사용하세요:
+        - insert_integration(Integration(user_id, 'gmail', 'token', encrypted_token))
+        """
+        # User 테이블에 google_refresh_token 컬럼이 없으므로 아무것도 하지 않음
+        import logging
+        logging.warning("update_user_google_token()은 deprecated되었습니다. Integration 테이블을 사용하세요.")
+        pass
     
     def update_user_jira_info(self, user_id: int, jira_endpoint: str, jira_api_token: str):
         """사용자의 Jira 정보 업데이트"""
@@ -605,10 +827,197 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             cursor = conn.cursor()
-            
+
             cursor.execute("SELECT COUNT(*) FROM users WHERE email = ?", (email,))
             count = cursor.fetchone()[0]
             return count > 0
+
+    # === Integration 관련 메서드들 ===
+
+    def insert_integration(self, integration: Integration) -> int:
+        """통합 서비스 정보 삽입"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO integrations (
+                    user_id, source, type, value, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                integration.user_id,
+                integration.source,
+                integration.type,
+                integration.value,
+                integration.created_at or datetime.now().isoformat(),
+                datetime.now().isoformat()
+            ))
+
+            integration_id = cursor.lastrowid
+            conn.commit()
+            return integration_id
+
+    def get_integration(self, user_id: int, source: str, type: str) -> Optional[Integration]:
+        """특정 사용자, 소스, 타입으로 통합 정보 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, user_id, source, type, value, created_at, updated_at
+                FROM integrations
+                WHERE user_id = ? AND source = ? AND type = ?
+            """, (user_id, source, type))
+
+            row = cursor.fetchone()
+            if row:
+                return Integration(
+                    id=row[0],
+                    user_id=row[1],
+                    source=row[2],
+                    type=row[3],
+                    value=row[4],
+                    created_at=row[5],
+                    updated_at=row[6]
+                )
+            return None
+
+    def get_all_integrations_by_user(self, user_id: int) -> List[Integration]:
+        """특정 사용자의 모든 통합 정보 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, user_id, source, type, value, created_at, updated_at
+                FROM integrations
+                WHERE user_id = ?
+            """, (user_id,))
+
+            integrations = []
+            for row in cursor.fetchall():
+                integrations.append(Integration(
+                    id=row[0],
+                    user_id=row[1],
+                    source=row[2],
+                    type=row[3],
+                    value=row[4],
+                    created_at=row[5],
+                    updated_at=row[6]
+                ))
+            return integrations
+
+    def get_integrations_by_source(self, user_id: int, source: str) -> List[Integration]:
+        """특정 사용자의 특정 소스에 대한 모든 설정 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, user_id, source, type, value, created_at, updated_at
+                FROM integrations
+                WHERE user_id = ? AND source = ?
+            """, (user_id, source))
+
+            integrations = []
+            for row in cursor.fetchall():
+                integrations.append(Integration(
+                    id=row[0],
+                    user_id=row[1],
+                    source=row[2],
+                    type=row[3],
+                    value=row[4],
+                    created_at=row[5],
+                    updated_at=row[6]
+                ))
+            return integrations
+
+    def update_integration_value(self, user_id: int, source: str, type: str, value: str):
+        """통합 서비스의 값 업데이트"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE integrations
+                SET value = ?, updated_at = ?
+                WHERE user_id = ? AND source = ? AND type = ?
+            """, (value, datetime.now().isoformat(), user_id, source, type))
+
+            conn.commit()
+
+    def delete_integration(self, integration_id: int):
+        """통합 서비스 정보 삭제 (ID로)"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                DELETE FROM integrations
+                WHERE id = ?
+            """, (integration_id,))
+
+            conn.commit()
+
+    def delete_integration_by_type(self, user_id: int, source: str, type: str):
+        """통합 서비스 정보 삭제 (특정 타입)"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                DELETE FROM integrations
+                WHERE user_id = ? AND source = ? AND type = ?
+            """, (user_id, source, type))
+
+            conn.commit()
+
+    def delete_integration_source(self, user_id: int, source: str):
+        """통합 서비스 정보 삭제 (소스 전체)"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                DELETE FROM integrations
+                WHERE user_id = ? AND source = ?
+            """, (user_id, source))
+
+            conn.commit()
+
+    def get_user_id_by_kakao_id(self, kakao_id: str) -> Optional[int]:
+        """카카오 ID로 사용자 ID 조회"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT user_id
+                FROM integrations
+                WHERE source = 'kakao' AND type = 'id' AND value = ?
+            """, (str(kakao_id),))
+
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            return None
+
+    def get_user_id_by_integration(self, source: str, type: str, value: str) -> Optional[int]:
+        """통합 서비스 정보로 사용자 ID 조회 (범용)"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT user_id
+                FROM integrations
+                WHERE source = ? AND type = ? AND value = ?
+            """, (source, type, str(value)))
+
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            return None
 
 class MailParser:
     """메일 파싱 및 구조화 클래스"""
