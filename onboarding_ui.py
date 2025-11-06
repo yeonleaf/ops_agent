@@ -39,8 +39,6 @@ def show_onboarding_process(email: str) -> bool:
     # 세션 상태 초기화
     if 'atlassian_connected' not in st.session_state:
         st.session_state.atlassian_connected = False
-    if 'mail_connected' not in st.session_state:
-        st.session_state.mail_connected = False
     if 'kakao_connected' not in st.session_state:
         st.session_state.kakao_connected = False
     if 'slack_connected' not in st.session_state:
@@ -54,10 +52,9 @@ def show_onboarding_process(email: str) -> bool:
     st.markdown("서비스를 시작하기 위해 필수 연동을 완료해주세요.")
 
     # 진행률 표시
-    total_steps = 2  # Atlassian과 메일만 필수
+    total_steps = 1  # Atlassian만 필수
     completed_steps = sum([
-        st.session_state.atlassian_connected,
-        st.session_state.mail_connected
+        st.session_state.atlassian_connected
     ])
     progress = completed_steps / total_steps
 
@@ -65,9 +62,8 @@ def show_onboarding_process(email: str) -> bool:
     st.markdown(f"**진행률: {completed_steps}/{total_steps} 완료 (필수 연동)**")
 
     # 탭 생성 (카카오, 슬랙은 선택 사항)
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "🔧 Atlassian 연동" + (" ✅" if st.session_state.atlassian_connected else ""),
-        "📧 메일 연동" + (" ✅" if st.session_state.mail_connected else ""),
         "💬 카카오 연동 (선택)" + (" ✅" if st.session_state.kakao_connected else ""),
         "💼 슬랙 연동 (선택)" + (" ✅" if st.session_state.slack_connected else "")
     ])
@@ -76,20 +72,16 @@ def show_onboarding_process(email: str) -> bool:
     with tab1:
         render_jira_onboarding_tab(auth_client, email)
 
-    # 탭 2: 메일 연동
+    # 탭 2: 카카오 연동 (선택 사항)
     with tab2:
-        _render_mail_tab(auth_client, email)
-
-    # 탭 3: 카카오 연동 (선택 사항)
-    with tab3:
         _render_kakao_tab(auth_client, email)
 
-    # 탭 4: 슬랙 연동 (선택 사항)
-    with tab4:
+    # 탭 3: 슬랙 연동 (선택 사항)
+    with tab3:
         _render_slack_tab(auth_client, email)
 
-    # 완료 조건 체크 (카카오는 선택 사항이므로 필수 아님)
-    all_completed = st.session_state.atlassian_connected and st.session_state.mail_connected
+    # 완료 조건 체크
+    all_completed = st.session_state.atlassian_connected
 
     if all_completed:
         st.success("🎉 모든 연동이 완료되었습니다! 이제 서비스를 시작할 수 있습니다.")
@@ -109,11 +101,6 @@ def _check_integration_status(auth_client: AuthClient):
     if jira_status.get("success") and jira_status.get("has_api_token"):
         st.session_state.atlassian_connected = True
 
-    # 메일 연동 상태 확인
-    google_status = auth_client.get_google_integration()
-    if google_status.get("success") and google_status.get("has_refresh_token"):
-        st.session_state.mail_connected = True
-
     # 카카오 연동 상태 확인
     kakao_status = auth_client.get_kakao_integration()
     if kakao_status.get("success") and kakao_status.get("linked"):
@@ -123,72 +110,6 @@ def _check_integration_status(auth_client: AuthClient):
     slack_status = auth_client.get_slack_integration()
     if slack_status.get("success") and slack_status.get("linked"):
         st.session_state.slack_connected = True
-
-
-def _render_mail_tab(auth_client: AuthClient, email: str):
-    """메일 연동 탭 렌더링"""
-
-    if st.session_state.mail_connected:
-        st.success("✅ 메일 연동이 완료되었습니다.")
-
-        # 연동 정보 표시
-        google_info = auth_client.get_google_integration()
-        if google_info.get("success"):
-            st.info(f"**연동된 이메일:** {email}")
-
-        # 재설정 옵션
-        if st.button("다시 설정하기", key="reset_mail"):
-            st.session_state.mail_connected = False
-            st.rerun()
-    else:
-        st.markdown("### 메일 계정 연동")
-        st.markdown("티켓 생성을 위해 메일 계정을 연동해주세요.")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown("#### Gmail")
-            st.markdown("Google 계정으로 이메일을 가져옵니다.")
-
-            if st.button("📧 Gmail 연동하기", key="gmail_connect", use_container_width=True):
-                # OAuth URL 생성 및 새 창으로 열기
-                oauth_url = f"http://localhost:8002/auth/login/gmail?user_email={email}"
-                st.markdown(f"[Gmail 연동 페이지로 이동]({oauth_url})")
-                st.info("새 창에서 Gmail 인증을 완료한 후 이 페이지로 돌아와주세요.")
-
-                # 연동 상태 확인 버튼
-                if st.button("연동 완료 확인", key="check_gmail"):
-                    _check_integration_status(auth_client)
-                    if st.session_state.mail_connected:
-                        st.success("✅ Gmail 연동이 완료되었습니다!")
-                        st.rerun()
-                    else:
-                        st.warning("아직 연동이 완료되지 않았습니다.")
-
-        with col2:
-            st.markdown("#### Outlook")
-            st.markdown("Microsoft 계정으로 이메일을 가져옵니다.")
-
-            if st.button("📧 Outlook 연동하기", key="outlook_connect", use_container_width=True):
-                # OAuth URL 생성 및 새 창으로 열기
-                oauth_url = f"http://localhost:8002/auth/login/microsoft?user_email={email}"
-                st.markdown(f"[Outlook 연동 페이지로 이동]({oauth_url})")
-                st.info("새 창에서 Outlook 인증을 완료한 후 이 페이지로 돌아와주세요.")
-
-                # 연동 상태 확인 버튼
-                if st.button("연동 완료 확인", key="check_outlook"):
-                    _check_integration_status(auth_client)
-                    if st.session_state.mail_connected:
-                        st.success("✅ Outlook 연동이 완료되었습니다!")
-                        st.rerun()
-                    else:
-                        st.warning("아직 연동이 완료되지 않았습니다.")
-
-        st.markdown("---")
-        st.markdown("**참고사항:**")
-        st.markdown("- Gmail과 Outlook 중 하나만 연동하면 됩니다.")
-        st.markdown("- 연동된 메일 계정에서 자동으로 티켓을 생성합니다.")
-        st.markdown("- 나중에 계정 설정에서 변경할 수 있습니다.")
 
 
 def _render_kakao_tab(auth_client: AuthClient, email: str):

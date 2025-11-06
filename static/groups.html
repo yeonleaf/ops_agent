@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>그룹 관리 - 월간보고 생성기</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <style>
+        .groups-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .group-card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .group-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+
+        .group-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .group-card h3 {
+            margin: 0;
+            color: #2c3e50;
+            font-size: 1.3em;
+        }
+
+        .group-role-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .group-role-badge.owner {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .group-role-badge.member {
+            background: #2196F3;
+            color: white;
+        }
+
+        .group-card-description {
+            color: #666;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+
+        .group-card-stats {
+            display: flex;
+            gap: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .group-stat {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+
+        .empty-state h3 {
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .empty-state p {
+            margin-bottom: 20px;
+        }
+
+        /* 모달 스타일 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: #2c3e50;
+        }
+
+        .modal-close {
+            font-size: 1.5em;
+            cursor: pointer;
+            color: #999;
+            background: none;
+            border: none;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: #333;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .message {
+            display: none;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .message.active {
+            display: block;
+        }
+
+        .message.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef5350;
+        }
+
+        .message.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #66bb6a;
+        }
+    </style>
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1>👥 그룹 관리</h1>
+            <div class="user-info">
+                <a href="/static/app.html" style="margin-right: 15px; color: white; text-decoration: none;">← 보고서</a>
+                <span class="username" id="username"></span>
+                <button class="btn-logout" onclick="logout()">로그아웃</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 메인 컨테이너 -->
+    <div class="app-container">
+        <div class="section-header">
+            <h2>내 그룹</h2>
+            <button class="btn btn-primary" onclick="showCreateGroupModal()">+ 새 그룹 만들기</button>
+        </div>
+
+        <!-- 로딩 -->
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>그룹 목록을 불러오는 중...</p>
+        </div>
+
+        <!-- 메시지 -->
+        <div id="message" class="message"></div>
+
+        <!-- 그룹 목록 -->
+        <div id="groups-grid" class="groups-grid">
+            <!-- 동적 생성 -->
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">👥</div>
+            <h3>아직 그룹이 없습니다</h3>
+            <p>새 그룹을 만들어 팀원들과 협업하세요!</p>
+            <button class="btn btn-primary" onclick="showCreateGroupModal()">첫 그룹 만들기</button>
+        </div>
+    </div>
+
+    <!-- 그룹 생성 모달 -->
+    <div id="create-group-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>새 그룹 만들기</h3>
+                <button class="modal-close" onclick="closeCreateGroupModal()">&times;</button>
+            </div>
+            <form id="create-group-form" onsubmit="createGroup(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="group-name">그룹 이름 *</label>
+                        <input type="text" id="group-name" required placeholder="예: OTT운영팀">
+                    </div>
+                    <div class="form-group">
+                        <label for="group-description">설명</label>
+                        <textarea id="group-description" placeholder="그룹에 대한 간단한 설명을 입력하세요"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeCreateGroupModal()">취소</button>
+                    <button type="submit" class="btn btn-primary">생성</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v2';
+        let token = localStorage.getItem('token');
+
+        // 페이지 로드 시
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!token) {
+                window.location.href = '/static/login.html';
+                return;
+            }
+
+            loadUserInfo();
+            loadGroups();
+        });
+
+        // 사용자 정보 로드
+        async function loadUserInfo() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('username').textContent = data.username;
+                } else {
+                    logout();
+                }
+            } catch (error) {
+                console.error('사용자 정보 로드 실패:', error);
+            }
+        }
+
+        // 그룹 목록 로드
+        async function loadGroups() {
+            const loading = document.getElementById('loading');
+            const groupsGrid = document.getElementById('groups-grid');
+            const emptyState = document.getElementById('empty-state');
+
+            loading.classList.add('active');
+            groupsGrid.innerHTML = '';
+            emptyState.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/groups`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('그룹 목록 로드 실패');
+                }
+
+                const data = await response.json();
+                const groups = data.groups || [];
+
+                if (groups.length === 0) {
+                    emptyState.style.display = 'block';
+                } else {
+                    groups.forEach(group => {
+                        const card = createGroupCard(group);
+                        groupsGrid.appendChild(card);
+                    });
+                }
+
+            } catch (error) {
+                showMessage('그룹 목록을 불러오는 데 실패했습니다: ' + error.message, 'error');
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        // 그룹 카드 생성
+        function createGroupCard(group) {
+            const card = document.createElement('div');
+            card.className = 'group-card';
+            card.onclick = () => goToGroupDetail(group.id);
+
+            const roleClass = group.role === 'owner' ? 'owner' : 'member';
+            const roleText = group.role === 'owner' ? 'Owner' : 'Member';
+
+            card.innerHTML = `
+                <div class="group-card-header">
+                    <h3>${escapeHtml(group.name)}</h3>
+                    <span class="group-role-badge ${roleClass}">${roleText}</span>
+                </div>
+                ${group.description ? `<div class="group-card-description">${escapeHtml(group.description)}</div>` : ''}
+                <div class="group-card-stats">
+                    <div class="group-stat">
+                        <span>👥</span>
+                        <span>${group.member_count || 0}명</span>
+                    </div>
+                    <div class="group-stat">
+                        <span>📝</span>
+                        <span>${group.prompt_count || 0}개 프롬프트</span>
+                    </div>
+                </div>
+            `;
+
+            return card;
+        }
+
+        // 그룹 생성 모달 표시
+        function showCreateGroupModal() {
+            const modal = document.getElementById('create-group-modal');
+            modal.classList.add('active');
+            document.getElementById('create-group-form').reset();
+        }
+
+        // 그룹 생성 모달 닫기
+        function closeCreateGroupModal() {
+            const modal = document.getElementById('create-group-modal');
+            modal.classList.remove('active');
+        }
+
+        // 그룹 생성
+        async function createGroup(event) {
+            event.preventDefault();
+
+            const name = document.getElementById('group-name').value.trim();
+            const description = document.getElementById('group-description').value.trim();
+
+            if (!name) {
+                alert('그룹 이름을 입력하세요');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/groups`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ name, description })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '그룹 생성 실패');
+                }
+
+                const data = await response.json();
+                showMessage('그룹이 생성되었습니다!', 'success');
+                closeCreateGroupModal();
+                loadGroups();
+
+            } catch (error) {
+                showMessage('그룹 생성 실패: ' + error.message, 'error');
+            }
+        }
+
+        // 그룹 상세 페이지로 이동
+        function goToGroupDetail(groupId) {
+            window.location.href = `/static/group-detail.html?id=${groupId}`;
+        }
+
+        // 메시지 표시
+        function showMessage(text, type = 'info') {
+            const message = document.getElementById('message');
+            message.textContent = text;
+            message.className = `message active ${type}`;
+
+            setTimeout(() => {
+                message.classList.remove('active');
+            }, 5000);
+        }
+
+        // HTML 이스케이프
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 로그아웃
+        function logout() {
+            localStorage.removeItem('token');
+            window.location.href = '/static/login.html';
+        }
+    </script>
+</body>
+</html>

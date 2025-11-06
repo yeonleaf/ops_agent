@@ -11,6 +11,8 @@ import logging
 
 from jira_chunk_models import JiraChunk, JiraChunkType, JiraTicketChunks
 from jira_chunk_processor import JiraChunkProcessor
+# UnifiedChunk import
+from models.unified_chunk import UnifiedChunk, create_file_unified_chunk
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -57,59 +59,65 @@ class JiraRAGIntegration:
         logger.info(f"RAG 시스템 형식 변환 완료: {len(rag_chunks)}개 청크")
         return rag_chunks
     
-    def _convert_to_rag_format(self, jira_chunk: JiraChunk, file_name: str) -> Dict[str, Any]:
+    def _convert_to_rag_format(self, jira_chunk: JiraChunk, file_name: str) -> UnifiedChunk:
         """
-        Jira 청크를 기존 RAG 시스템의 FileChunk 형식으로 변환
-        
+        Jira 청크를 UnifiedChunk로 변환
+
+        주의: 현재 버전에서는 Jira CSV를 "파일"로 처리합니다.
+        향후 Jira 일배치 개발 시 data_source="jira"로 변경 예정입니다.
+
         Args:
             jira_chunk: Jira 청크 객체
             file_name: 원본 파일명
-            
+
         Returns:
-            RAG 시스템 형식의 청크 딕셔너리
+            UnifiedChunk 인스턴스 (data_source="file")
         """
-        # 기존 FileChunk 형식에 맞춰 변환
-        rag_chunk = {
-            "chunk_id": jira_chunk.chunk_id,
-            "file_name": os.path.basename(file_name),
-            "file_hash": f"jira_{jira_chunk.ticket_id}",  # Jira 티켓 ID 기반 해시
-            "text_chunk": jira_chunk.content,  # 임베딩할 텍스트
-            "architecture": "jira_specialized_chunking",
-            "processing_method": "jira_field_based_processing",
-            "vision_analysis": False,  # Jira 데이터는 Vision 분석 불필요
-            "section_title": f"{jira_chunk.chunk_type.value.title()} - {jira_chunk.ticket_id}",
-            "page_number": 1,  # Jira 데이터는 페이지 개념 없음
-            "element_count": 1,  # 각 청크는 하나의 요소
-            "file_type": "csv",
-            "elements": [{
+        # 현재는 Jira CSV를 파일로 처리 (data_source="file")
+        # 향후 Jira 일배치 개발 시:
+        #   - data_source를 "jira"로 변경
+        #   - file_metadata를 None으로 설정
+        #   - jira_metadata에 실제 데이터 저장
+
+        unified_chunk = create_file_unified_chunk(
+            text_chunk=jira_chunk.content,
+            file_name=os.path.basename(file_name),
+            file_hash=f"jira_{jira_chunk.ticket_id}",  # Jira 티켓 ID 기반 해시
+            file_type="csv",
+            file_size=len(jira_chunk.content.encode('utf-8')),
+            architecture="jira_specialized_chunking",
+            processing_method="jira_field_based_processing",
+            vision_analysis=False,  # Jira 데이터는 Vision 분석 불필요
+            section_title=f"{jira_chunk.chunk_type.value.title()} - {jira_chunk.ticket_id}",
+            page_number=1,  # Jira 데이터는 페이지 개념 없음
+            element_count=1,  # 각 청크는 하나의 요소
+            elements=[{
                 "type": jira_chunk.chunk_type.value,
                 "content": jira_chunk.content,
-                "metadata": jira_chunk.metadata
+                "metadata": jira_chunk.metadata,
+                # Jira 전용 정보를 elements에 저장 (향후 참조용)
+                "jira_metadata": {
+                    "ticket_id": jira_chunk.ticket_id,
+                    "chunk_type": jira_chunk.chunk_type.value,
+                    "field_name": jira_chunk.field_name,
+                    "ticket_summary": jira_chunk.ticket_summary,
+                    "ticket_status": jira_chunk.ticket_status,
+                    "ticket_priority": jira_chunk.ticket_priority,
+                    "ticket_type": jira_chunk.ticket_type,
+                    "ticket_assignee": jira_chunk.ticket_assignee,
+                    "ticket_reporter": jira_chunk.ticket_reporter,
+                    "ticket_created": jira_chunk.ticket_created,
+                    "ticket_updated": jira_chunk.ticket_updated,
+                    "priority_score": jira_chunk.priority_score,
+                    "comment_author": jira_chunk.comment_author,
+                    "comment_date": jira_chunk.comment_date,
+                    "comment_id": jira_chunk.comment_id
+                }
             }],
-            "created_at": jira_chunk.created_at,
-            "file_size": len(jira_chunk.content.encode('utf-8')),
-            
-            # Jira 전용 메타데이터 추가
-            "jira_metadata": {
-                "ticket_id": jira_chunk.ticket_id,
-                "chunk_type": jira_chunk.chunk_type.value,
-                "field_name": jira_chunk.field_name,
-                "ticket_summary": jira_chunk.ticket_summary,
-                "ticket_status": jira_chunk.ticket_status,
-                "ticket_priority": jira_chunk.ticket_priority,
-                "ticket_type": jira_chunk.ticket_type,
-                "ticket_assignee": jira_chunk.ticket_assignee,
-                "ticket_reporter": jira_chunk.ticket_reporter,
-                "ticket_created": jira_chunk.ticket_created,
-                "ticket_updated": jira_chunk.ticket_updated,
-                "priority_score": jira_chunk.priority_score,
-                "comment_author": jira_chunk.comment_author,
-                "comment_date": jira_chunk.comment_date,
-                "comment_id": jira_chunk.comment_id
-            }
-        }
-        
-        return rag_chunk
+            chunk_id=jira_chunk.chunk_id
+        )
+
+        return unified_chunk
     
     def get_chunks_by_type(self, chunks: List[Dict[str, Any]], chunk_type: JiraChunkType) -> List[Dict[str, Any]]:
         """

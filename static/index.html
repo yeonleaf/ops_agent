@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>월간보고 자동화 시스템</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'Malgun Gothic', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #4CAF50;
+        }
+
+        .component-group {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .component-group:hover {
+            border-color: #4CAF50;
+            box-shadow: 0 2px 8px rgba(76, 175, 80, 0.2);
+        }
+
+        .component-group-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #34495e;
+            margin-bottom: 12px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 6px;
+            transition: background-color 0.3s ease;
+            cursor: pointer;
+        }
+
+        .checkbox-item:hover {
+            background-color: #e8f5e9;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+            cursor: pointer;
+            accent-color: #4CAF50;
+        }
+
+        .checkbox-item label {
+            flex: 1;
+            cursor: pointer;
+            font-size: 1em;
+            color: #2c3e50;
+        }
+
+        .checkbox-item.checked {
+            background-color: #e8f5e9;
+        }
+
+        .subsection {
+            margin-left: 20px;
+            padding-left: 15px;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            flex: 1;
+            min-width: 150px;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-primary:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            border: 2px solid #ddd;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 30px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 1.2em;
+            color: #666;
+        }
+
+        .preview {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 2px solid #4CAF50;
+        }
+
+        .preview.show {
+            display: block;
+        }
+
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .preview-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .btn-download {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-download:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+
+        .preview-content {
+            background: white;
+            padding: 20px;
+            border-radius: 6px;
+            max-height: 600px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+
+        .error {
+            display: none;
+            padding: 15px;
+            margin-top: 20px;
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 6px;
+            color: #856404;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .success {
+            display: none;
+            padding: 15px;
+            margin-top: 20px;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 6px;
+            color: #155724;
+        }
+
+        .success.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 월간보고 자동화 시스템</h1>
+            <p>원하는 컴포넌트를 선택하여 맞춤형 보고서를 생성하세요</p>
+        </div>
+
+        <div class="content">
+            <!-- 컴포넌트 선택 -->
+            <div class="section">
+                <div class="section-title">📋 보고서 컴포넌트 선택</div>
+
+                <!-- 1. 전체 운영 업무 현황 -->
+                <div class="component-group">
+                    <div class="component-group-title">1. 전체 운영 업무 현황</div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="operation_status" name="component" value="operation_status">
+                        <label for="operation_status">전체 운영 업무 현황</label>
+                    </div>
+                </div>
+
+                <!-- 2. BMT 현황 -->
+                <div class="component-group">
+                    <div class="component-group-title">2. BMT 현황</div>
+                    <div class="subsection">
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="ncms_bmt" name="component" value="ncms_bmt">
+                            <label for="ncms_bmt">NCMS BMT</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="edmp_bmt" name="component" value="edmp_bmt">
+                            <label for="edmp_bmt">EDMP BMT</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. PM 현황 -->
+                <div class="component-group">
+                    <div class="component-group-title">3. PM 현황</div>
+                    <div class="subsection">
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="ncms_pm" name="component" value="ncms_pm">
+                            <label for="ncms_pm">NCMS PM</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="acs_pm" name="component" value="acs_pm">
+                            <label for="acs_pm">ACS PM</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. 상용 DB작업 -->
+                <div class="component-group">
+                    <div class="component-group-title">4. 상용 DB작업</div>
+                    <div class="subsection">
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="ncms_db" name="component" value="ncms_db">
+                            <label for="ncms_db">NCMS DB작업</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="euxp_db" name="component" value="euxp_db">
+                            <label for="euxp_db">EUXP DB작업</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="acs_db" name="component" value="acs_db">
+                            <label for="acs_db">ACS DB작업</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 액션 버튼 -->
+            <div class="actions">
+                <button class="btn btn-primary" id="generateBtn">
+                    🚀 보고서 생성
+                </button>
+                <button class="btn btn-secondary" id="resetBtn">
+                    🔄 선택 초기화
+                </button>
+            </div>
+
+            <!-- 로딩 표시 -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div class="loading-text">보고서 생성 중입니다... 잠시만 기다려주세요.</div>
+            </div>
+
+            <!-- 에러 메시지 -->
+            <div class="error" id="error"></div>
+
+            <!-- 성공 메시지 -->
+            <div class="success" id="success"></div>
+
+            <!-- 미리보기 -->
+            <div class="preview" id="preview">
+                <div class="preview-header">
+                    <div class="preview-title">📄 생성된 보고서 미리보기</div>
+                    <button class="btn-download" id="downloadBtn">💾 HTML 다운로드</button>
+                </div>
+                <div class="preview-content" id="previewContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 체크박스 상태 업데이트
+        document.querySelectorAll('.checkbox-item input').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const item = this.closest('.checkbox-item');
+                if (this.checked) {
+                    item.classList.add('checked');
+                } else {
+                    item.classList.remove('checked');
+                }
+            });
+        });
+
+        // 선택 초기화
+        document.getElementById('resetBtn').addEventListener('click', function() {
+            document.querySelectorAll('input[name="component"]').forEach(checkbox => {
+                checkbox.checked = false;
+                checkbox.closest('.checkbox-item').classList.remove('checked');
+            });
+            hidePreview();
+            hideError();
+            hideSuccess();
+        });
+
+        // 보고서 생성
+        document.getElementById('generateBtn').addEventListener('click', async function() {
+            // 선택된 컴포넌트 가져오기
+            const selected = Array.from(document.querySelectorAll('input[name="component"]:checked'))
+                .map(cb => cb.value);
+
+            // 검증
+            if (selected.length === 0) {
+                showError('최소 1개 이상의 컴포넌트를 선택해주세요.');
+                return;
+            }
+
+            // UI 상태 변경
+            hideError();
+            hideSuccess();
+            hidePreview();
+            showLoading();
+            this.disabled = true;
+
+            try {
+                // API 호출
+                const response = await fetch('/api/generate-report', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        components: selected
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || '보고서 생성에 실패했습니다.');
+                }
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // 성공
+                    showPreview(data.html);
+                    showSuccess(`보고서가 성공적으로 생성되었습니다! (${selected.length}개 컴포넌트)`);
+                } else {
+                    throw new Error(data.error || '보고서 생성에 실패했습니다.');
+                }
+            } catch (error) {
+                showError(`오류: ${error.message}`);
+            } finally {
+                hideLoading();
+                this.disabled = false;
+            }
+        });
+
+        // HTML 다운로드
+        document.getElementById('downloadBtn').addEventListener('click', function() {
+            const content = document.getElementById('previewContent').innerHTML;
+
+            // 완전한 HTML 문서 생성 (미리보기는 일부만 보여주므로)
+            const fullHtml = content;
+
+            const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `월간보고_${new Date().toISOString().slice(0, 10)}.html`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // UI 헬퍼 함수
+        function showLoading() {
+            document.getElementById('loading').classList.add('show');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = message;
+            errorEl.classList.add('show');
+        }
+
+        function hideError() {
+            document.getElementById('error').classList.remove('show');
+        }
+
+        function showSuccess(message) {
+            const successEl = document.getElementById('success');
+            successEl.textContent = message;
+            successEl.classList.add('show');
+        }
+
+        function hideSuccess() {
+            document.getElementById('success').classList.remove('show');
+        }
+
+        function showPreview(html) {
+            const previewContent = document.getElementById('previewContent');
+            previewContent.innerHTML = html;
+            document.getElementById('preview').classList.add('show');
+        }
+
+        function hidePreview() {
+            document.getElementById('preview').classList.remove('show');
+        }
+    </script>
+</body>
+</html>

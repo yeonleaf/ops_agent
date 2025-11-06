@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>그룹 상세 - 월간보고 생성기</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <style>
+        .group-header {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .group-title-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .group-title {
+            flex: 1;
+        }
+
+        .group-title h2 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+        }
+
+        .group-title p {
+            margin: 0;
+            color: #666;
+        }
+
+        .group-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab {
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 1em;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            color: #333;
+            background: #f5f5f5;
+        }
+
+        .tab.active {
+            color: #4CAF50;
+            border-bottom-color: #4CAF50;
+            font-weight: 500;
+        }
+
+        .tab-content {
+            display: none;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* 멤버 테이블 */
+        .members-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .members-table th {
+            background: #f5f5f5;
+            padding: 12px;
+            text-align: left;
+            font-weight: 500;
+            color: #333;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .members-table td {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .members-table tr:hover {
+            background: #fafafa;
+        }
+
+        .role-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .role-badge.owner {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .role-badge.member {
+            background: #2196F3;
+            color: white;
+        }
+
+        .system-badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        /* 프롬프트 카테고리 */
+        .prompts-category {
+            margin-bottom: 30px;
+        }
+
+        .prompts-category h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #4CAF50;
+        }
+
+        .prompt-item {
+            background: #fafafa;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #4CAF50;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .prompt-item:hover {
+            background: #f0f0f0;
+        }
+
+        .prompt-info {
+            flex: 1;
+        }
+
+        .prompt-title {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .prompt-meta {
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        /* 모달 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+        }
+
+        .modal-close {
+            font-size: 1.5em;
+            cursor: pointer;
+            color: #999;
+            background: none;
+            border: none;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .user-search-results {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .user-search-results.active {
+            display: block;
+        }
+
+        .user-search-item {
+            padding: 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .user-search-item:hover {
+            background: #f5f5f5;
+        }
+
+        .user-search-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1>👥 그룹 상세</h1>
+            <div class="user-info">
+                <a href="/static/groups.html" style="margin-right: 15px; color: white; text-decoration: none;">← 그룹 목록</a>
+                <span class="username" id="username"></span>
+                <button class="btn-logout" onclick="logout()">로그아웃</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 메인 컨테이너 -->
+    <div class="app-container">
+        <!-- 로딩 -->
+        <div id="loading" class="loading" style="display: block;">
+            <div class="spinner"></div>
+            <p>그룹 정보를 불러오는 중...</p>
+        </div>
+
+        <!-- 메시지 -->
+        <div id="message" class="message"></div>
+
+        <!-- 그룹 헤더 -->
+        <div id="group-header" class="group-header" style="display: none;">
+            <div class="group-title-row">
+                <div class="group-title">
+                    <h2 id="group-name"></h2>
+                    <p id="group-description"></p>
+                </div>
+                <div class="group-actions">
+                    <button class="btn btn-primary" onclick="goToReportBuilder()">📊 보고서 생성</button>
+                    <button id="edit-group-btn" class="btn btn-secondary" onclick="showEditGroupModal()" style="display: none;">⚙️ 설정</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 탭 -->
+        <nav class="tabs" id="tabs" style="display: none;">
+            <button class="tab active" data-tab="members" onclick="switchTab('members')">👥 멤버 (<span id="member-count">0</span>)</button>
+            <button class="tab" data-tab="prompts" onclick="switchTab('prompts')">📝 프롬프트 (<span id="prompt-count">0</span>)</button>
+        </nav>
+
+        <!-- 멤버 탭 -->
+        <div id="tab-members" class="tab-content active" style="display: none;">
+            <div class="section-header" style="margin-bottom: 20px;">
+                <h3>그룹 멤버</h3>
+                <button id="add-member-btn" class="btn btn-primary" onclick="showAddMemberModal()" style="display: none;">+ 멤버 추가</button>
+            </div>
+
+            <table class="members-table">
+                <thead>
+                    <tr>
+                        <th>이름</th>
+                        <th>이메일</th>
+                        <th>역할</th>
+                        <th>담당 시스템</th>
+                        <th>가입일</th>
+                        <th id="actions-header" style="display: none;">작업</th>
+                    </tr>
+                </thead>
+                <tbody id="members-tbody">
+                    <!-- 동적 생성 -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 프롬프트 탭 -->
+        <div id="tab-prompts" class="tab-content" style="display: none;">
+            <div class="section-header" style="margin-bottom: 20px;">
+                <h3>그룹 프롬프트</h3>
+                <button class="btn btn-primary" onclick="goToCreatePrompt()">+ 프롬프트 작성</button>
+            </div>
+
+            <div id="prompts-container">
+                <!-- 동적 생성 -->
+            </div>
+
+            <div id="prompts-empty" class="empty-state" style="display: none;">
+                <p>아직 작성된 프롬프트가 없습니다</p>
+                <button class="btn btn-primary" onclick="goToCreatePrompt()">첫 프롬프트 작성하기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 멤버 추가 모달 -->
+    <div id="add-member-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>멤버 추가</h3>
+                <button class="modal-close" onclick="closeAddMemberModal()">&times;</button>
+            </div>
+            <form id="add-member-form" onsubmit="addMember(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="user-search">사용자 검색 (이메일)</label>
+                        <input type="email" id="user-search" required placeholder="user@example.com">
+                        <p style="font-size: 0.9em; color: #666; margin-top: 5px;">추가할 사용자의 이메일을 입력하세요</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="member-system">담당 시스템 (선택)</label>
+                        <input type="text" id="member-system" placeholder="예: NCMS, EUXP, EDMP">
+                    </div>
+                    <input type="hidden" id="selected-user-id">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeAddMemberModal()">취소</button>
+                    <button type="submit" class="btn btn-primary">추가</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 그룹 편집 모달 -->
+    <div id="edit-group-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>그룹 설정</h3>
+                <button class="modal-close" onclick="closeEditGroupModal()">&times;</button>
+            </div>
+            <form id="edit-group-form" onsubmit="updateGroup(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="edit-group-name">그룹 이름</label>
+                        <input type="text" id="edit-group-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-group-description">설명</label>
+                        <input type="text" id="edit-group-description">
+                    </div>
+                    <div style="border-top: 1px solid #e0e0e0; padding-top: 20px; margin-top: 20px;">
+                        <button type="button" class="btn btn-secondary" onclick="deleteGroup()" style="background: #f44336;">🗑️ 그룹 삭제</button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeEditGroupModal()">취소</button>
+                    <button type="submit" class="btn btn-primary">저장</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v2';
+        let token = localStorage.getItem('token');
+        let groupId = null;
+        let groupData = null;
+        let myRole = null;
+
+        // 페이지 로드
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!token) {
+                window.location.href = '/static/login.html';
+                return;
+            }
+
+            // URL에서 그룹 ID 추출
+            const params = new URLSearchParams(window.location.search);
+            groupId = params.get('id');
+
+            if (!groupId) {
+                alert('그룹 ID가 없습니다');
+                window.location.href = '/static/groups.html';
+                return;
+            }
+
+            loadUserInfo();
+            loadGroupDetail();
+        });
+
+        // 사용자 정보 로드
+        async function loadUserInfo() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('username').textContent = data.username;
+                }
+            } catch (error) {
+                console.error('사용자 정보 로드 실패:', error);
+            }
+        }
+
+        // 그룹 상세 정보 로드
+        async function loadGroupDetail() {
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+
+            try {
+                const response = await fetch(`${API_BASE}/groups/${groupId}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) {
+                    throw new Error('그룹 정보 로드 실패');
+                }
+
+                const data = await response.json();
+                groupData = data.data;
+                myRole = groupData.my_role;
+
+                renderGroupInfo();
+                renderMembers();
+                renderPrompts();
+
+                // UI 표시
+                document.getElementById('group-header').style.display = 'block';
+                document.getElementById('tabs').style.display = 'flex';
+                document.getElementById('tab-members').style.display = 'block';
+
+            } catch (error) {
+                showMessage('그룹 정보를 불러오는 데 실패했습니다: ' + error.message, 'error');
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // 그룹 정보 렌더링
+        function renderGroupInfo() {
+            document.getElementById('group-name').textContent = groupData.group.name;
+            document.getElementById('group-description').textContent = groupData.group.description || '설명 없음';
+
+            // Owner만 편집 버튼 표시
+            if (myRole === 'owner') {
+                document.getElementById('edit-group-btn').style.display = 'inline-block';
+                document.getElementById('add-member-btn').style.display = 'inline-block';
+                document.getElementById('actions-header').style.display = 'table-cell';
+            }
+        }
+
+        // 멤버 렌더링
+        function renderMembers() {
+            const tbody = document.getElementById('members-tbody');
+            tbody.innerHTML = '';
+
+            const members = groupData.members || [];
+            document.getElementById('member-count').textContent = members.length;
+
+            members.forEach(member => {
+                const tr = document.createElement('tr');
+                const joinedDate = new Date(member.joined_at).toLocaleDateString('ko-KR');
+
+                tr.innerHTML = `
+                    <td>${escapeHtml(member.user.username)}</td>
+                    <td>${escapeHtml(member.user.email)}</td>
+                    <td><span class="role-badge ${member.role}">${member.role === 'owner' ? 'Owner' : 'Member'}</span></td>
+                    <td>${member.system ? `<span class="system-badge">${escapeHtml(member.system)}</span>` : '-'}</td>
+                    <td>${joinedDate}</td>
+                    ${myRole === 'owner' && member.role !== 'owner' ? `<td><button class="btn btn-secondary" onclick="removeMember(${member.user_id})">제거</button></td>` : myRole === 'owner' ? '<td>-</td>' : ''}
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 프롬프트 렌더링
+        function renderPrompts() {
+            const container = document.getElementById('prompts-container');
+            const emptyState = document.getElementById('prompts-empty');
+            container.innerHTML = '';
+
+            const promptsByCategory = groupData.prompts_by_category || {};
+            const categories = Object.keys(promptsByCategory);
+
+            document.getElementById('prompt-count').textContent =
+                categories.reduce((sum, cat) => sum + promptsByCategory[cat].length, 0);
+
+            if (categories.length === 0) {
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            emptyState.style.display = 'none';
+
+            categories.forEach(category => {
+                const categoryDiv = document.createElement('div');
+                categoryDiv.className = 'prompts-category';
+
+                const categoryTitle = document.createElement('h3');
+                categoryTitle.textContent = `${category} (${promptsByCategory[category].length})`;
+                categoryDiv.appendChild(categoryTitle);
+
+                promptsByCategory[category].forEach(prompt => {
+                    const promptDiv = document.createElement('div');
+                    promptDiv.className = 'prompt-item';
+
+                    promptDiv.innerHTML = `
+                        <div class="prompt-info">
+                            <div class="prompt-title">${escapeHtml(prompt.title)}</div>
+                            <div class="prompt-meta">
+                                ${prompt.system ? `<span class="system-badge">${escapeHtml(prompt.system)}</span> ` : ''}
+                                작성자: ${escapeHtml(prompt.owner || '알 수 없음')}
+                            </div>
+                        </div>
+                    `;
+
+                    categoryDiv.appendChild(promptDiv);
+                });
+
+                container.appendChild(categoryDiv);
+            });
+        }
+
+        // 탭 전환
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+        }
+
+        // 멤버 추가 모달
+        function showAddMemberModal() {
+            document.getElementById('add-member-modal').classList.add('active');
+            document.getElementById('add-member-form').reset();
+        }
+
+        function closeAddMemberModal() {
+            document.getElementById('add-member-modal').classList.remove('active');
+        }
+
+        async function addMember(event) {
+            event.preventDefault();
+
+            const email = document.getElementById('user-search').value.trim();
+            const system = document.getElementById('member-system').value.trim();
+
+            // 먼저 이메일로 사용자 ID 조회 (임시로 간단한 방법 사용)
+            // 실제로는 별도 API가 필요할 수 있음
+            showMessage('멤버 추가 기능은 사용자 ID가 필요합니다. 현재는 이메일 기반 검색 API가 필요합니다.', 'error');
+        }
+
+        // 멤버 제거
+        async function removeMember(userId) {
+            if (!confirm('정말 이 멤버를 제거하시겠습니까?')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/groups/${groupId}/members/${userId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) {
+                    throw new Error('멤버 제거 실패');
+                }
+
+                showMessage('멤버가 제거되었습니다', 'success');
+                loadGroupDetail();
+
+            } catch (error) {
+                showMessage('멤버 제거 실패: ' + error.message, 'error');
+            }
+        }
+
+        // 그룹 편집 모달
+        function showEditGroupModal() {
+            document.getElementById('edit-group-modal').classList.add('active');
+            document.getElementById('edit-group-name').value = groupData.group.name;
+            document.getElementById('edit-group-description').value = groupData.group.description || '';
+        }
+
+        function closeEditGroupModal() {
+            document.getElementById('edit-group-modal').classList.remove('active');
+        }
+
+        async function updateGroup(event) {
+            event.preventDefault();
+
+            const name = document.getElementById('edit-group-name').value.trim();
+            const description = document.getElementById('edit-group-description').value.trim();
+
+            try {
+                const response = await fetch(`${API_BASE}/groups/${groupId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ name, description })
+                });
+
+                if (!response.ok) {
+                    throw new Error('그룹 수정 실패');
+                }
+
+                showMessage('그룹 정보가 수정되었습니다', 'success');
+                closeEditGroupModal();
+                loadGroupDetail();
+
+            } catch (error) {
+                showMessage('그룹 수정 실패: ' + error.message, 'error');
+            }
+        }
+
+        async function deleteGroup() {
+            if (!confirm('정말 이 그룹을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/groups/${groupId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) {
+                    throw new Error('그룹 삭제 실패');
+                }
+
+                alert('그룹이 삭제되었습니다');
+                window.location.href = '/static/groups.html';
+
+            } catch (error) {
+                showMessage('그룹 삭제 실패: ' + error.message, 'error');
+            }
+        }
+
+        // 보고서 생성 페이지로 이동
+        function goToReportBuilder() {
+            window.location.href = `/static/group-report-builder.html?id=${groupId}`;
+        }
+
+        // 프롬프트 작성 페이지로 이동 (app.html with group context)
+        function goToCreatePrompt() {
+            // 그룹 컨텍스트를 전달하여 app.html로 이동
+            window.location.href = `/static/app.html?group_id=${groupId}`;
+        }
+
+        // 유틸리티
+        function showMessage(text, type = 'info') {
+            const message = document.getElementById('message');
+            message.textContent = text;
+            message.className = `message active ${type}`;
+            setTimeout(() => message.classList.remove('active'), 5000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            window.location.href = '/static/login.html';
+        }
+    </script>
+</body>
+</html>

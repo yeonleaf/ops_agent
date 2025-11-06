@@ -60,7 +60,63 @@ from services.prompt_service import PromptService
 prompt_db_manager = DatabaseManager(os.getenv('REPORTS_DB_PATH', 'reports.db'))
 prompt_db_manager.create_tables()
 
-# Gmail/Outlook 연동 제거됨 (보안 정책)
+# --- 1. 토큰 복원 로직 (URL 파라미터 → DB 순서) ---
+# 세션에 토큰이 없을 때 복원 시도
+if 'gmail_access_token' not in st.session_state:
+    logger.info("🍪 세션 토큰 없음. 토큰 복원 시도...")
+    
+    # 1단계: URL 파라미터에서 토큰 확인
+    access_token = st.query_params.get('access_token')
+    refresh_token = st.query_params.get('refresh_token')
+    
+    if access_token and refresh_token:
+        # URL 파라미터에서 토큰을 받았으면 세션에 저장
+        st.session_state['gmail_access_token'] = access_token
+        st.session_state['gmail_refresh_token'] = refresh_token
+        print("✅ URL 파라미터에서 세션으로 토큰 복원 완료.")
+        
+        # URL 파라미터 제거 (보안상)
+        st.query_params.clear()
+    else:
+        print("🍪 URL 파라미터에 토큰이 없음 - DB에서 확인 시도...")
+        
+        # 2단계: DB에서 저장된 refresh_token으로 access_token 재발급 시도
+        try:
+            from auth_client import auth_client
+            if auth_client.is_logged_in():
+                print("🔍 DB에서 Google 연동 정보 확인 중...")
+                result = auth_client.get_google_integration()
+                if result.get("success") and result.get("has_token"):
+                    print("✅ DB에 Google 토큰이 저장되어 있음")
+                    print("🔄 refresh_token으로 access_token 재발급 시도...")
+                    
+                    # refresh_token으로 access_token 재발급 시도
+                    try:
+                        from gmail_provider import refresh_gmail_token
+                        refresh_result = refresh_gmail_token()
+                        if refresh_result.get("success"):
+                            access_token = refresh_result.get("access_token")
+                            refresh_token = refresh_result.get("refresh_token")
+                            
+                            # 세션에 저장
+                            st.session_state['gmail_access_token'] = access_token
+                            st.session_state['gmail_refresh_token'] = refresh_token
+                            print("✅ refresh_token으로 access_token 재발급 성공")
+                        else:
+                            print("❌ refresh_token으로 access_token 재발급 실패")
+                            print("ℹ️ Gmail 기능을 사용하려면 OAuth 인증이 필요합니다.")
+                            print("ℹ️ 사이드바의 'Gmail 로그인' 버튼을 클릭하세요.")
+                    except Exception as refresh_error:
+                        print(f"❌ 토큰 재발급 실패: {refresh_error}")
+                        print("ℹ️ Gmail 기능을 사용하려면 OAuth 인증이 필요합니다.")
+                        print("ℹ️ 사이드바의 'Gmail 로그인' 버튼을 클릭하세요.")
+                else:
+                    print("🍪 DB에 Google 토큰이 없음 - 로그인 필요")
+            else:
+                print("🍪 사용자가 로그인되지 않음 - 로그인 필요")
+        except Exception as e:
+            print(f"🍪 DB 토큰 확인 실패: {e}")
+            print("🍪 로그인 필요")
 
 
 def create_llm_client():
@@ -107,6 +163,9 @@ if 'auto_switch_to_tickets' not in st.session_state:
 if 'ticket_message' not in st.session_state:
     st.session_state.ticket_message = ""
 
+if 'non_work_emails' not in st.session_state:
+    st.session_state.non_work_emails = []
+
 # 페이지 설정
 st.set_page_config(
     page_title="📧 FastMCP 메일 조회 챗봇",
@@ -123,8 +182,52 @@ class RouterAgentClient:
     def call_agent(self, user_query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """라우터 에이전트 호출"""
         try:
-            # Gmail 토큰 관련 코드 제거됨
-            result = self.router_agent.execute(user_query, cookies="")
+            # 토큰 가져오기 (URL 파라미터 우선)
+            tokens = ""
+            try:
+                # 1. URL 파라미터에서 토큰 확인 (최우선)
+                if hasattr(st, 'query_params'):
+                    access_token = st.query_params.get('access_token', '')
+                    refresh_token = st.query_params.get('refresh_token', '')
+                    print(f"🍪 URL 파라미터 확인: access_token={'있음' if access_token else '없음'}, refresh_token={'있음' if refresh_token else '없음'}")
+                    if access_token and refresh_token:
+                        # 1. 세션 상태에 저장 (앱의 현재 상태)
+                        st.session_state['gmail_access_token'] = access_token
+                        st.session_state['gmail_refresh_token'] = refresh_token
+                        print(f"🍪 세션 상태에 토큰 저장 완료")
+                        
+                        # 2. URL 파라미터로 리다이렉트 (영속적 백업)
+                        # 토큰을 URL 파라미터로 포함하여 리다이렉트
+                        st.rerun()
+                        print(f"🍪 URL 파라미터로 토큰 전달 완료")
+                        
+                        tokens = f"gmail_access_token={access_token}; gmail_refresh_token={refresh_token}"
+                        print(f"🍪 URL 파라미터에서 토큰 가져옴: {access_token[:20]}...")
+                        # URL 파라미터 제거 (보안상)
+                        st.query_params.clear()
+                
+                # 2. 세션 상태에서 토큰 확인 (진실의 원천)
+                if not tokens:
+                    print(f"🍪 세션 상태에서 토큰 확인 시도...")
+                    access_token = st.session_state.get('gmail_access_token', '')
+                    refresh_token = st.session_state.get('gmail_refresh_token', '')
+                    print(f"🍪 세션 상태 확인 결과: access_token={'있음' if access_token else '없음'}, refresh_token={'있음' if refresh_token else '없음'}")
+                    if access_token and refresh_token:
+                        tokens = f"gmail_access_token={access_token}; gmail_refresh_token={refresh_token}"
+                        print(f"🍪 세션 상태에서 토큰 가져옴: {access_token[:20]}...")
+                    else:
+                        print(f"🍪 세션 상태에 토큰이 없음")
+                
+                if not tokens:
+                    print("🍪 토큰을 찾을 수 없음")
+                    
+            except Exception as e:
+                print(f"🍪 토큰 가져오기 실패: {e}")
+            
+            print(f"🍪 최종 토큰: {tokens[:100] if tokens else '없음'}...")
+            
+            # 토큰을 라우터 에이전트에 전달
+            result = self.router_agent.execute(user_query, cookies=tokens)
 
             # SpecialistAgent에서 구조화된 데이터를 반환한 경우 처리
             if isinstance(result, dict) and "message" in result:
@@ -167,7 +270,66 @@ class RouterAgentClient:
             "message": "에이전트 네트워크가 정상적으로 실행 중입니다."
         }
 
-# display_correction_ui 함수 제거됨 (Gmail 연동 제거)
+def display_correction_ui(non_work_emails: List[Dict[str, Any]]):
+    """업무용이 아니라고 판단된 메일들의 정정 UI를 표시합니다."""
+    if not non_work_emails:
+        return
+    
+    st.markdown("---")
+    st.markdown("### 🔍 업무용이 아니라고 판단된 메일")
+    st.markdown("※ confidence가 높은 메일들입니다. 티켓 생성이 필요하다면 정정 버튼을 클릭하세요.")
+    
+    for i, email in enumerate(non_work_emails):
+        with st.expander(f"📧 {email.get('subject', '제목 없음')} (신뢰도: {email.get('confidence', 0):.2f})"):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.markdown(f"**발신자:** {email.get('sender', 'N/A')}")
+                st.markdown(f"**수신일:** {email.get('received_date', 'N/A')}")
+                st.markdown(f"**판단 근거:** {email.get('reason', 'N/A')}")
+                st.markdown(f"**내용 미리보기:** {email.get('body', 'N/A')}")
+            
+            with col2:
+                if st.button(f"정정", key=f"correction_{i}", type="primary"):
+                    # 정정 요청 처리
+                    try:
+                        # 에이전트 경유 대신 서비스 함수를 직접 호출하여 강제 생성 (도구 인자 오류 회피)
+                        from unified_email_service import create_ticket_from_single_email
+                        email_data = {
+                            'id': email.get('id'),
+                            'subject': email.get('subject'),
+                            'sender': email.get('sender'),
+                            'body': email.get('body')
+                        }
+                        result = create_ticket_from_single_email(
+                            email_data=email_data,
+                            access_token=st.session_state.get('gmail_access_token', ''),
+                            force_create=True,
+                            correction_reason="사용자 정정: 비업무로 분류된 메일을 업무용으로 처리"
+                        )
+                        if result.get('success'):
+                            st.success("✅ 정정 완료! 티켓이 생성되었습니다.")
+                            st.info(f"티켓 ID: {result.get('ticket_id')}")
+                        else:
+                            st.error(f"❌ 정정 실패: {result.get('error', '알 수 없는 오류')}")
+                        
+                        # non_work_emails에서 해당 메일 제거
+                        if hasattr(st.session_state, 'non_work_emails') and st.session_state.non_work_emails:
+                            st.session_state.non_work_emails = [
+                                e for e in st.session_state.non_work_emails 
+                                if e.get('id') != email.get('id')
+                            ]
+                            
+                            # 모든 메일이 정정된 경우 목록 초기화
+                            if not st.session_state.non_work_emails:
+                                st.session_state.has_non_work_emails = False
+                        
+                        # 세션 상태 업데이트
+                        st.session_state.refresh_trigger += 1
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ 정정 실패: {str(e)}")
 
 class AgentNetworkChatBot:
     """에이전트 네트워크 기반 챗봇 클래스"""
@@ -356,7 +518,27 @@ def display_chat_interface(chatbot):
         # non_work_emails가 있는 경우 새로운 UI로 표시
         if hasattr(st.session_state, 'non_work_emails') and st.session_state.non_work_emails:
             st.markdown("---")
-            st.info("📧 메일 연동 기능이 제거되었습니다 (보안 정책)")
+            st.success(f"✅ {len(st.session_state.non_work_emails)}개의 업무용이 아닌 메일을 표시합니다.")
+
+            # 새로운 non_work_emails_ui 사용
+            try:
+                from non_work_emails_ui import display_non_work_emails
+                display_non_work_emails(st.session_state.non_work_emails)
+                st.success("✅ non_work_emails_ui 모듈 로드 성공")
+            except Exception as e:
+                st.error(f"❌ non_work_emails_ui 로드 실패: {e}")
+                st.exception(e)
+
+            # 지우기 버튼도 추가
+            col_clear1, col_clear2 = st.columns([3, 1])
+            with col_clear2:
+                if st.button("🗑️ 목록 지우기", key="clear_non_work_emails"):
+                    st.session_state.non_work_emails = []
+                    st.session_state.has_non_work_emails = False
+                    # 이메일 캐시도 초기화
+                    from unified_email_service import clear_email_cache
+                    clear_email_cache()
+                    st.rerun()
         else:
             st.info("📧 현재 업무용이 아닌 메일이 없습니다.")
         
@@ -456,7 +638,12 @@ def display_ticket_management():
                 else:
                     st.info("추천할 티켓이 없습니다.")
     
-    # 정정 UI 제거됨 (Gmail 연동 제거)
+    # 정정 UI 표시 (non_work_emails가 있는 경우)
+    if hasattr(st.session_state, 'has_non_work_emails') and st.session_state.has_non_work_emails:
+        # 세션 상태에 저장된 non_work_emails 데이터 사용 (중복 실행 방지)
+        non_work_emails = st.session_state.get('non_work_emails', [])
+        if non_work_emails:
+            display_correction_ui(non_work_emails)
     
     
     # 대량 AI 추천 결과 표시
@@ -483,14 +670,19 @@ def display_ticket_management():
 
 def display_ticket_management_with_async():
     """비동기 기능이 통합된 티켓 관리 인터페이스"""
-    st.header("🎫 티켓 관리 시스템")
+    st.header("🎫 티켓 관리 시스템 (비동기 지원)")
 
-    # 비동기 티켓 생성 기능 제거됨 (보안 정책)
-    st.info("📧 비동기 티켓 생성 기능이 제거되었습니다 (보안 정책)")
+    # 비동기 티켓 생성 섹션 추가
+    try:
+        from async_ticket_mcp_ui import display_async_ticket_section
+        display_async_ticket_section()
+    except Exception as e:
+        st.error(f"❌ 비동기 티켓 UI 로드 실패: {e}")
+        st.info("기존 동기식 티켓 관리만 사용 가능합니다.")
 
     # 기존 티켓 관리 기능 유지
     st.markdown("---")
-    st.subheader("📋 티켓 관리")
+    st.subheader("📋 기존 티켓 관리")
 
     # 새로고침 버튼
     col1, col2, col3 = st.columns([1, 1, 3])
@@ -522,7 +714,12 @@ def display_ticket_management_with_async():
                 else:
                     st.info("추천할 티켓이 없습니다.")
 
-    # 정정 UI 제거됨 (Gmail 연동 제거)
+    # 정정 UI 표시 (non_work_emails가 있는 경우)
+    if hasattr(st.session_state, 'has_non_work_emails') and st.session_state.has_non_work_emails:
+        # 세션 상태에 저장된 non_work_emails 데이터 사용 (중복 실행 방지)
+        non_work_emails = st.session_state.get('non_work_emails', [])
+        if non_work_emails:
+            display_correction_ui(non_work_emails)
 
     # 대량 AI 추천 결과 표시
     if "bulk_recommendations" in st.session_state:
@@ -550,11 +747,12 @@ def display_monthly_report_tab():
     """월간보고 JQL 생성기 탭"""
     st.title("📊 월간보고 JQL 생성기")
 
-    # 서브탭 추가: 월간보고 생성 / 그룹 관리 / 그룹 보고서
-    subtab1, subtab2, subtab3 = st.tabs([
+    # 서브탭 추가: 월간보고 생성 / 그룹 관리 / 그룹 보고서 / Jira 디버깅
+    subtab1, subtab2, subtab3, subtab4 = st.tabs([
         "📊 월간보고 생성",
         "👥 그룹 관리",
-        "📊 그룹 보고서"
+        "📊 그룹 보고서",
+        "🔍 Jira 디버깅"
     ])
 
     with subtab1:
@@ -565,6 +763,9 @@ def display_monthly_report_tab():
 
     with subtab3:
         display_group_report_builder()
+
+    with subtab4:
+        display_jira_debugging()
 
 
 # ============================================================
@@ -932,6 +1133,617 @@ def display_monthly_report_generation():
                             system_to_save
                         ):
                             st.rerun()
+
+
+def display_group_management():
+    """보고서 빌더 - 저장된 프롬프트를 선택하여 일괄 실행하고 조합"""
+    if not auth_client.is_logged_in():
+        st.warning("⚠️ 로그인이 필요합니다")
+        return
+
+    # 세션 상태 초기화
+    if 'builder_sections' not in st.session_state:
+        st.session_state.builder_sections = []
+    if 'selected_prompts' not in st.session_state:
+        st.session_state.selected_prompts = set()
+    if 'section_id_counter' not in st.session_state:
+        st.session_state.section_id_counter = 1
+
+    # 레이아웃: 2열
+    col_left, col_right = st.columns([1, 2])
+
+    # ========================================
+    # 왼쪽: 템플릿 선택
+    # ========================================
+    with col_left:
+        st.subheader("📝 템플릿 선택")
+
+        # 새로고침 버튼
+        if st.button("🔄 새로고침", key="refresh_builder_prompts"):
+            st.rerun()
+
+        # 저장된 템플릿 불러오기
+        saved_prompts = load_saved_prompts()
+
+        if not saved_prompts:
+            st.info("💡 저장된 템플릿이 없습니다")
+        else:
+            # 카테고리별 그룹핑
+            grouped = {}
+            for prompt in saved_prompts:
+                category = prompt.get('category', '기타')
+                if category not in grouped:
+                    grouped[category] = []
+                grouped[category].append(prompt)
+
+            # 카테고리별로 표시
+            for category, prompts in grouped.items():
+                st.markdown(f"**{category}**")
+
+                for prompt in prompts:
+                    prompt_id = prompt['id']
+                    is_selected = prompt_id in st.session_state.selected_prompts
+
+                    if st.checkbox(
+                        prompt['title'],
+                        value=is_selected,
+                        key=f"builder_prompt_{prompt_id}"
+                    ):
+                        st.session_state.selected_prompts.add(prompt_id)
+                    else:
+                        st.session_state.selected_prompts.discard(prompt_id)
+
+                st.markdown("---")
+
+            # 일괄 실행 버튼
+            selected_count = len(st.session_state.selected_prompts)
+
+            if st.button(
+                f"▶️ 선택한 템플릿 실행 ({selected_count}개)",
+                type="primary",
+                disabled=selected_count == 0,
+                use_container_width=True,
+                key="execute_builder_prompts"
+            ):
+                execute_selected_prompts(list(st.session_state.selected_prompts))
+
+            if selected_count > 0:
+                st.caption("💡 각 템플릿의 모든 페이지가 실행됩니다 (2초 간격)")
+
+    # ========================================
+    # 오른쪽: 실행 결과 & 조합
+    # ========================================
+    with col_right:
+        st.subheader("📊 실행 결과 & 조합")
+
+        # 컴포넌트 추가 메뉴
+        st.markdown("### ➕ 컴포넌트 추가")
+        col_add1, col_add2, col_add3, col_add4 = st.columns(4)
+
+        with col_add1:
+            if st.button("📝 텍스트", use_container_width=True, key="add_text"):
+                add_text_block()
+                st.rerun()
+
+        with col_add2:
+            if st.button("📊 빈 표", use_container_width=True, key="add_table"):
+                add_empty_table()
+                st.rerun()
+
+        with col_add3:
+            if st.button("➖ 구분선", use_container_width=True, key="add_divider"):
+                add_divider()
+                st.rerun()
+
+        with col_add4:
+            if st.button("📄 페이지 구분", use_container_width=True, key="add_page_break"):
+                add_page_break()
+                st.rerun()
+
+        st.divider()
+
+        if len(st.session_state.builder_sections) == 0:
+            st.info("""
+📋 섹션이 없습니다
+
+- 왼쪽에서 템플릿을 선택하고 실행하거나
+- 위 버튼으로 컴포넌트를 추가하세요
+            """)
+        else:
+            # 실행 결과 표시
+            st.success(f"✅ {len(st.session_state.builder_sections)}개 페이지 실행 완료")
+
+            # 각 섹션 표시 (타입별로 다른 렌더링)
+            for idx, section in enumerate(st.session_state.builder_sections):
+                section_type = section.get('type', 'prompt')
+
+                # 타입별 렌더링
+                if section_type == 'prompt':
+                    render_prompt_section(idx, section)
+                elif section_type == 'text':
+                    render_text_section(idx, section)
+                elif section_type == 'table':
+                    render_table_section(idx, section)
+                elif section_type == 'divider':
+                    render_divider_section(idx, section)
+                elif section_type == 'page_break':
+                    render_page_break_section(idx, section)
+
+                st.divider()
+
+            # 보고서 설정
+            st.markdown("### ⚙️ 보고서 설정")
+
+            report_title = st.text_input(
+                "보고서 제목",
+                value="월간보고",
+                key="builder_report_title"
+            )
+
+            include_toc = st.checkbox(
+                "목차 포함",
+                value=True,
+                key="builder_include_toc"
+            )
+
+            # 최종 생성 버튼
+            col_preview, col_generate = st.columns(2)
+
+            with col_preview:
+                if st.button("👁️ 미리보기", use_container_width=True, key="builder_preview"):
+                    html = generate_final_html(
+                        st.session_state.builder_sections,
+                        report_title,
+                        include_toc
+                    )
+
+                    # 모달처럼 표시 (iframe)
+                    st.markdown("#### 미리보기")
+                    st.components.v1.html(html, height=600, scrolling=True)
+
+            with col_generate:
+                if st.button("💾 생성 & 다운로드", type="primary", use_container_width=True, key="builder_generate"):
+                    html = generate_final_html(
+                        st.session_state.builder_sections,
+                        report_title,
+                        include_toc
+                    )
+
+                    # 다운로드 버튼
+                    st.download_button(
+                        label="📥 HTML 다운로드",
+                        data=html,
+                        file_name=f"{report_title}.html",
+                        mime="text/html",
+                        use_container_width=True
+                    )
+
+                    st.success("✅ 보고서가 생성되었습니다!")
+
+
+def execute_selected_prompts(prompt_ids: List[int]):
+    """선택한 템플릿들을 일괄 실행 (각 템플릿의 모든 페이지 실행)"""
+    if not prompt_ids:
+        return
+
+    import time
+
+    # 프롬프트 정보 가져오기
+    prompt_service, session = get_prompt_service()
+    user_id = st.session_state.get('user_id')
+
+    try:
+        prompts = prompt_service.get_prompts_by_ids(prompt_ids, user_id)
+        prompt_map = {p.id: p for p in prompts}
+
+        # Agent 초기화
+        from openai import AzureOpenAI
+
+        azure_client = AzureOpenAI(
+            api_key=os.environ.get("AZURE_OPENAI_API_KEY") or st.secrets.get("AZURE_OPENAI_API_KEY"),
+            api_version="2024-02-15-preview",
+            azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT") or st.secrets.get("AZURE_OPENAI_ENDPOINT")
+        )
+
+        from agent.monthly_report_agent import MonthlyReportAgent
+
+        agent = MonthlyReportAgent(
+            azure_client=azure_client,
+            user_id=user_id,
+            deployment_name=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME") or st.secrets.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4")
+        )
+
+        # 전체 페이지 수 계산
+        total_pages = 0
+        template_pages = {}  # {template_id: [pages]}
+
+        for prompt_id in prompt_ids:
+            prompt = prompt_map.get(prompt_id)
+            if not prompt:
+                continue
+
+            try:
+                pages_data = json.loads(prompt.prompt_content)
+                if isinstance(pages_data, list):
+                    template_pages[prompt_id] = pages_data
+                    total_pages += len(pages_data)
+                else:
+                    # JSON이 아니거나 단일 프롬프트인 경우
+                    template_pages[prompt_id] = [{'title': prompt.title, 'prompt': prompt.prompt_content}]
+                    total_pages += 1
+            except:
+                # JSON 파싱 실패 시 단일 프롬프트로 처리
+                template_pages[prompt_id] = [{'title': prompt.title, 'prompt': prompt.prompt_content}]
+                total_pages += 1
+
+        # 실행
+        success_count = 0
+        current_page = 0
+
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        for template_id, pages in template_pages.items():
+            template = prompt_map.get(template_id)
+            template_name = template.title if template else f"템플릿 {template_id}"
+
+            for page_idx, page in enumerate(pages):
+                current_page += 1
+                page_title = page.get('title', f"{template_name} - 페이지 {page_idx + 1}")
+                page_prompt = page.get('prompt', '')
+
+                # 시스템 지시사항 자동 추가
+                enhanced_prompt = f"""{page_prompt}
+
+[중요 출력 규칙]
+- 반드시 HTML 형식으로 출력하세요 (Markdown이 아닌 순수 HTML)
+- 코드 블록(```html 등)이나 추가적인 주석, 설명은 포함하지 마세요
+- 바로 사용 가능한 HTML만 출력하세요
+"""
+
+                status_text.text(f"🤖 실행 중... ({current_page}/{total_pages}) {page_title}")
+
+                try:
+                    # Agent 실행 (강화된 프롬프트 사용)
+                    result = agent.generate_page(
+                        page_title=page_title,
+                        user_prompt=enhanced_prompt,
+                        context={}
+                    )
+
+                    if result.get('success'):
+                        # 섹션 추가
+                        st.session_state.builder_sections.append({
+                            'type': 'prompt',  # AI 프롬프트 결과
+                            'template_id': template_id,
+                            'page_index': page_idx,
+                            'title': page_title,
+                            'category': template.category if template else '기타',
+                            'html_content': result.get('content', ''),
+                            'order': len(st.session_state.builder_sections),
+                            'elapsed_time': result.get('elapsed_time', 0)
+                        })
+                        success_count += 1
+                    else:
+                        st.warning(f"⚠️ '{page_title}' 실행 실패: {result.get('error', '알 수 없는 오류')}")
+
+                except Exception as e:
+                    st.error(f"❌ '{page_title}' 실행 중 오류: {str(e)}")
+
+                # 진행률 업데이트
+                progress_bar.progress(current_page / total_pages)
+
+                # 429 에러 방지 - 다음 페이지 실행 전 대기
+                if current_page < total_pages:
+                    time.sleep(2)  # 2초 대기
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if success_count > 0:
+            st.success(f"✅ {success_count}개 페이지 실행 완료! (총 {total_pages}개 중)")
+
+            # 캐시 통계 출력
+            try:
+                from cached_jira_client import get_total_cache_stats
+                cache_stats = get_total_cache_stats()
+                st.info(f"""
+📊 **Jira API 캐시 통계**
+- 총 요청: {cache_stats['total_requests']}건
+- 캐시 히트: {cache_stats['cache_hits']}건 (히트율: {cache_stats['hit_rate']})
+- API 호출: {cache_stats['api_calls']}건 (절감: {cache_stats['total_requests'] - cache_stats['api_calls']}건)
+                """)
+            except Exception as e:
+                logger.warning(f"캐시 통계 출력 실패: {e}")
+
+            # 선택 해제
+            st.session_state.selected_prompts.clear()
+            st.rerun()
+        else:
+            st.error(f"❌ 모든 페이지 실행 실패 (총 {total_pages}개)")
+
+    except Exception as e:
+        st.error(f"❌ 실행 중 오류: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+    finally:
+        session.close()
+
+
+def generate_final_html(sections: List[Dict], title: str, include_toc: bool = True) -> str:
+    """최종 HTML 보고서 생성 - 다양한 컴포넌트 타입 지원"""
+    from datetime import datetime
+
+    html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', 'Malgun Gothic', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }}
+        .report-container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }}
+        .report-header {{
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #4CAF50;
+        }}
+        .report-header h1 {{
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }}
+        .report-date {{
+            color: #7f8c8d;
+            font-size: 1.1em;
+        }}
+        .toc {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid #4CAF50;
+        }}
+        .toc h2 {{
+            margin-top: 0;
+            color: #2c3e50;
+        }}
+        .toc ol {{
+            padding-left: 20px;
+        }}
+        .toc li {{
+            margin: 8px 0;
+        }}
+        .toc a {{
+            color: #3498db;
+            text-decoration: none;
+        }}
+        .toc a:hover {{
+            text-decoration: underline;
+        }}
+        .report-section {{
+            margin-bottom: 40px;
+        }}
+        .report-section h2 {{
+            color: #2c3e50;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }}
+        .section-content {{
+            margin: 20px 0;
+        }}
+
+        /* 텍스트 스타일 */
+        .text-paragraph {{
+            line-height: 1.8;
+            margin: 15px 0;
+        }}
+        .text-heading {{
+            font-size: 1.5em;
+            font-weight: 600;
+            color: #2c3e50;
+            margin: 20px 0 10px 0;
+        }}
+        .text-note {{
+            background-color: #fff9e6;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+        }}
+
+        /* 표 스타일 */
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        table th {{
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }}
+        table td {{
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+        }}
+        table tr:hover {{
+            background-color: #f5f5f5;
+        }}
+
+        /* 구분선 스타일 */
+        .divider-solid {{
+            border: none;
+            border-top: 1px solid #ccc;
+            margin: 30px 0;
+        }}
+        .divider-dashed {{
+            border: none;
+            border-top: 1px dashed #ccc;
+            margin: 30px 0;
+        }}
+        .divider-thick {{
+            border: none;
+            border-top: 3px solid #666;
+            margin: 30px 0;
+        }}
+
+        /* 페이지 구분 스타일 */
+        .page-break {{
+            page-break-after: always;
+            height: 0;
+            margin: 0;
+            padding: 0;
+        }}
+
+        @media print {{
+            body {{
+                background-color: white;
+                padding: 0;
+            }}
+            .report-container {{
+                box-shadow: none;
+            }}
+            .page-break {{
+                page-break-after: always;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="report-container">
+        <div class="report-header">
+            <h1>{title}</h1>
+            <p class="report-date">{datetime.now().strftime('%Y-%m-%d')}</p>
+        </div>
+"""
+
+    # 목차 (divider와 page_break는 제외)
+    if include_toc:
+        html += '\n<div class="toc">\n'
+        html += '<h2>목차</h2>\n'
+        html += '<ol>\n'
+
+        section_number = 0
+        for section in sections:
+            section_type = section.get('type', 'prompt')
+            # divider와 page_break는 목차에서 제외
+            if section_type not in ['divider', 'page_break']:
+                section_number += 1
+                section_title = section.get('title', '제목 없음')
+                html += f'<li><a href="#section-{section_number}">{section_title}</a></li>\n'
+
+        html += '</ol>\n'
+        html += '</div>\n'
+
+    # 각 섹션 생성 (타입별로 다른 HTML)
+    section_number = 0
+    for section in sections:
+        section_type = section.get('type', 'prompt')
+
+        if section_type == 'prompt':
+            # AI 프롬프트 결과
+            section_number += 1
+            section_title = section.get('title', '제목 없음')
+            section_content = section.get('html_content', '')
+            html += f"""
+<section id="section-{section_number}" class="report-section">
+    <h2>{section_number}. {section_title}</h2>
+    <div class="section-content">
+        {section_content}
+    </div>
+</section>
+"""
+
+        elif section_type == 'text':
+            # 텍스트 블록
+            section_number += 1
+            section_title = section.get('title', '텍스트')
+            content = section.get('content', '')
+            style = section.get('style', 'paragraph')
+
+            # 줄바꿈을 <br>로 변환
+            content_html = content.replace('\n', '<br>')
+
+            style_class = f'text-{style}'
+
+            html += f"""
+<section id="section-{section_number}" class="report-section">
+    <h2>{section_number}. {section_title}</h2>
+    <div class="section-content">
+        <div class="{style_class}">{content_html}</div>
+    </div>
+</section>
+"""
+
+        elif section_type == 'table':
+            # 표
+            section_number += 1
+            section_title = section.get('title', '표')
+            table_data = section.get('data', [[]])
+
+            # HTML 테이블 생성
+            table_html = '<table>\n'
+
+            # 첫 행은 헤더로 처리
+            if len(table_data) > 0:
+                table_html += '<thead>\n<tr>\n'
+                for cell in table_data[0]:
+                    table_html += f'<th>{cell}</th>\n'
+                table_html += '</tr>\n</thead>\n'
+
+            # 나머지 행은 데이터
+            if len(table_data) > 1:
+                table_html += '<tbody>\n'
+                for row in table_data[1:]:
+                    table_html += '<tr>\n'
+                    for cell in row:
+                        table_html += f'<td>{cell}</td>\n'
+                    table_html += '</tr>\n'
+                table_html += '</tbody>\n'
+
+            table_html += '</table>\n'
+
+            html += f"""
+<section id="section-{section_number}" class="report-section">
+    <h2>{section_number}. {section_title}</h2>
+    <div class="section-content">
+        {table_html}
+    </div>
+</section>
+"""
+
+        elif section_type == 'divider':
+            # 구분선 (섹션 번호 없음, 목차에도 없음)
+            style = section.get('style', 'solid')
+            html += f'<hr class="divider-{style}">\n'
+
+        elif section_type == 'page_break':
+            # 페이지 구분 (섹션 번호 없음, 목차에도 없음)
+            html += '<div class="page-break"></div>\n'
+
+    html += """
+    </div>
+</body>
+</html>
+"""
+
+    return html
 
 
 def display_group_management():
@@ -1304,643 +2116,8 @@ def display_group_management():
                 st.info("👤 멤버는 그룹 설정을 변경할 수 없습니다")
 
 
-def execute_prompt_with_agent(prompt_content: str, title: str) -> dict:
-    """프롬프트를 Agent로 실행"""
-    import time
-    import os
-    from openai import AzureOpenAI
-
-    try:
-        user_id = st.session_state.get('user_id')
-
-        # Azure OpenAI 클라이언트 초기화
-        azure_client = AzureOpenAI(
-            api_key=os.environ.get("AZURE_OPENAI_API_KEY") or st.secrets.get("AZURE_OPENAI_API_KEY"),
-            api_version="2024-02-15-preview",
-            azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT") or st.secrets.get("AZURE_OPENAI_ENDPOINT")
-        )
-
-        from agent.monthly_report_agent import MonthlyReportAgent
-
-        agent = MonthlyReportAgent(
-            azure_client=azure_client,
-            user_id=user_id,
-            deployment_name=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME") or st.secrets.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4")
-        )
-
-        # 시스템 지시사항 추가
-        enhanced_prompt = f"""{prompt_content}
-
-[중요 출력 규칙]
-- 반드시 HTML 형식으로 출력하세요 (Markdown이 아닌 순수 HTML)
-- 코드 블록(```html 등)이나 추가적인 주석, 설명은 포함하지 마세요
-- 바로 사용 가능한 HTML만 출력하세요
-- 표를 생성할 때는 반드시 모든 <td> 태그에 contenteditable="true" 속성을 추가하세요
-  예시: <td contenteditable="true">데이터</td>
-  이렇게 하면 사용자가 최종 보고서에서 표 내용을 직접 편집할 수 있습니다
-"""
-
-        start_time = time.time()
-
-        # Agent 실행
-        result = agent.generate_page(
-            page_title=title,
-            user_prompt=enhanced_prompt,
-            context={}
-        )
-
-        elapsed_time = time.time() - start_time
-
-        if result.get('success'):
-            return {
-                'success': True,
-                'content': result.get('content', ''),
-                'elapsed_time': elapsed_time
-            }
-        else:
-            return {
-                'success': False,
-                'error': result.get('error', '알 수 없는 오류')
-            }
-
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
-        }
-
-
-def execute_ad_hoc_prompt(prompt_content: str, title: str) -> dict:
-    """일회용 프롬프트 실행 (래퍼 함수)"""
-    return execute_prompt_with_agent(prompt_content, title)
-
-
-def execute_all_prompts_in_sections(sections: list) -> None:
-    """섹션의 모든 프롬프트를 실행 (저장된 프롬프트 & 일회용 프롬프트)"""
-    import time
-
-    # 실행이 필요한 프롬프트 찾기
-    prompts_to_execute = []
-
-    for idx, section in enumerate(sections):
-        section_type = section.get('type')
-
-        # 저장된 프롬프트 (아직 실행되지 않음)
-        if section_type == 'prompt' and not section.get('executed'):
-            prompts_to_execute.append((idx, 'prompt', section))
-
-        # 일회용 프롬프트 (아직 실행되지 않음)
-        elif section_type == 'ad_hoc_prompt' and not section.get('executed'):
-            prompts_to_execute.append((idx, 'ad_hoc_prompt', section))
-
-    if not prompts_to_execute:
-        return  # 실행할 프롬프트가 없음
-
-    # 진행률 표시
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    total_prompts = len(prompts_to_execute)
-
-    for current, (idx, ptype, section) in enumerate(prompts_to_execute):
-        title = section.get('title', '제목 없음')
-        status_text.text(f"🤖 프롬프트 실행 중... ({current + 1}/{total_prompts}) {title}")
-
-        if ptype == 'prompt':
-            # 저장된 프롬프트 - prompt_id로부터 내용 가져오기
-            prompt_id = section.get('prompt_id')
-            if prompt_id:
-                try:
-                    prompt_data = load_prompt_by_id(prompt_id)
-                    prompt_content = prompt_data.get('prompt_content', '')
-
-                    # 프롬프트 실행
-                    result = execute_prompt_with_agent(prompt_content, title)
-
-                    if result.get('success'):
-                        st.session_state.group_report_sections[idx]['executed'] = True
-                        st.session_state.group_report_sections[idx]['result'] = result.get('content', '')
-                    else:
-                        st.warning(f"⚠️ '{title}' 실행 실패: {result.get('error')}")
-                        st.session_state.group_report_sections[idx]['executed'] = False
-                        st.session_state.group_report_sections[idx]['result'] = f"<p><em>실행 실패: {result.get('error')}</em></p>"
-
-                except Exception as e:
-                    st.error(f"❌ '{title}' 실행 중 오류: {str(e)}")
-                    st.session_state.group_report_sections[idx]['executed'] = False
-                    st.session_state.group_report_sections[idx]['result'] = f"<p><em>실행 오류: {str(e)}</em></p>"
-
-        elif ptype == 'ad_hoc_prompt':
-            # 일회용 프롬프트
-            prompt_content = section.get('prompt_content', '')
-
-            result = execute_prompt_with_agent(prompt_content, title)
-
-            if result.get('success'):
-                st.session_state.group_report_sections[idx]['executed'] = True
-                st.session_state.group_report_sections[idx]['result'] = result.get('content', '')
-            else:
-                st.warning(f"⚠️ '{title}' 실행 실패: {result.get('error')}")
-                st.session_state.group_report_sections[idx]['executed'] = False
-                st.session_state.group_report_sections[idx]['result'] = f"<p><em>실행 실패: {result.get('error')}</em></p>"
-
-        # 진행률 업데이트
-        progress_bar.progress((current + 1) / total_prompts)
-
-        # API 제한 방지 - 다음 프롬프트 실행 전 대기
-        if current < total_prompts - 1:
-            time.sleep(2)
-
-    progress_bar.empty()
-    status_text.empty()
-
-    st.success(f"✅ {total_prompts}개 프롬프트 실행 완료!")
-
-
-def render_section_editor(idx: int, section: dict, total_sections: int):
-    """섹션 편집기 - 순서 조정, 편집, 삭제"""
-    section_type = section.get('type', 'unknown')
-
-    # 섹션 헤더
-    col_info, col_actions = st.columns([3, 1])
-
-    with col_info:
-        if section_type == 'prompt':
-            st.markdown(f"**{idx + 1}. 📝 프롬프트: {section.get('title')}**")
-            if section.get('executed'):
-                st.caption(f"✅ 실행 완료 | 시스템: {section.get('system', '기타')} | by {section.get('owner', 'Unknown')}")
-            else:
-                st.caption(f"⏳ 실행 대기 중 | 시스템: {section.get('system', '기타')} | by {section.get('owner', 'Unknown')}")
-        elif section_type == 'ad_hoc_prompt':
-            st.markdown(f"**{idx + 1}. 🤖 일회용 프롬프트: {section.get('title')}**")
-            if section.get('executed'):
-                st.caption("✅ 실행 완료")
-            else:
-                st.caption("⏳ 실행 대기 중")
-        elif section_type == 'text':
-            st.markdown(f"**{idx + 1}. 📝 텍스트: {section.get('title')}**")
-        elif section_type == 'table':
-            st.markdown(f"**{idx + 1}. 📊 표: {section.get('title')}**")
-        elif section_type == 'divider':
-            st.markdown(f"**{idx + 1}. ➖ 구분선**")
-        elif section_type == 'page_break':
-            st.markdown(f"**{idx + 1}. 📄 페이지 구분**")
-
-    with col_actions:
-        col_up, col_down, col_del = st.columns(3)
-
-        # 위로 이동
-        with col_up:
-            if idx > 0:
-                if st.button("⬆️", key=f"up_{idx}", help="위로"):
-                    st.session_state.group_report_sections[idx], st.session_state.group_report_sections[idx - 1] = \
-                        st.session_state.group_report_sections[idx - 1], st.session_state.group_report_sections[idx]
-                    st.rerun()
-
-        # 아래로 이동
-        with col_down:
-            if idx < total_sections - 1:
-                if st.button("⬇️", key=f"down_{idx}", help="아래로"):
-                    st.session_state.group_report_sections[idx], st.session_state.group_report_sections[idx + 1] = \
-                        st.session_state.group_report_sections[idx + 1], st.session_state.group_report_sections[idx]
-                    st.rerun()
-
-        # 삭제
-        with col_del:
-            if st.button("🗑️", key=f"del_{idx}", help="삭제"):
-                st.session_state.group_report_sections.pop(idx)
-                st.rerun()
-
-    # 섹션별 편집 UI
-    if section_type == 'prompt':
-        with st.expander("🚀 프롬프트 실행"):
-            st.info(f"**프롬프트 ID**: {section.get('prompt_id')}")
-
-            if st.button("🚀 프롬프트 실행", key=f"exec_saved_{idx}", use_container_width=True, type="primary"):
-                # 저장된 프롬프트 실행
-                with st.spinner("프롬프트를 실행하는 중..."):
-                    prompt_id = section.get('prompt_id')
-                    title = section.get('title')
-
-                    try:
-                        prompt_data = load_prompt_by_id(prompt_id)
-                        prompt_content = prompt_data.get('prompt_content', '')
-
-                        result = execute_prompt_with_agent(prompt_content, title)
-
-                        if result.get('success'):
-                            st.session_state.group_report_sections[idx]['executed'] = True
-                            st.session_state.group_report_sections[idx]['result'] = result.get('content', '')
-                            st.success(f"✅ 실행 완료! ({result.get('elapsed_time', 0):.2f}초)")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ 실행 실패: {result.get('error', '알 수 없는 오류')}")
-
-                    except Exception as e:
-                        st.error(f"❌ 실행 중 오류: {str(e)}")
-
-            # 실행 결과 미리보기
-            if section.get('executed') and section.get('result'):
-                st.markdown("---")
-                st.markdown("**📄 실행 결과 미리보기**")
-                st.components.v1.html(section.get('result', ''), height=300, scrolling=True)
-
-    elif section_type == 'text':
-        with st.expander("✏️ 텍스트 편집"):
-            new_title = st.text_input("제목", value=section.get('title', ''), key=f"text_title_{idx}")
-            new_content = st.text_area("내용", value=section.get('content', ''), height=150, key=f"text_content_{idx}")
-            new_style = st.selectbox("스타일", options=['paragraph', 'heading', 'note'],
-                                     index=['paragraph', 'heading', 'note'].index(section.get('style', 'paragraph')),
-                                     key=f"text_style_{idx}")
-
-            if st.button("💾 저장", key=f"save_text_{idx}"):
-                st.session_state.group_report_sections[idx]['title'] = new_title
-                st.session_state.group_report_sections[idx]['content'] = new_content
-                st.session_state.group_report_sections[idx]['style'] = new_style
-                st.success("저장되었습니다!")
-                st.rerun()
-
-    elif section_type == 'table':
-        with st.expander("✏️ 표 편집"):
-            new_title = st.text_input("제목", value=section.get('title', ''), key=f"table_title_{idx}")
-
-            st.markdown("**표 데이터 (CSV 형식으로 입력)**")
-            # 표 데이터를 CSV 형식으로 변환
-            current_data = section.get('data', [[]])
-            csv_text = '\n'.join([','.join(row) for row in current_data])
-
-            new_data_text = st.text_area("데이터", value=csv_text, height=150, key=f"table_data_{idx}",
-                                          help="쉼표로 구분하여 입력하세요. 첫 줄은 헤더입니다.")
-
-            if st.button("💾 저장", key=f"save_table_{idx}"):
-                # CSV 텍스트를 표 데이터로 변환
-                new_data = [line.split(',') for line in new_data_text.strip().split('\n') if line.strip()]
-                st.session_state.group_report_sections[idx]['title'] = new_title
-                st.session_state.group_report_sections[idx]['data'] = new_data
-                st.success("저장되었습니다!")
-                st.rerun()
-
-    elif section_type == 'divider':
-        with st.expander("✏️ 구분선 스타일"):
-            new_style = st.selectbox("스타일", options=['solid', 'dashed', 'thick'],
-                                     index=['solid', 'dashed', 'thick'].index(section.get('style', 'solid')),
-                                     key=f"divider_style_{idx}")
-
-            if st.button("💾 저장", key=f"save_divider_{idx}"):
-                st.session_state.group_report_sections[idx]['style'] = new_style
-                st.success("저장되었습니다!")
-                st.rerun()
-
-    elif section_type == 'ad_hoc_prompt':
-        with st.expander("✏️ 프롬프트 편집 & 실행"):
-            new_title = st.text_input("제목", value=section.get('title', ''), key=f"adhoc_title_{idx}")
-            new_prompt = st.text_area("프롬프트 내용", value=section.get('prompt_content', ''),
-                                      height=200, key=f"adhoc_prompt_{idx}",
-                                      help="Agent가 실행할 프롬프트를 입력하세요. HTML 형식으로 결과가 반환됩니다.")
-
-            col_save, col_exec = st.columns(2)
-
-            with col_save:
-                if st.button("💾 저장", key=f"save_adhoc_{idx}", use_container_width=True):
-                    st.session_state.group_report_sections[idx]['title'] = new_title
-                    st.session_state.group_report_sections[idx]['prompt_content'] = new_prompt
-                    st.session_state.group_report_sections[idx]['executed'] = False
-                    st.session_state.group_report_sections[idx]['result'] = ''
-                    st.success("저장되었습니다!")
-                    st.rerun()
-
-            with col_exec:
-                if st.button("🚀 프롬프트 실행", key=f"exec_adhoc_{idx}", use_container_width=True, type="primary"):
-                    # Agent 실행
-                    with st.spinner("프롬프트를 실행하는 중..."):
-                        result = execute_ad_hoc_prompt(new_prompt, new_title)
-
-                        if result.get('success'):
-                            st.session_state.group_report_sections[idx]['title'] = new_title
-                            st.session_state.group_report_sections[idx]['prompt_content'] = new_prompt
-                            st.session_state.group_report_sections[idx]['executed'] = True
-                            st.session_state.group_report_sections[idx]['result'] = result.get('content', '')
-                            st.success(f"✅ 실행 완료! ({result.get('elapsed_time', 0):.2f}초)")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ 실행 실패: {result.get('error', '알 수 없는 오류')}")
-
-            # 실행 결과 미리보기
-            if section.get('executed') and section.get('result'):
-                st.markdown("---")
-                st.markdown("**📄 실행 결과 미리보기**")
-                st.components.v1.html(section.get('result', ''), height=300, scrolling=True)
-
-
-def generate_group_report_html(sections: list, title: str, include_toc: bool, prompts_by_category: dict) -> str:
-    """섹션 리스트로부터 최종 HTML 보고서 생성"""
-    from datetime import datetime
-
-    # HTML 헤더
-    html = f"""<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
-    <style>
-        body {{
-            font-family: 'Segoe UI', 'Malgun Gothic', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: #f5f5f5;
-            margin: 0;
-            padding: 20px;
-        }}
-        .report-container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background-color: white;
-            padding: 40px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }}
-        .report-header {{
-            text-align: center;
-            margin-bottom: 40px;
-            padding-bottom: 20px;
-            border-bottom: 3px solid #4CAF50;
-        }}
-        .report-header h1 {{
-            color: #2c3e50;
-            margin-bottom: 10px;
-        }}
-        .report-date {{
-            color: #7f8c8d;
-            font-size: 1.1em;
-        }}
-        .toc {{
-            background-color: #f8f9fa;
-            padding: 20px;
-            margin-bottom: 30px;
-            border-left: 4px solid #4CAF50;
-        }}
-        .toc h2 {{
-            margin-top: 0;
-            color: #2c3e50;
-        }}
-        .toc ol {{
-            padding-left: 20px;
-        }}
-        .toc li {{
-            margin: 8px 0;
-        }}
-        .toc a {{
-            color: #3498db;
-            text-decoration: none;
-        }}
-        .toc a:hover {{
-            text-decoration: underline;
-        }}
-        .report-section {{
-            margin-bottom: 40px;
-        }}
-        .report-section h2 {{
-            color: #2c3e50;
-            border-bottom: 2px solid #4CAF50;
-            padding-bottom: 10px;
-            margin-bottom: 20px;
-        }}
-        .section-content {{
-            margin: 20px 0;
-        }}
-
-        /* 텍스트 스타일 */
-        .text-paragraph {{
-            line-height: 1.8;
-            margin: 15px 0;
-        }}
-        .text-heading {{
-            font-size: 1.5em;
-            font-weight: 600;
-            color: #2c3e50;
-            margin: 20px 0 10px 0;
-        }}
-        .text-note {{
-            background-color: #fff9e6;
-            border-left: 4px solid #ffc107;
-            padding: 15px;
-            margin: 15px 0;
-        }}
-
-        /* 표 스타일 */
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }}
-        table th {{
-            background-color: #4CAF50;
-            color: white;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-        }}
-        table td {{
-            padding: 10px 12px;
-            border-bottom: 1px solid #ddd;
-        }}
-        table tr:hover {{
-            background-color: #f5f5f5;
-        }}
-        table td[contenteditable="true"] {{
-            cursor: text;
-            outline: none;
-        }}
-        table td[contenteditable="true"]:hover {{
-            background-color: #e8f5e9;
-        }}
-        table td[contenteditable="true"]:focus {{
-            background-color: #fff9c4;
-            box-shadow: inset 0 0 0 2px #4CAF50;
-        }}
-
-        /* 구분선 스타일 */
-        .divider-solid {{
-            border: none;
-            border-top: 1px solid #ccc;
-            margin: 30px 0;
-        }}
-        .divider-dashed {{
-            border: none;
-            border-top: 1px dashed #ccc;
-            margin: 30px 0;
-        }}
-        .divider-thick {{
-            border: none;
-            border-top: 3px solid #666;
-            margin: 30px 0;
-        }}
-
-        /* 페이지 구분 스타일 */
-        .page-break {{
-            page-break-after: always;
-            height: 0;
-            margin: 0;
-            padding: 0;
-        }}
-
-        @media print {{
-            body {{
-                background-color: white;
-                padding: 0;
-            }}
-            .report-container {{
-                box-shadow: none;
-            }}
-            .page-break {{
-                page-break-after: always;
-            }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="report-container">
-        <div class="report-header">
-            <h1>{title}</h1>
-            <p class="report-date">{datetime.now().strftime('%Y-%m-%d')}</p>
-        </div>
-"""
-
-    # 목차 생성
-    if include_toc:
-        html += '\n<div class="toc">\n'
-        html += '<h2>목차</h2>\n'
-        html += '<ol>\n'
-
-        section_number = 0
-        for section in sections:
-            section_type = section.get('type', 'prompt')
-            if section_type not in ['divider', 'page_break']:
-                section_number += 1
-                section_title = section.get('title', '제목 없음')
-                html += f'<li><a href="#section-{section_number}">{section_title}</a></li>\n'
-
-        html += '</ol>\n'
-        html += '</div>\n'
-
-    # 각 섹션 생성
-    section_number = 0
-    for section in sections:
-        section_type = section.get('type', 'prompt')
-
-        if section_type == 'prompt':
-            section_number += 1
-            section_title = section.get('title', '제목 없음')
-
-            # 저장된 프롬프트 실행 결과
-            if section.get('executed') and section.get('result'):
-                prompt_content = section.get('result', '')
-            else:
-                prompt_content = f"<p><em>[프롬프트 '{section_title}'가 아직 실행되지 않았습니다]</em></p>"
-
-            html += f"""
-<section id="section-{section_number}" class="report-section">
-    <h2>{section_number}. {section_title}</h2>
-    <div class="section-content">
-        {prompt_content}
-    </div>
-</section>
-"""
-
-        elif section_type == 'ad_hoc_prompt':
-            section_number += 1
-            section_title = section.get('title', '제목 없음')
-
-            # 일회용 프롬프트 결과
-            if section.get('executed') and section.get('result'):
-                prompt_content = section.get('result', '')
-            else:
-                prompt_content = f"<p><em>[프롬프트 '{section_title}'가 아직 실행되지 않았습니다]</em></p>"
-
-            html += f"""
-<section id="section-{section_number}" class="report-section">
-    <h2>{section_number}. {section_title}</h2>
-    <div class="section-content">
-        {prompt_content}
-    </div>
-</section>
-"""
-
-        elif section_type == 'text':
-            section_number += 1
-            section_title = section.get('title', '텍스트')
-            content = section.get('content', '')
-            style = section.get('style', 'paragraph')
-
-            # 줄바꿈을 <br>로 변환
-            content_html = content.replace('\n', '<br>')
-            style_class = f'text-{style}'
-
-            html += f"""
-<section id="section-{section_number}" class="report-section">
-    <h2>{section_number}. {section_title}</h2>
-    <div class="section-content">
-        <div class="{style_class}">{content_html}</div>
-    </div>
-</section>
-"""
-
-        elif section_type == 'table':
-            section_number += 1
-            section_title = section.get('title', '표')
-            table_data = section.get('data', [[]])
-
-            # HTML 테이블 생성
-            table_html = '<table>\n'
-
-            # 첫 행은 헤더로 처리
-            if len(table_data) > 0:
-                table_html += '<thead>\n<tr>\n'
-                for cell in table_data[0]:
-                    table_html += f'<th>{cell}</th>\n'
-                table_html += '</tr>\n</thead>\n'
-
-            # 나머지 행은 데이터 (contenteditable 속성 추가)
-            if len(table_data) > 1:
-                table_html += '<tbody>\n'
-                for row in table_data[1:]:
-                    table_html += '<tr>\n'
-                    for cell in row:
-                        table_html += f'<td contenteditable="true">{cell}</td>\n'
-                    table_html += '</tr>\n'
-                table_html += '</tbody>\n'
-
-            table_html += '</table>\n'
-
-            html += f"""
-<section id="section-{section_number}" class="report-section">
-    <h2>{section_number}. {section_title}</h2>
-    <div class="section-content">
-        {table_html}
-    </div>
-</section>
-"""
-
-        elif section_type == 'divider':
-            style = section.get('style', 'solid')
-            html += f'<hr class="divider-{style}">\n'
-
-        elif section_type == 'page_break':
-            html += '<div class="page-break"></div>\n'
-
-    # HTML 푸터
-    html += """
-    </div>
-</body>
-</html>
-"""
-
-    return html
-
-
 def display_group_report_builder():
-    """그룹 보고서 생성 UI - 드래그 앤 드롭 및 커스텀 컴포넌트 지원"""
+    """그룹 보고서 생성 UI"""
     st.header("📊 그룹 보고서 생성")
 
     if not auth_client.is_logged_in():
@@ -1948,17 +2125,15 @@ def display_group_report_builder():
         return
 
     st.info("""
-💡 **그룹 보고서 빌더**
-- 프롬프트를 선택하여 보고서에 추가할 수 있습니다
-- 텍스트, 표, 구분선 등 커스텀 컴포넌트를 추가할 수 있습니다
-- 섹션의 순서를 자유롭게 조정할 수 있습니다
+💡 **그룹 보고서란?**
+- 그룹 멤버들이 작성한 프롬프트를 모아서 하나의 통합 보고서를 생성합니다
+- 각 멤버가 담당하는 시스템(NCMS, EUXP, EDMP 등)별로 자동 정렬됩니다
+- 카테고리 > 시스템 순서로 구조화되어 보기 쉽습니다
     """)
 
     # 세션 상태 초기화
     if 'group_report_selected_group_id' not in st.session_state:
         st.session_state.group_report_selected_group_id = None
-    if 'group_report_sections' not in st.session_state:
-        st.session_state.group_report_sections = []
     if 'group_report_html' not in st.session_state:
         st.session_state.group_report_html = None
 
@@ -2007,177 +2182,99 @@ def display_group_report_builder():
 
     st.markdown("---")
 
-    # 2열 레이아웃: 왼쪽(프롬프트/컴포넌트 선택), 오른쪽(섹션 구성)
-    col_left, col_right = st.columns([1, 2])
+    # 2단계: 프롬프트 선택
+    st.subheader("2️⃣ 프롬프트 선택")
 
-    # ========================================
-    # 왼쪽: 프롬프트 선택 & 컴포넌트 추가
-    # ========================================
-    with col_left:
-        st.subheader("📝 콘텐츠 선택")
+    # 전체 선택/해제 버튼
+    col1, col2, col3 = st.columns([1, 1, 3])
+    with col1:
+        if st.button("전체 선택"):
+            for category in prompts_by_category.keys():
+                for prompt in prompts_by_category[category]:
+                    st.session_state[f"prompt_check_{prompt['id']}"] = True
+            st.rerun()
+    with col2:
+        if st.button("전체 해제"):
+            for category in prompts_by_category.keys():
+                for prompt in prompts_by_category[category]:
+                    st.session_state[f"prompt_check_{prompt['id']}"] = False
+            st.rerun()
 
-        # 프롬프트 추가
-        with st.expander("➕ 프롬프트 추가", expanded=True):
-            for category, category_prompts in prompts_by_category.items():
-                st.markdown(f"**📂 {category}**")
+    # 카테고리별 프롬프트 선택
+    selected_prompts = []
 
-                for prompt in category_prompts:
-                    col_a, col_b = st.columns([3, 1])
-                    with col_a:
-                        st.caption(f"{prompt['title']} ({prompt.get('system', '기타')})")
-                    with col_b:
-                        if st.button("➕", key=f"add_prompt_{prompt['id']}", help="섹션에 추가"):
-                            st.session_state.group_report_sections.append({
-                                'type': 'prompt',
-                                'prompt_id': prompt['id'],
-                                'title': prompt['title'],
-                                'category': prompt.get('category', ''),
-                                'system': prompt.get('system', '기타'),
-                                'owner': prompt.get('owner', '')
-                            })
-                            st.rerun()
+    for category, category_prompts in prompts_by_category.items():
+        st.markdown(f"### 📂 {category}")
 
-                st.markdown("---")
+        # 카테고리 전체 선택
+        if st.checkbox(f"카테고리 전체 선택", key=f"cat_check_{category}"):
+            for prompt in category_prompts:
+                st.session_state[f"prompt_check_{prompt['id']}"] = True
 
-        # 커스텀 컴포넌트 추가
-        with st.expander("🎨 커스텀 컴포넌트"):
-            st.markdown("**컴포넌트 추가**")
+        # 시스템별 그룹핑
+        prompts_by_system = {}
+        for prompt in category_prompts:
+            system = prompt.get('system', '기타')
+            if system not in prompts_by_system:
+                prompts_by_system[system] = []
+            prompts_by_system[system].append(prompt)
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📝 텍스트", use_container_width=True, key="add_text_comp"):
-                    st.session_state.group_report_sections.append({
-                        'type': 'text',
-                        'title': '새 텍스트',
-                        'content': '여기에 텍스트를 입력하세요...',
-                        'style': 'paragraph'
-                    })
-                    st.rerun()
+        # 시스템별 표시
+        for system, system_prompts in prompts_by_system.items():
+            with st.expander(f"📌 {system} ({len(system_prompts)}개)"):
+                for prompt in system_prompts:
+                    checked = st.checkbox(
+                        f"{prompt['title']} (by {prompt['owner']})",
+                        key=f"prompt_check_{prompt['id']}",
+                        value=st.session_state.get(f"prompt_check_{prompt['id']}", False)
+                    )
+                    if checked:
+                        selected_prompts.append(prompt['id'])
 
-                if st.button("➖ 구분선", use_container_width=True, key="add_divider_comp"):
-                    st.session_state.group_report_sections.append({
-                        'type': 'divider',
-                        'style': 'solid'
-                    })
-                    st.rerun()
+                    if prompt.get('description'):
+                        st.caption(prompt['description'])
 
-            with col2:
-                if st.button("📊 빈 표", use_container_width=True, key="add_table_comp"):
-                    st.session_state.group_report_sections.append({
-                        'type': 'table',
-                        'title': '새 표',
-                        'data': [
-                            ['헤더1', '헤더2', '헤더3'],
-                            ['데이터1', '데이터2', '데이터3'],
-                            ['데이터4', '데이터5', '데이터6']
-                        ]
-                    })
-                    st.rerun()
-
-                if st.button("📄 페이지 구분", use_container_width=True, key="add_page_break_comp"):
-                    st.session_state.group_report_sections.append({
-                        'type': 'page_break'
-                    })
-                    st.rerun()
-
-            st.markdown("---")
-
-            # 일회용 프롬프트
-            if st.button("🤖 일회용 프롬프트", use_container_width=True, key="add_adhoc_prompt_comp"):
-                st.session_state.group_report_sections.append({
-                    'type': 'ad_hoc_prompt',
-                    'title': '새 프롬프트',
-                    'prompt_content': '여기에 프롬프트를 입력하세요...',
-                    'executed': False,
-                    'result': ''
-                })
-                st.rerun()
-
-    # ========================================
-    # 오른쪽: 섹션 구성 & 순서 조정
-    # ========================================
-    with col_right:
-        st.subheader("📋 섹션 구성")
-
-        if len(st.session_state.group_report_sections) == 0:
-            st.info("""
-📌 섹션이 비어있습니다
-
-왼쪽에서 프롬프트를 추가하거나 커스텀 컴포넌트를 추가하세요.
-            """)
-        else:
-            st.success(f"✅ {len(st.session_state.group_report_sections)}개 섹션")
-
-            # 전체 초기화 버튼
-            if st.button("🗑️ 전체 초기화", key="clear_all_sections"):
-                st.session_state.group_report_sections = []
-                st.rerun()
-
-            st.markdown("---")
-
-            # 각 섹션 표시
-            for idx, section in enumerate(st.session_state.group_report_sections):
-                render_section_editor(idx, section, len(st.session_state.group_report_sections))
-                st.markdown("---")
-
-    # ========================================
-    # 하단: 보고서 설정 & 생성
-    # ========================================
     st.markdown("---")
-    st.subheader("⚙️ 보고서 설정 & 생성")
 
-    col1, col2, col3 = st.columns(3)
+    # 3단계: 보고서 설정
+    st.subheader("3️⃣ 보고서 설정")
+
+    col1, col2 = st.columns(2)
     with col1:
         report_title = st.text_input("보고서 제목", value=f"{group_info.get('name')} 월간보고", key="group_report_title")
     with col2:
         include_toc = st.checkbox("목차 포함", value=True, key="group_include_toc")
-    with col3:
         save_report = st.checkbox("히스토리 저장", value=True, key="group_save_report")
 
-    # 보고서 생성 버튼
-    if len(st.session_state.group_report_sections) == 0:
-        st.warning("⚠️ 최소 1개 이상의 섹션을 추가해주세요")
+    st.caption(f"선택된 프롬프트: {len(selected_prompts)}개")
+
+    # 4단계: 보고서 생성
+    if len(selected_prompts) == 0:
+        st.warning("⚠️ 최소 1개 이상의 프롬프트를 선택해주세요")
     else:
-        st.caption(f"총 {len(st.session_state.group_report_sections)}개 섹션")
-
-        col_gen1, col_gen2 = st.columns(2)
-
-        with col_gen1:
-            if st.button("👁️ 미리보기", use_container_width=True, key="preview_report"):
-                html = generate_group_report_html(
-                    st.session_state.group_report_sections,
-                    report_title,
-                    include_toc,
-                    prompts_by_category
+        if st.button("🚀 그룹 보고서 생성", type="primary", use_container_width=True):
+            with st.spinner("그룹 보고서를 생성하는 중입니다... 시간이 다소 걸릴 수 있습니다."):
+                result = auth_client.generate_group_report(
+                    group_id=selected_group_id,
+                    title=report_title,
+                    prompt_ids=selected_prompts,
+                    include_toc=include_toc,
+                    save=save_report
                 )
-                st.session_state.group_report_html = html
-                st.rerun()
 
-        with col_gen2:
-            if st.button("🚀 보고서 생성", type="primary", use_container_width=True, key="generate_report"):
-                with st.spinner("프롬프트를 실행하고 보고서를 생성하는 중입니다..."):
-                    # 1단계: 모든 프롬프트 실행
-                    execute_all_prompts_in_sections(st.session_state.group_report_sections)
+                if result.get("success"):
+                    st.session_state.group_report_html = result.get("html")
+                    st.success(f"✅ 그룹 보고서가 생성되었습니다! ({len(selected_prompts)}개 프롬프트)")
 
-                    # 2단계: HTML 생성
-                    html = generate_group_report_html(
-                        st.session_state.group_report_sections,
-                        report_title,
-                        include_toc,
-                        prompts_by_category
-                    )
-                    st.session_state.group_report_html = html
-                    st.success(f"✅ 보고서가 생성되었습니다!")
-                    st.rerun()
+                    if save_report:
+                        st.info(f"📁 보고서 ID: {result.get('report_id')}")
+                else:
+                    st.error(f"보고서 생성 실패: {result.get('message')}")
 
-    # 미리보기 및 다운로드
+    # 5단계: 미리보기 및 다운로드
     if st.session_state.group_report_html:
         st.markdown("---")
         st.subheader("📄 생성된 보고서")
-
-        from datetime import datetime
-
-        st.info("💡 **표 편집 가능**: 생성된 보고서의 표 셀을 클릭하면 내용을 직접 편집할 수 있습니다. 편집 후 HTML을 다운로드하면 변경사항이 포함됩니다.")
 
         # 다운로드 버튼
         st.download_button(

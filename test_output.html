@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2025년 10월 월간 보고서</title>
+    
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family: 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', Arial, sans-serif;
+                background: #f5f5f5;
+                padding: 20px;
+                color: #333;
+                line-height: 1.6;
+            }
+
+            .report-header {
+                background: white;
+                max-width: 1200px;
+                margin: 0 auto 20px;
+                padding: 30px 40px;
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                border-left: 5px solid #4CAF50;
+            }
+
+            .report-title {
+                font-size: 28px;
+                font-weight: bold;
+                color: #1a1a1a;
+                margin-bottom: 10px;
+            }
+
+            .report-period {
+                font-size: 16px;
+                color: #666;
+            }
+
+            .page {
+                background: white;
+                max-width: 1200px;
+                margin: 0 auto 30px;
+                padding: 40px;
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                page-break-after: always;
+            }
+
+            .page-title {
+                font-size: 24px;
+                font-weight: bold;
+                color: #1a1a1a;
+                margin-bottom: 10px;
+                padding-bottom: 10px;
+                border-bottom: 3px solid #4CAF50;
+            }
+
+            .page-meta {
+                font-size: 14px;
+                color: #666;
+                margin-bottom: 20px;
+                padding: 10px;
+                background: #f9f9f9;
+                border-radius: 4px;
+            }
+
+            .user-section {
+                margin-bottom: 30px;
+            }
+
+            .user-header {
+                font-size: 18px;
+                font-weight: 600;
+                color: #1976D2;
+                margin-bottom: 15px;
+                padding: 10px;
+                background: #E3F2FD;
+                border-radius: 4px;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 15px;
+                font-size: 13px;
+            }
+
+            th {
+                background: #4CAF50;
+                color: white;
+                padding: 12px 10px;
+                text-align: left;
+                font-weight: 600;
+                font-size: 13px;
+                border-right: 1px solid rgba(255,255,255,0.2);
+            }
+
+            th:last-child {
+                border-right: none;
+            }
+
+            td {
+                padding: 10px;
+                border-bottom: 1px solid #e0e0e0;
+                vertical-align: top;
+            }
+
+            tr:hover {
+                background: #f9f9f9;
+            }
+
+            tr:last-child td {
+                border-bottom: none;
+            }
+
+            .issue-key {
+                color: #1976D2;
+                font-weight: 600;
+                text-decoration: none;
+                font-family: 'Courier New', monospace;
+            }
+
+            .issue-key:hover {
+                text-decoration: underline;
+            }
+
+            .status-badge {
+                display: inline-block;
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
+            .status-신규 { background: #E3F2FD; color: #1976D2; }
+            .status-진행중 { background: #FFF3E0; color: #F57C00; }
+            .status-완료 { background: #E8F5E9; color: #388E3C; }
+            .status-Done { background: #E8F5E9; color: #388E3C; }
+            .status-보류 { background: #F3E5F5; color: #7B1FA2; }
+            .status-취소 { background: #FFEBEE; color: #C62828; }
+
+            .summary {
+                max-width: 400px;
+                word-wrap: break-word;
+                line-height: 1.4;
+            }
+
+            .labels {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+
+            .label-tag {
+                display: inline-block;
+                padding: 2px 8px;
+                background: #E0E0E0;
+                color: #555;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+
+            .empty-state {
+                text-align: center;
+                padding: 40px;
+                color: #999;
+                font-size: 14px;
+            }
+
+            /* 인쇄용 스타일 */
+            @media print {
+                body {
+                    background: white;
+                    padding: 0;
+                }
+
+                .report-header,
+                .page {
+                    box-shadow: none;
+                    page-break-after: always;
+                    margin-bottom: 0;
+                }
+
+                .page:last-child {
+                    page-break-after: auto;
+                }
+
+                tr:hover {
+                    background: transparent !important;
+                }
+
+                .issue-key {
+                    color: #1976D2 !important;
+                    text-decoration: none !important;
+                }
+            }
+
+            /* 반응형 */
+            @media (max-width: 768px) {
+                body {
+                    padding: 10px;
+                }
+
+                .report-header,
+                .page {
+                    padding: 20px;
+                }
+
+                .report-title {
+                    font-size: 22px;
+                }
+
+                .page-title {
+                    font-size: 20px;
+                }
+
+                table {
+                    font-size: 12px;
+                }
+
+                th, td {
+                    padding: 8px 6px;
+                }
+
+                .summary {
+                    max-width: 200px;
+                }
+            }
+        </style>
+        
+</head>
+<body>
+    
+        <div class="report-header">
+            <h1 class="report-title">📊 2025년 10월 월간 보고서</h1>
+            <div class="report-period">
+                생성일: 2025-10-25 15:30
+                 | 보고 기간: 2025-10
+            </div>
+        </div>
+        
+    
+        <div class="page">
+            <h2 class="page-title">DB 작업 현황</h2>
+            <div class="page-meta">이슈 수: 2개 | 기간: 2025-10 | 대상 유저: user1(2)</div>
+            <div class="user-section"><div class="user-header">👤 user1 (2개 이슈)</div><table><thead><tr><th>이슈 키</th><th>제목</th><th>상태</th><th>담당자</th><th>생성일</th></tr></thead><tbody><tr><td><span class="issue-key">BTVO-61032</span></td><td><div class="summary" title="[NCMS] PD_PRD_GRP_SUB_EPSD_REL 테이블의 SRIS_ID 보정">[NCMS] PD_PRD_GRP_SUB_EPSD_REL 테이블의 SRIS_ID 보정</div></td><td><span class="status-badge status-신규">신규</span></td><td>[SK C&C] 조주연</td><td>2025-10-15 10:30</td></tr><tr><td><span class="issue-key">BTVO-61033</span></td><td><div class="summary" title="[테스트] 두 번째 이슈 - 완료 상태">[테스트] 두 번째 이슈 - 완료 상태</div></td><td><span class="status-badge status-완료">완료</span></td><td>김철수</td><td>2025-10-16 09:00</td></tr></tbody></table></div>
+        </div>
+        
+        <div class="page">
+            <h2 class="page-title">API 개발 현황</h2>
+            <div class="page-meta">이슈 수: 2개 | 기간: 2025-10 | 대상 유저: user2(2)</div>
+            <div class="user-section"><div class="user-header">👤 user2 (2개 이슈)</div><table><thead><tr><th>이슈 키</th><th>제목</th><th>상태</th><th>담당자</th><th>라벨</th><th>컴포넌트</th></tr></thead><tbody><tr><td><span class="issue-key">PROJ-456</span></td><td><div class="summary" title="다른 프로젝트 이슈 - 진행중">다른 프로젝트 이슈 - 진행중</div></td><td><span class="status-badge status-진행중">진행중</span></td><td>박영희</td><td><div class="labels"><span class="label-tag">Frontend</span><span class="label-tag">UI</span></div></td><td>UI</td></tr><tr><td><span class="issue-key">PROJ-457</span></td><td><div class="summary" title="네 번째 이슈 - 보류">네 번째 이슈 - 보류</div></td><td><span class="status-badge status-보류">보류</span></td><td>이영수</td><td>-</td><td>API</td></tr></tbody></table></div>
+        </div>
+        
+</body>
+</html>

@@ -112,6 +112,8 @@ slack_temp_storage = {}
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str
+    user_name: str
+    system_name: Optional[str] = None
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -166,6 +168,8 @@ async def signup(request: SignupRequest):
             id=None,
             email=request.email,
             password_hash=password_hash,
+            user_name=request.user_name,
+            system_name=request.system_name,
             created_at=datetime.now().isoformat()
         )
         
@@ -2772,6 +2776,16 @@ async def reset_jira_integration(session_id: Optional[str] = Cookie(None)):
         raise HTTPException(status_code=500, detail=f"Jira 연동 정보 삭제 중 오류가 발생했습니다: {str(e)}")
 
 
+# ============================================
+# 그룹 협업 API 통합
+# ============================================
+from api.group_api import create_group_router
+
+# 그룹 API 라우터 생성 (이 파일의 get_current_user 전달)
+group_router = create_group_router(get_current_user)
+app.include_router(group_router)
+
+
 if __name__ == "__main__":
     # 만료된 세션 정리 (주기적으로 실행)
     def cleanup_sessions():
@@ -2783,4 +2797,5 @@ if __name__ == "__main__":
     cleanup_thread.start()
 
     logging.info("🚀 FastAPI 서버 시작: http://localhost:8002")
+    logging.info("   - 그룹 협업 API 사용 가능: /api/groups")
     uvicorn.run(app, host="0.0.0.0", port=8002)

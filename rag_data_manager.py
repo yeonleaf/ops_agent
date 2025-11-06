@@ -16,7 +16,9 @@ import uuid
 from module.file_processor import FileProcessor, DocumentType, FileTypeDetector
 
 # Vector DB import
-from vector_db_models import VectorDBManager, FileChunk, StructuredChunk
+from vector_db_models import VectorDBManager, StructuredChunk
+# UnifiedChunk import
+from models.unified_chunk import UnifiedChunk, create_file_unified_chunk
 
 # LangChain imports for embedding
 from langchain_openai import AzureOpenAIEmbeddings
@@ -143,31 +145,26 @@ def embed_and_store_chunks(file_processing_result: Dict[str, Any], file_name: st
                                     content = element.get('content', '')
                                     if content and len(content.strip()) > 10:
                                         print(f"✅ 텍스트 요소에서 내용 추출: {len(content)}자")
-                                        
-                                        # 청크 ID 생성
-                                        chunk_id = str(uuid.uuid4())
-                                        
-                                        # FileChunk 객체 생성
-                                        file_chunk = FileChunk(
-                                            chunk_id=chunk_id,
+
+                                        # UnifiedChunk 객체 생성 (파일 데이터)
+                                        unified_chunk = create_file_unified_chunk(
+                                            text_chunk=content,
                                             file_name=file_name,
                                             file_hash=file_hash,
-                                            text_chunk=content,
+                                            file_type=file_processing_result.get('file_type', 'unknown'),
+                                            file_size=len(content),
                                             architecture="dual_path_hybrid",
                                             processing_method="file_processor",
                                             vision_analysis=False,
                                             section_title=page_data.get('section_title', ''),
                                             page_number=page_data.get('page_number', page_idx + 1),
                                             element_count=1,
-                                            file_type=file_processing_result.get('file_type', 'unknown'),
                                             elements=[element],
-                                            created_at=datetime.now().isoformat(),
-                                            file_size=len(content),
                                             processing_duration=0.0
                                         )
-                                        
+
                                         # 벡터 DB에 저장
-                                        vector_db.add_file_chunk(file_chunk)
+                                        vector_db.add_unified_chunk(unified_chunk)
                                         stored_count += 1
                                         print(f"✅ 텍스트 청크 {stored_count} 저장 완료")
                                 
@@ -182,34 +179,29 @@ def embed_and_store_chunks(file_processing_result: Dict[str, Any], file_name: st
                                                 row_text = " | ".join(str(cell) for cell in row if cell)
                                                 if row_text:
                                                     table_text += row_text + "\n"
-                                        
+
                                         if table_text and len(table_text.strip()) > 10:
                                             print(f"✅ 테이블 요소에서 내용 추출: {len(table_text)}자")
-                                            
-                                            # 청크 ID 생성
-                                            chunk_id = str(uuid.uuid4())
-                                            
-                                            # FileChunk 객체 생성
-                                            file_chunk = FileChunk(
-                                                chunk_id=chunk_id,
+
+                                            # UnifiedChunk 객체 생성 (파일 데이터)
+                                            unified_chunk = create_file_unified_chunk(
+                                                text_chunk=table_text,
                                                 file_name=file_name,
                                                 file_hash=file_hash,
-                                                text_chunk=table_text,
+                                                file_type=file_processing_result.get('file_type', 'unknown'),
+                                                file_size=len(table_text),
                                                 architecture="dual_path_hybrid",
                                                 processing_method="file_processor",
                                                 vision_analysis=False,
                                                 section_title=page_data.get('section_title', ''),
                                                 page_number=page_data.get('page_number', page_idx + 1),
                                                 element_count=1,
-                                                file_type=file_processing_result.get('file_type', 'unknown'),
                                                 elements=[element],
-                                                created_at=datetime.now().isoformat(),
-                                                file_size=len(table_text),
                                                 processing_duration=0.0
                                             )
-                                            
+
                                             # 벡터 DB에 저장
-                                            vector_db.add_file_chunk(file_chunk)
+                                            vector_db.add_unified_chunk(unified_chunk)
                                             stored_count += 1
                                             print(f"✅ 테이블 청크 {stored_count} 저장 완료")
                             
@@ -218,31 +210,26 @@ def embed_and_store_chunks(file_processing_result: Dict[str, Any], file_name: st
                                 element_text = str(element)
                                 if len(element_text.strip()) > 10:
                                     print(f"✅ element {element_idx}를 문자열로 변환: {len(element_text)}자")
-                                    
-                                    # 청크 ID 생성
-                                    chunk_id = str(uuid.uuid4())
-                                    
-                                    # FileChunk 객체 생성
-                                    file_chunk = FileChunk(
-                                        chunk_id=chunk_id,
+
+                                    # UnifiedChunk 객체 생성 (파일 데이터)
+                                    unified_chunk = create_file_unified_chunk(
+                                        text_chunk=element_text,
                                         file_name=file_name,
                                         file_hash=file_hash,
-                                        text_chunk=element_text,
+                                        file_type=file_processing_result.get('file_type', 'unknown'),
+                                        file_size=len(element_text),
                                         architecture="dual_path_hybrid",
                                         processing_method="file_processor",
                                         vision_analysis=False,
                                         section_title=page_data.get('section_title', ''),
                                         page_number=page_data.get('page_number', page_idx + 1),
                                         element_count=1,
-                                        file_type=file_processing_result.get('file_type', 'unknown'),
                                         elements=[element],
-                                        created_at=datetime.now().isoformat(),
-                                        file_size=len(element_text),
                                         processing_duration=0.0
                                     )
-                                    
+
                                     # 벡터 DB에 저장
-                                    vector_db.add_file_chunk(file_chunk)
+                                    vector_db.add_unified_chunk(unified_chunk)
                                     stored_count += 1
                                     print(f"✅ 문자열 청크 {stored_count} 저장 완료")
                         

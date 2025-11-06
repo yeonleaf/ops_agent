@@ -60,6 +60,8 @@ class User:
     id: Optional[int]
     email: str
     password_hash: str
+    user_name: Optional[str] = None
+    system_name: Optional[str] = None
     created_at: Optional[str] = None
 
 @dataclass
@@ -149,6 +151,8 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255) UNIQUE NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
+                    user_name VARCHAR(100),
+                    system_name VARCHAR(50),
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -744,10 +748,10 @@ class DatabaseManager:
 
             cursor.execute("""
                 INSERT INTO users (
-                    email, password_hash, created_at
-                ) VALUES (?, ?, ?)
+                    email, password_hash, user_name, system_name, created_at
+                ) VALUES (?, ?, ?, ?, ?)
             """, (
-                user.email, user.password_hash,
+                user.email, user.password_hash, user.user_name, user.system_name,
                 user.created_at or datetime.now().isoformat()
             ))
 
@@ -762,7 +766,7 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             cursor.execute("""
-                SELECT id, email, password_hash, created_at
+                SELECT id, email, password_hash, user_name, system_name, created_at
                 FROM users WHERE email = ?
             """, (email,))
 
@@ -772,7 +776,9 @@ class DatabaseManager:
                     id=row[0],
                     email=row[1],
                     password_hash=row[2],
-                    created_at=row[3]
+                    user_name=row[3],
+                    system_name=row[4],
+                    created_at=row[5]
                 )
             return None
     
@@ -783,7 +789,7 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             cursor.execute("""
-                SELECT id, email, password_hash, created_at
+                SELECT id, email, password_hash, user_name, system_name, created_at
                 FROM users WHERE id = ?
             """, (user_id,))
 
@@ -793,7 +799,9 @@ class DatabaseManager:
                     id=row[0],
                     email=row[1],
                     password_hash=row[2],
-                    created_at=row[3]
+                    user_name=row[3],
+                    system_name=row[4],
+                    created_at=row[5]
                 )
             return None
     

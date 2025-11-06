@@ -12,6 +12,10 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import os
 import json
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
 
 class PasswordManager:
     """비밀번호 관리 클래스"""

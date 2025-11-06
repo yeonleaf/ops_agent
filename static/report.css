@@ -1,0 +1,272 @@
+/* 월간보고서 CSS */
+
+/* 기본 설정 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', 'Malgun Gothic', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f5f5f5;
+    padding: 20px;
+}
+
+/* 보고서 컨테이너 */
+.report-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: white;
+    padding: 40px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+}
+
+/* 보고서 헤더 */
+.report-header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: 3px solid #4CAF50;
+}
+
+.report-header h1 {
+    color: #2c3e50;
+    font-size: 2.5em;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.report-header .date {
+    color: #7f8c8d;
+    font-size: 1.1em;
+    font-weight: 400;
+}
+
+/* 목차 */
+.toc {
+    background-color: #f8f9fa;
+    padding: 25px;
+    margin-bottom: 30px;
+    border-left: 4px solid #4CAF50;
+    border-radius: 4px;
+}
+
+.toc h2 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 1.5em;
+}
+
+.toc ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.toc ul ul {
+    padding-left: 20px;
+    margin-top: 5px;
+}
+
+.toc li {
+    margin: 8px 0;
+}
+
+.toc a {
+    color: #3498db;
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.toc a:hover {
+    color: #2980b9;
+    text-decoration: underline;
+}
+
+/* 섹션 */
+.report-section {
+    margin-bottom: 50px;
+}
+
+.report-section h2 {
+    color: #2c3e50;
+    border-bottom: 2px solid #4CAF50;
+    padding-bottom: 10px;
+    margin-bottom: 25px;
+    font-size: 1.8em;
+    font-weight: 600;
+}
+
+/* 하위 섹션 */
+.report-subsection {
+    margin-left: 20px;
+    margin-bottom: 35px;
+}
+
+.report-subsection h3 {
+    color: #34495e;
+    border-left: 4px solid #4CAF50;
+    padding-left: 15px;
+    margin-bottom: 20px;
+    font-size: 1.4em;
+    font-weight: 500;
+}
+
+/* 컴포넌트 */
+.component {
+    margin: 25px 0;
+    padding: 15px;
+    background-color: #fefefe;
+    border-radius: 4px;
+}
+
+.component-error {
+    background-color: #fff3cd;
+    border: 1px solid #ffc107;
+    padding: 20px;
+    border-radius: 4px;
+}
+
+.error-message {
+    color: #856404;
+}
+
+.error-message strong {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 1.1em;
+}
+
+/* 테이블 스타일 */
+.report-table,
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    background-color: white;
+}
+
+.report-table th,
+table th {
+    background-color: #4CAF50;
+    color: white;
+    padding: 14px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.95em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.report-table td,
+table td {
+    padding: 12px;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 0.95em;
+}
+
+.report-table tr:hover,
+table tr:hover {
+    background-color: #f5f5f5;
+    transition: background-color 0.3s ease;
+}
+
+.report-table tr:last-child td,
+table tr:last-child td {
+    border-bottom: none;
+}
+
+.report-table tbody tr:nth-child(even),
+table tbody tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+/* pre 태그 스타일 (마크다운 형식일 경우) */
+pre {
+    background-color: #f4f4f4;
+    padding: 15px;
+    border-left: 4px solid #4CAF50;
+    overflow-x: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+/* 프린트 스타일 */
+@media print {
+    body {
+        background-color: white;
+        padding: 0;
+    }
+
+    .report-container {
+        box-shadow: none;
+        padding: 20px;
+        max-width: 100%;
+    }
+
+    .report-section,
+    .report-subsection {
+        page-break-inside: avoid;
+    }
+
+    .report-table,
+    table {
+        page-break-inside: auto;
+    }
+
+    .report-table tr,
+    table tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+    }
+
+    .toc {
+        display: none; /* 프린트 시 목차 숨김 */
+    }
+
+    a {
+        text-decoration: none;
+        color: #333;
+    }
+}
+
+/* 반응형 디자인 */
+@media (max-width: 800px) {
+    .report-container {
+        padding: 20px;
+    }
+
+    .report-header h1 {
+        font-size: 1.8em;
+    }
+
+    .report-section h2 {
+        font-size: 1.4em;
+    }
+
+    .report-subsection {
+        margin-left: 10px;
+    }
+
+    .report-subsection h3 {
+        font-size: 1.2em;
+    }
+
+    .report-table,
+    table {
+        font-size: 0.85em;
+    }
+
+    .report-table th,
+    table th,
+    .report-table td,
+    table td {
+        padding: 8px;
+    }
+}

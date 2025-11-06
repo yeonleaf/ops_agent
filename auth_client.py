@@ -23,12 +23,17 @@ class AuthClient:
             cookies['session_id'] = st.session_state.session_id
         return cookies
     
-    def signup(self, email: str, password: str) -> Dict[str, Any]:
+    def signup(self, email: str, password: str, user_name: str, system_name: str = None) -> Dict[str, Any]:
         """회원가입"""
         try:
             response = self.session.post(
                 f"{self.base_url}/auth/signup",
-                json={"email": email, "password": password}
+                json={
+                    "email": email,
+                    "password": password,
+                    "user_name": user_name,
+                    "system_name": system_name
+                }
             )
             
             # 응답 상태 코드 확인
@@ -56,7 +61,7 @@ class AuthClient:
                 f"{self.base_url}/auth/login",
                 json={"email": email, "password": password}
             )
-            
+
             # 응답 상태 코드 확인
             if response.status_code == 200:
                 try:
@@ -68,7 +73,21 @@ class AuthClient:
                             st.session_state.session_id = cookies['session_id']
                             st.session_state.is_logged_in = True
                             st.session_state.user_email = email
-                    
+
+                            # 서버 응답에서 user_id 추출 및 저장
+                            if 'user_id' in result:
+                                st.session_state.user_id = result['user_id']
+                                print(f"✅ 로그인 성공: user_id={result['user_id']}, email={email}")
+                            else:
+                                # Fallback: DB에서 직접 조회
+                                print(f"⚠️ 서버 응답에 user_id가 없습니다. DB에서 직접 조회합니다.")
+                                user_id = self._get_user_id_from_db(email)
+                                if user_id:
+                                    st.session_state.user_id = user_id
+                                    print(f"✅ DB에서 user_id 조회 성공: user_id={user_id}, email={email}")
+                                else:
+                                    print(f"❌ DB에서 user_id 조회 실패: email={email}")
+
                     return result
                 except json.JSONDecodeError:
                     return {"success": False, "message": f"서버 응답 파싱 실패: {response.text}"}
@@ -78,11 +97,30 @@ class AuthClient:
                     return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
                 except json.JSONDecodeError:
                     return {"success": False, "message": f"HTTP {response.status_code} 오류: {response.text}"}
-                    
+
         except requests.exceptions.ConnectionError:
             return {"success": False, "message": "인증 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요."}
         except Exception as e:
             return {"success": False, "message": f"로그인 요청 실패: {str(e)}"}
+
+    def _get_user_id_from_db(self, email: str) -> Optional[int]:
+        """DB에서 이메일로 user_id 조회 (fallback)"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect("tickets.db")
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return row[0]
+            else:
+                return None
+        except Exception as e:
+            print(f"❌ DB에서 user_id 조회 실패: {e}")
+            return None
     
     def logout(self) -> Dict[str, Any]:
         """로그아웃"""
@@ -92,7 +130,7 @@ class AuthClient:
                 f"{self.base_url}/auth/logout",
                 cookies=cookies
             )
-            
+
             # 세션 상태 초기화
             if 'session_id' in st.session_state:
                 del st.session_state.session_id
@@ -100,39 +138,35 @@ class AuthClient:
                 del st.session_state.is_logged_in
             if 'user_email' in st.session_state:
                 del st.session_state.user_email
-            
+            if 'user_id' in st.session_state:
+                del st.session_state.user_id
+
             return response.json()
         except Exception as e:
             return {"success": False, "message": f"로그아웃 요청 실패: {str(e)}"}
     
     def get_current_user(self) -> Optional[Dict[str, Any]]:
-        print(f"🍪 auth_client에서 사용자 정보 조회 시도")
-        """현재 사용자 정보 조회"""
-        try:
-            cookies = self._get_cookies()
+        """현재 사용자 정보 조회 (session_state에서)"""
+        print(f"🍪 auth_client.get_current_user() 호출")
 
-            # 세션 ID가 없으면 사용자 정보 조회하지 않음
-            if not cookies.get('session_id'):
-                print(f"🍪 session_id가 없어서 사용자 정보 조회 건너뜀")
-                return None
+        # session_state에서 로그인 상태 확인
+        if not st.session_state.get('is_logged_in', False):
+            print(f"🍪 로그인되지 않음")
+            return None
 
-            response = self.session.get(
-                f"{self.base_url}/auth/me",
-                cookies=cookies
-            )
+        # session_state에서 사용자 정보 가져오기
+        user_id = st.session_state.get('user_id')
+        user_email = st.session_state.get('user_email')
 
-            if response.status_code == 200:
-                user_info = response.json()
-                print(f"🍪 auth_client에서 사용자 정보 조회: {user_info}")
-                # 사용자 이메일을 세션에 저장
-                if user_info and 'email' in user_info:
-                    st.session_state['user_email'] = user_info['email']
-                    print(f"🍪 auth_client에서 사용자 이메일 세션에 저장: {user_info['email']}")
-                return user_info
-            else:
-                return None
-        except Exception as e:
-            print(f"사용자 정보 조회 실패: {str(e)}")
+        if user_id and user_email:
+            user_info = {
+                'id': user_id,
+                'email': user_email
+            }
+            print(f"🍪 session_state에서 사용자 정보 조회: {user_info}")
+            return user_info
+        else:
+            print(f"🍪 session_state에 user_id 또는 user_email이 없음")
             return None
     
     def get_user_info(self) -> Optional[Dict[str, Any]]:
@@ -343,25 +377,21 @@ class AuthClient:
             return {"success": False, "message": f"슬랙 연동 정보 조회 실패: {str(e)}", "linked": False}
 
     def is_logged_in(self) -> bool:
-        """로그인 상태 확인"""
+        """로그인 상태 확인 (session_state에서)"""
         print(f"🍪 auth_client.is_logged_in() 호출됨")
-        print(f"🍪 현재 세션 상태: is_logged_in={st.session_state.get('is_logged_in', False)}")
 
-        # 서버에서 사용자 정보 확인 (세션 상태와 관계없이)
-        print(f"🍪 get_current_user() 호출 전")
-        user_info = self.get_current_user()
-        print(f"🍪 get_current_user() 호출 후: {user_info}")
+        # session_state에서 로그인 상태 확인
+        is_logged_in = st.session_state.get('is_logged_in', False)
+        user_id = st.session_state.get('user_id')
+        user_email = st.session_state.get('user_email')
 
-        if user_info is None:
-            # 세션이 만료되었거나 유효하지 않음
-            st.session_state.is_logged_in = False
-            print(f"🍪 사용자 정보 없음 - 로그인되지 않음")
+        # is_logged_in이 True이고, user_id와 user_email이 있으면 로그인된 것으로 판단
+        if is_logged_in and user_id and user_email:
+            print(f"🍪 로그인됨: user_id={user_id}, email={user_email}")
+            return True
+        else:
+            print(f"🍪 로그인되지 않음")
             return False
-
-        # 사용자 정보가 있으면 로그인 상태로 설정
-        st.session_state.is_logged_in = True
-        print(f"🍪 사용자 정보 있음 - 로그인됨")
-        return True
 
     # === Jira 온보딩 API 메서드 ===
 
@@ -578,6 +608,447 @@ class AuthClient:
 
         except Exception as e:
             return {"success": False, "message": f"Jira 연동 정보 삭제 실패: {str(e)}"}
+
+    # ============================================
+    # 그룹 협업 API
+    # ============================================
+
+    def get_groups(self) -> Dict[str, Any]:
+        """
+        사용자의 그룹 목록 조회
+
+        Returns:
+            그룹 목록
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.get(
+                f"{self.base_url}/api/v2/groups",
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"그룹 목록 조회 실패: {str(e)}"}
+
+    def create_group(self, name: str, description: str = None) -> Dict[str, Any]:
+        """
+        그룹 생성
+
+        Args:
+            name: 그룹 이름
+            description: 그룹 설명 (선택)
+
+        Returns:
+            생성된 그룹 정보
+        """
+        try:
+            cookies = self._get_cookies()
+            data = {"name": name}
+            if description:
+                data["description"] = description
+
+            response = self.session.post(
+                f"{self.base_url}/api/v2/groups",
+                json=data,
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"그룹 생성 실패: {str(e)}"}
+
+    def get_group_detail(self, group_id: int) -> Dict[str, Any]:
+        """
+        그룹 상세 정보 조회
+
+        Args:
+            group_id: 그룹 ID
+
+        Returns:
+            그룹 상세 정보 (멤버, 프롬프트 포함)
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.get(
+                f"{self.base_url}/api/v2/groups/{group_id}",
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"그룹 상세 조회 실패: {str(e)}"}
+
+    def add_group_member(self, group_id: int, user_id: int, system: str = None) -> Dict[str, Any]:
+        """
+        그룹에 멤버 추가
+
+        Args:
+            group_id: 그룹 ID
+            user_id: 추가할 사용자 ID
+            system: 담당 시스템 (예: NCMS, EUXP)
+
+        Returns:
+            추가 결과
+        """
+        try:
+            cookies = self._get_cookies()
+            data = {"user_id": user_id}
+            if system:
+                data["system"] = system
+
+            response = self.session.post(
+                f"{self.base_url}/api/v2/groups/{group_id}/members",
+                json=data,
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"멤버 추가 실패: {str(e)}"}
+
+    def remove_group_member(self, group_id: int, user_id: int) -> Dict[str, Any]:
+        """
+        그룹에서 멤버 제거
+
+        Args:
+            group_id: 그룹 ID
+            user_id: 제거할 사용자 ID
+
+        Returns:
+            제거 결과
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.delete(
+                f"{self.base_url}/api/v2/groups/{group_id}/members/{user_id}",
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"멤버 제거 실패: {str(e)}"}
+
+    def update_group(self, group_id: int, name: str = None, description: str = None) -> Dict[str, Any]:
+        """
+        그룹 정보 수정
+
+        Args:
+            group_id: 그룹 ID
+            name: 그룹 이름 (선택)
+            description: 그룹 설명 (선택)
+
+        Returns:
+            수정 결과
+        """
+        try:
+            cookies = self._get_cookies()
+            data = {}
+            if name:
+                data["name"] = name
+            if description is not None:
+                data["description"] = description
+
+            response = self.session.put(
+                f"{self.base_url}/api/v2/groups/{group_id}",
+                json=data,
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"그룹 수정 실패: {str(e)}"}
+
+    def delete_group(self, group_id: int) -> Dict[str, Any]:
+        """
+        그룹 삭제
+
+        Args:
+            group_id: 그룹 ID
+
+        Returns:
+            삭제 결과
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.delete(
+                f"{self.base_url}/api/v2/groups/{group_id}",
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"그룹 삭제 실패: {str(e)}"}
+
+    def generate_group_report(self, group_id: int, title: str, prompt_ids: list,
+                            include_toc: bool = True, save: bool = True) -> Dict[str, Any]:
+        """
+        그룹 보고서 생성
+
+        Args:
+            group_id: 그룹 ID
+            title: 보고서 제목
+            prompt_ids: 실행할 프롬프트 ID 목록
+            include_toc: 목차 포함 여부
+            save: 히스토리 저장 여부
+
+        Returns:
+            생성된 보고서
+        """
+        try:
+            cookies = self._get_cookies()
+            data = {
+                "title": title,
+                "prompt_ids": prompt_ids,
+                "include_toc": include_toc,
+                "save": save
+            }
+
+            response = self.session.post(
+                f"{self.base_url}/api/v2/groups/{group_id}/reports/generate",
+                json=data,
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"그룹 보고서 생성 실패: {str(e)}"}
+
+    # ==================== 카테고리 관리 API ====================
+
+    def get_group_categories(self, group_id: int) -> Dict[str, Any]:
+        """
+        그룹 카테고리 목록 조회
+
+        Args:
+            group_id: 그룹 ID
+
+        Returns:
+            {"success": True/False, "categories": [...]}
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.get(
+                f"{self.base_url}/api/v2/groups/{group_id}/categories",
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"카테고리 조회 실패: {str(e)}"}
+
+    def add_group_category(self, group_id: int, name: str, description: str = None, order_index: int = 999) -> Dict[str, Any]:
+        """
+        그룹 카테고리 추가 (owner만)
+
+        Args:
+            group_id: 그룹 ID
+            name: 카테고리명
+            description: 설명
+            order_index: 순서
+
+        Returns:
+            {"success": True/False, "category": {...}}
+        """
+        try:
+            cookies = self._get_cookies()
+            data = {
+                "name": name,
+                "description": description,
+                "order_index": order_index
+            }
+
+            response = self.session.post(
+                f"{self.base_url}/api/v2/groups/{group_id}/categories",
+                json=data,
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"카테고리 추가 실패: {str(e)}"}
+
+    def update_group_category(self, group_id: int, category_id: int, name: str = None, description: str = None) -> Dict[str, Any]:
+        """
+        그룹 카테고리 수정 (owner만)
+
+        Args:
+            group_id: 그룹 ID
+            category_id: 카테고리 ID
+            name: 새 카테고리명
+            description: 새 설명
+
+        Returns:
+            {"success": True/False, "category": {...}}
+        """
+        try:
+            cookies = self._get_cookies()
+            data = {}
+            if name:
+                data["name"] = name
+            if description is not None:
+                data["description"] = description
+
+            response = self.session.put(
+                f"{self.base_url}/api/v2/groups/{group_id}/categories/{category_id}",
+                json=data,
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"카테고리 수정 실패: {str(e)}"}
+
+    def delete_group_category(self, group_id: int, category_id: int) -> Dict[str, Any]:
+        """
+        그룹 카테고리 삭제 (owner만)
+
+        Args:
+            group_id: 그룹 ID
+            category_id: 카테고리 ID
+
+        Returns:
+            {"success": True/False, "message": "..."}
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.delete(
+                f"{self.base_url}/api/v2/groups/{group_id}/categories/{category_id}",
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"카테고리 삭제 실패: {str(e)}"}
+
+    def reorder_group_categories(self, group_id: int, category_orders: list) -> Dict[str, Any]:
+        """
+        그룹 카테고리 순서 변경 (owner만)
+
+        Args:
+            group_id: 그룹 ID
+            category_orders: [{"id": 1, "order_index": 0}, ...]
+
+        Returns:
+            {"success": True/False, "categories": [...]}
+        """
+        try:
+            cookies = self._get_cookies()
+            data = {"category_orders": category_orders}
+
+            response = self.session.put(
+                f"{self.base_url}/api/v2/groups/{group_id}/categories/reorder",
+                json=data,
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류"}
+
+        except Exception as e:
+            return {"success": False, "message": f"카테고리 순서 변경 실패: {str(e)}"}
 
 # 전역 인스턴스
 auth_client = AuthClient()

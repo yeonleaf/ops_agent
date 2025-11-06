@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>그룹 보고서 생성 - 월간보고 생성기</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <style>
+        .report-settings {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .form-group input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .prompt-selector {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .category-section {
+            margin-bottom: 30px;
+        }
+
+        .category-header {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+
+        .category-header:hover {
+            background: #ececec;
+        }
+
+        .category-checkbox {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .category-title {
+            font-size: 1.1em;
+            font-weight: 500;
+            color: #2c3e50;
+            flex: 1;
+        }
+
+        .category-count {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .system-group {
+            margin-left: 30px;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #fafafa;
+            border-left: 3px solid #4CAF50;
+            border-radius: 4px;
+        }
+
+        .system-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .system-title {
+            font-weight: 500;
+            color: #34495e;
+        }
+
+        .prompt-item {
+            margin-left: 30px;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: white;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .prompt-item:hover {
+            background: #f9f9f9;
+        }
+
+        .prompt-checkbox {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .prompt-info {
+            flex: 1;
+        }
+
+        .prompt-title {
+            color: #333;
+            font-size: 0.95em;
+        }
+
+        .prompt-meta {
+            color: #999;
+            font-size: 0.85em;
+            margin-top: 2px;
+        }
+
+        .actions-bar {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .selection-info {
+            color: #666;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .preview {
+            display: none;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .preview.active {
+            display: block;
+        }
+
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .preview-content {
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 20px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            background: white;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .message {
+            display: none;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .message.active {
+            display: block;
+        }
+
+        .message.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef5350;
+        }
+
+        .message.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #66bb6a;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1>📊 그룹 보고서 생성</h1>
+            <div class="user-info">
+                <a href="#" onclick="goBack()" style="margin-right: 15px; color: white; text-decoration: none;">← 그룹으로 돌아가기</a>
+                <span class="username" id="username"></span>
+                <button class="btn-logout" onclick="logout()">로그아웃</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 메인 컨테이너 -->
+    <div class="app-container">
+        <!-- 로딩 -->
+        <div id="loading-init" class="loading" style="display: block;">
+            <div class="spinner"></div>
+            <p>프롬프트 목록을 불러오는 중...</p>
+        </div>
+
+        <!-- 메시지 -->
+        <div id="message" class="message"></div>
+
+        <!-- 보고서 설정 -->
+        <div id="report-settings" class="report-settings" style="display: none;">
+            <h3>보고서 설정</h3>
+            <div class="form-group">
+                <label for="report-title">보고서 제목</label>
+                <input type="text" id="report-title" placeholder="예: 월간보고 (2025.10)" value="월간보고">
+            </div>
+            <div style="display: flex; gap: 20px;">
+                <label>
+                    <input type="checkbox" id="include-toc" checked>
+                    목차 포함
+                </label>
+                <label>
+                    <input type="checkbox" id="save-report" checked>
+                    히스토리 저장
+                </label>
+            </div>
+        </div>
+
+        <!-- 프롬프트 선택 -->
+        <div id="prompt-selector" class="prompt-selector" style="display: none;">
+            <h3>프롬프트 선택</h3>
+            <p style="color: #666; margin-bottom: 20px;">보고서에 포함할 프롬프트를 선택하세요. 선택한 순서대로 카테고리 > 시스템별로 정렬됩니다.</p>
+
+            <div id="categories-container">
+                <!-- 동적 생성 -->
+            </div>
+
+            <div id="prompts-empty" class="empty-state" style="display: none;">
+                <p>아직 작성된 프롬프트가 없습니다</p>
+                <button class="btn btn-primary" onclick="goToGroupDetail()">그룹 페이지로 이동</button>
+            </div>
+        </div>
+
+        <!-- 액션 바 -->
+        <div id="actions-bar" class="actions-bar" style="display: none;">
+            <div class="selection-info">
+                <span id="selected-count">0</span>개 프롬프트 선택됨
+            </div>
+            <div class="action-buttons">
+                <button class="btn btn-secondary" onclick="selectAll()">전체 선택</button>
+                <button class="btn btn-secondary" onclick="deselectAll()">전체 해제</button>
+                <button class="btn btn-primary" onclick="generateReport()">🚀 보고서 생성</button>
+            </div>
+        </div>
+
+        <!-- 생성 로딩 -->
+        <div id="loading-generate" class="loading">
+            <div class="spinner"></div>
+            <p>그룹 보고서를 생성하는 중입니다... 시간이 다소 걸릴 수 있습니다.</p>
+        </div>
+
+        <!-- 미리보기 -->
+        <div id="preview" class="preview">
+            <div class="preview-header">
+                <h3>📄 생성된 그룹 보고서</h3>
+                <div>
+                    <button class="btn btn-secondary" onclick="downloadReport()" style="margin-right: 10px;">💾 HTML 다운로드</button>
+                    <button class="btn btn-primary" onclick="resetBuilder()">🔄 새로 만들기</button>
+                </div>
+            </div>
+            <div class="preview-content" id="preview-content"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v2';
+        let token = localStorage.getItem('token');
+        let groupId = null;
+        let groupData = null;
+        let allPrompts = [];
+        let generatedHtml = null;
+
+        // 페이지 로드
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!token) {
+                window.location.href = '/static/login.html';
+                return;
+            }
+
+            const params = new URLSearchParams(window.location.search);
+            groupId = params.get('id');
+
+            if (!groupId) {
+                alert('그룹 ID가 없습니다');
+                window.location.href = '/static/groups.html';
+                return;
+            }
+
+            loadUserInfo();
+            loadGroupPrompts();
+        });
+
+        async function loadUserInfo() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('username').textContent = data.username;
+                }
+            } catch (error) {
+                console.error('사용자 정보 로드 실패:', error);
+            }
+        }
+
+        async function loadGroupPrompts() {
+            try {
+                const response = await fetch(`${API_BASE}/groups/${groupId}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) {
+                    throw new Error('그룹 정보 로드 실패');
+                }
+
+                const data = await response.json();
+                groupData = data.data;
+
+                renderPromptTree();
+
+                document.getElementById('loading-init').style.display = 'none';
+                document.getElementById('report-settings').style.display = 'block';
+                document.getElementById('prompt-selector').style.display = 'block';
+                document.getElementById('actions-bar').style.display = 'flex';
+
+            } catch (error) {
+                showMessage('프롬프트 목록을 불러오는 데 실패했습니다: ' + error.message, 'error');
+                document.getElementById('loading-init').style.display = 'none';
+            }
+        }
+
+        function renderPromptTree() {
+            const container = document.getElementById('categories-container');
+            const emptyState = document.getElementById('prompts-empty');
+            container.innerHTML = '';
+
+            const promptsByCategory = groupData.prompts_by_category || {};
+            const categories = Object.keys(promptsByCategory);
+
+            if (categories.length === 0) {
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            allPrompts = [];
+
+            categories.forEach((category, catIndex) => {
+                const prompts = promptsByCategory[category];
+                const categorySection = document.createElement('div');
+                categorySection.className = 'category-section';
+
+                // 카테고리 헤더
+                const categoryHeader = document.createElement('div');
+                categoryHeader.className = 'category-header';
+                categoryHeader.innerHTML = `
+                    <input type="checkbox" class="category-checkbox" id="cat-${catIndex}" onchange="toggleCategory(${catIndex})">
+                    <label for="cat-${catIndex}" class="category-title">${escapeHtml(category)}</label>
+                    <span class="category-count">${prompts.length}개 프롬프트</span>
+                `;
+                categorySection.appendChild(categoryHeader);
+
+                // 시스템별로 그룹핑
+                const promptsBySystem = {};
+                prompts.forEach(prompt => {
+                    const system = prompt.system || '기타';
+                    if (!promptsBySystem[system]) {
+                        promptsBySystem[system] = [];
+                    }
+                    promptsBySystem[system].push(prompt);
+                    allPrompts.push({ ...prompt, categoryIndex: catIndex, category });
+                });
+
+                // 시스템별 섹션
+                Object.keys(promptsBySystem).forEach((system, sysIndex) => {
+                    const systemGroup = document.createElement('div');
+                    systemGroup.className = 'system-group';
+
+                    const systemHeader = document.createElement('div');
+                    systemHeader.className = 'system-header';
+                    systemHeader.innerHTML = `
+                        <input type="checkbox" class="system-checkbox" id="sys-${catIndex}-${sysIndex}" onchange="toggleSystem(${catIndex}, ${sysIndex})">
+                        <label for="sys-${catIndex}-${sysIndex}" class="system-title">${escapeHtml(system)}</label>
+                        <span class="category-count">${promptsBySystem[system].length}개</span>
+                    `;
+                    systemGroup.appendChild(systemHeader);
+
+                    // 프롬프트 목록
+                    promptsBySystem[system].forEach(prompt => {
+                        const promptItem = document.createElement('div');
+                        promptItem.className = 'prompt-item';
+                        promptItem.innerHTML = `
+                            <input type="checkbox" class="prompt-checkbox" id="prompt-${prompt.id}" data-prompt-id="${prompt.id}" onchange="updateSelectionCount()">
+                            <label for="prompt-${prompt.id}" class="prompt-info">
+                                <div class="prompt-title">${escapeHtml(prompt.title)}</div>
+                                <div class="prompt-meta">작성자: ${escapeHtml(prompt.owner || '알 수 없음')}</div>
+                            </label>
+                        `;
+                        systemGroup.appendChild(promptItem);
+                    });
+
+                    categorySection.appendChild(systemGroup);
+                });
+
+                container.appendChild(categorySection);
+            });
+
+            updateSelectionCount();
+        }
+
+        function toggleCategory(catIndex) {
+            const checkbox = document.getElementById(`cat-${catIndex}`);
+            const checkboxes = document.querySelectorAll(`input[type="checkbox"][data-prompt-id]`);
+            const categoryPrompts = allPrompts.filter(p => p.categoryIndex === catIndex);
+
+            categoryPrompts.forEach(prompt => {
+                const promptCheckbox = document.getElementById(`prompt-${prompt.id}`);
+                if (promptCheckbox) {
+                    promptCheckbox.checked = checkbox.checked;
+                }
+            });
+
+            updateSelectionCount();
+        }
+
+        function toggleSystem(catIndex, sysIndex) {
+            const checkbox = document.getElementById(`sys-${catIndex}-${sysIndex}`);
+            const systemGroup = checkbox.closest('.system-group');
+            const promptCheckboxes = systemGroup.querySelectorAll('.prompt-checkbox');
+
+            promptCheckboxes.forEach(cb => {
+                cb.checked = checkbox.checked;
+            });
+
+            updateSelectionCount();
+        }
+
+        function selectAll() {
+            document.querySelectorAll('.prompt-checkbox').forEach(cb => cb.checked = true);
+            updateSelectionCount();
+        }
+
+        function deselectAll() {
+            document.querySelectorAll('.prompt-checkbox').forEach(cb => cb.checked = false);
+            updateSelectionCount();
+        }
+
+        function updateSelectionCount() {
+            const count = document.querySelectorAll('.prompt-checkbox:checked').length;
+            document.getElementById('selected-count').textContent = count;
+        }
+
+        async function generateReport() {
+            const title = document.getElementById('report-title').value.trim();
+            if (!title) {
+                alert('보고서 제목을 입력하세요');
+                return;
+            }
+
+            const selectedPrompts = [];
+            document.querySelectorAll('.prompt-checkbox:checked').forEach(cb => {
+                selectedPrompts.push(parseInt(cb.dataset.promptId));
+            });
+
+            if (selectedPrompts.length === 0) {
+                alert('최소 1개 이상의 프롬프트를 선택하세요');
+                return;
+            }
+
+            const includeToc = document.getElementById('include-toc').checked;
+            const save = document.getElementById('save-report').checked;
+
+            document.getElementById('loading-generate').classList.add('active');
+            document.getElementById('actions-bar').style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/groups/${groupId}/reports/generate`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        title,
+                        prompt_ids: selectedPrompts,
+                        include_toc: includeToc,
+                        save
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '보고서 생성 실패');
+                }
+
+                const data = await response.json();
+                generatedHtml = data.html;
+
+                document.getElementById('preview-content').innerHTML = generatedHtml;
+                document.getElementById('preview').classList.add('active');
+                showMessage('그룹 보고서가 생성되었습니다!', 'success');
+
+            } catch (error) {
+                showMessage('보고서 생성 실패: ' + error.message, 'error');
+                document.getElementById('actions-bar').style.display = 'flex';
+            } finally {
+                document.getElementById('loading-generate').classList.remove('active');
+            }
+        }
+
+        function downloadReport() {
+            if (!generatedHtml) {
+                alert('생성된 보고서가 없습니다');
+                return;
+            }
+
+            const blob = new Blob([generatedHtml], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `group_report_${Date.now()}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function resetBuilder() {
+            document.getElementById('preview').classList.remove('active');
+            document.getElementById('actions-bar').style.display = 'flex';
+            generatedHtml = null;
+            deselectAll();
+        }
+
+        function goBack() {
+            window.location.href = `/static/group-detail.html?id=${groupId}`;
+        }
+
+        function goToGroupDetail() {
+            window.location.href = `/static/group-detail.html?id=${groupId}`;
+        }
+
+        function showMessage(text, type = 'info') {
+            const message = document.getElementById('message');
+            message.textContent = text;
+            message.className = `message active ${type}`;
+            setTimeout(() => message.classList.remove('active'), 5000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            window.location.href = '/static/login.html';
+        }
+    </script>
+</body>
+</html>

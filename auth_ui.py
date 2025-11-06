@@ -10,40 +10,58 @@ from typing import Optional
 
 def show_login_form():
     """로그인 폼 표시"""
-    with st.form("login_form"):
-        st.subheader("🔐 로그인")
-        
-        email = st.text_input("이메일", placeholder="user@example.com")
-        password = st.text_input("비밀번호", type="password")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            login_clicked = st.form_submit_button("로그인", type="primary")
-        with col2:
-            signup_clicked = st.form_submit_button("회원가입")
-        
-        if login_clicked:
-            if not email or not password:
-                st.error("이메일과 비밀번호를 입력해주세요.")
-            else:
-                with st.spinner("로그인 중..."):
-                    result = auth_client.login(email, password)
-                    if result.get("success"):
-                        st.success("로그인 성공!")
-                        st.rerun()
-                    else:
-                        st.error(f"로그인 실패: {result.get('message', '알 수 없는 오류')}")
-        
-        if signup_clicked:
-            if not email or not password:
-                st.error("이메일과 비밀번호를 입력해주세요.")
-            else:
-                with st.spinner("회원가입 중..."):
-                    result = auth_client.signup(email, password)
-                    if result.get("success"):
-                        st.success("회원가입 성공! 이제 로그인해주세요.")
-                    else:
-                        st.error(f"회원가입 실패: {result.get('message', '알 수 없는 오류')}")
+    # 탭으로 로그인/회원가입 분리
+    tab1, tab2 = st.tabs(["로그인", "회원가입"])
+
+    with tab1:
+        with st.form("login_form"):
+            st.subheader("🔐 로그인")
+
+            email = st.text_input("이메일", placeholder="user@example.com", key="login_email")
+            password = st.text_input("비밀번호", type="password", key="login_password")
+
+            login_clicked = st.form_submit_button("로그인", type="primary", use_container_width=True)
+
+            if login_clicked:
+                if not email or not password:
+                    st.error("이메일과 비밀번호를 입력해주세요.")
+                else:
+                    with st.spinner("로그인 중..."):
+                        result = auth_client.login(email, password)
+                        if result.get("success"):
+                            st.success("로그인 성공!")
+                            st.rerun()
+                        else:
+                            st.error(f"로그인 실패: {result.get('message', '알 수 없는 오류')}")
+
+    with tab2:
+        with st.form("signup_form"):
+            st.subheader("📝 회원가입")
+
+            email = st.text_input("이메일", placeholder="user@example.com", key="signup_email")
+            password = st.text_input("비밀번호", type="password", key="signup_password")
+            password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                user_name = st.text_input("이름", placeholder="홍길동", key="signup_user_name")
+            with col2:
+                system_name = st.text_input("담당 시스템 (선택)", placeholder="NCMS, EUXP 등", key="signup_system_name")
+
+            signup_clicked = st.form_submit_button("회원가입", type="primary", use_container_width=True)
+
+            if signup_clicked:
+                if not email or not password or not user_name:
+                    st.error("이메일, 비밀번호, 이름을 모두 입력해주세요.")
+                elif password != password_confirm:
+                    st.error("비밀번호가 일치하지 않습니다.")
+                else:
+                    with st.spinner("회원가입 중..."):
+                        result = auth_client.signup(email, password, user_name, system_name or None)
+                        if result.get("success"):
+                            st.success("회원가입 성공! 이제 로그인 탭에서 로그인해주세요.")
+                        else:
+                            st.error(f"회원가입 실패: {result.get('message', '알 수 없는 오류')}")
 
 def show_user_info():
     """사용자 정보 및 연동 상태 표시"""
@@ -92,7 +110,7 @@ def show_integration_settings():
                             st.error(f"저장 실패: {result.get('message', '알 수 없는 오류')}")
                 else:
                     st.error("Jira Endpoint와 API Token을 모두 입력해주세요.")
-            
+
             if check_jira:
                 with st.spinner("Jira 연동 상태 확인 중..."):
                     result = auth_client.get_jira_integration()
@@ -100,18 +118,6 @@ def show_integration_settings():
                         st.success(f"Jira 연동됨: {result.get('jira_endpoint')}")
                     else:
                         st.warning("Jira가 연동되지 않았습니다.")
-    
-    # Google 연동 상태 확인
-    with st.expander("Google 연동 상태", expanded=False):
-        if st.button("Google 연동 상태 확인"):
-            with st.spinner("Google 연동 상태 확인 중..."):
-                result = auth_client.get_google_integration()
-                if result.get("success"):
-                    st.success("Google이 연동되어 있습니다.")
-                    if result.get("token_preview"):
-                        st.info(f"토큰 미리보기: {result.get('token_preview')}")
-                else:
-                    st.warning("Google이 연동되지 않았습니다. Gmail 로그인을 통해 연동할 수 있습니다.")
 
 
 def show_auth_required_message():

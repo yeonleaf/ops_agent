@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>보고서 생성 - 동적 보고서 시스템</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <link rel="stylesheet" href="/static/report-builder.css">
+    <!-- SortableJS for Drag & Drop -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="app-header">
+        <div class="header-container">
+            <h1>📊 보고서 생성</h1>
+            <div class="user-info">
+                <span id="username-display">사용자</span>
+                <button id="logout-btn" class="btn-secondary">로그아웃</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 메인 컨테이너 -->
+    <div class="app-container">
+        <!-- 왼쪽: 프롬프트 선택 -->
+        <div class="sidebar">
+            <div class="panel prompt-selector">
+                <div class="panel-header">
+                    <h2>📝 프롬프트 선택</h2>
+                    <button id="refresh-prompts-btn" class="btn-icon" title="새로고침">
+                        🔄
+                    </button>
+                </div>
+
+                <div class="panel-body">
+                    <!-- 검색 -->
+                    <div class="search-box">
+                        <input type="text" id="prompt-search" placeholder="프롬프트 검색...">
+                    </div>
+
+                    <!-- 프롬프트 목록 -->
+                    <div id="available-prompts" class="prompt-list">
+                        <div class="loading">프롬프트 로딩 중...</div>
+                    </div>
+
+                    <!-- 실행 버튼 -->
+                    <div class="action-buttons">
+                        <button id="execute-btn" class="btn-primary" disabled>
+                            ▶️ 선택한 프롬프트 실행
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 오른쪽: 실행 결과 & 조합 -->
+        <div class="main-content">
+            <div class="panel report-composer">
+                <div class="panel-header">
+                    <h2>🎨 보고서 조합</h2>
+                    <span class="hint">Drag & Drop으로 순서 변경</span>
+                </div>
+
+                <div class="panel-body">
+                    <!-- 로딩 -->
+                    <div id="loading" class="loading-overlay" style="display:none;">
+                        <div class="spinner"></div>
+                        <p>AI Agent 실행 중... ⏳</p>
+                    </div>
+
+                    <!-- 실행 결과 없을 때 -->
+                    <div id="empty-state" class="empty-state">
+                        <div class="empty-icon">📋</div>
+                        <h3>실행된 프롬프트가 없습니다</h3>
+                        <p>왼쪽에서 프롬프트를 선택하고 실행해주세요</p>
+                    </div>
+
+                    <!-- Drag & Drop 가능한 리스트 -->
+                    <div id="sections-list" class="sortable-list" style="display:none;">
+                        <!-- 동적 생성 -->
+                    </div>
+
+                    <!-- 보고서 설정 & 생성 -->
+                    <div id="report-actions" class="report-actions" style="display:none;">
+                        <div class="form-group">
+                            <label for="report-title">보고서 제목</label>
+                            <input type="text" id="report-title" placeholder="월간보고 (2024.11)" value="월간보고">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="include-toc" checked>
+                                <span>목차 포함</span>
+                            </label>
+                        </div>
+
+                        <div class="button-group">
+                            <button id="preview-btn" class="btn-secondary">
+                                👁️ 미리보기
+                            </button>
+                            <button id="generate-btn" class="btn-primary">
+                                💾 최종 생성 & 저장
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 미리보기 모달 -->
+    <div id="preview-modal" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📄 미리보기</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <iframe id="preview-iframe"></iframe>
+            </div>
+            <div class="modal-footer">
+                <button id="download-btn" class="btn-primary">
+                    📥 다운로드
+                </button>
+                <button class="modal-close btn-secondary">
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 알림 토스트 -->
+    <div id="toast-container"></div>
+
+    <script src="/static/report-builder.js"></script>
+</body>
+</html>

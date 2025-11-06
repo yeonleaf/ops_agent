@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>월간보고 생성기</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1>📊 월간보고 생성기</h1>
+            <div class="user-info">
+                <a href="/static/groups.html" style="margin-right: 15px; color: white; text-decoration: none; padding: 8px 16px; background: rgba(255,255,255,0.2); border-radius: 4px;">👥 그룹 관리</a>
+                <span class="username" id="username"></span>
+                <button class="btn-logout" onclick="logout()">로그아웃</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 메인 컨테이너 -->
+    <div class="app-container">
+        <!-- 탭 네비게이션 -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="generate">📄 보고서 생성</button>
+            <button class="tab" data-tab="prompts">📝 프롬프트 관리</button>
+            <button class="tab" data-tab="history">📚 히스토리</button>
+        </nav>
+
+        <!-- 보고서 생성 탭 -->
+        <div id="tab-generate" class="tab-content active">
+            <div class="section-header">
+                <h2>보고서 생성</h2>
+                <div class="actions">
+                    <label>
+                        <input type="checkbox" id="include-public" onchange="loadPrompts()">
+                        공개 프롬프트 포함
+                    </label>
+                </div>
+            </div>
+
+            <!-- 보고서 설정 -->
+            <div style="margin-bottom: 20px;">
+                <div class="form-group">
+                    <label for="report-title">보고서 제목</label>
+                    <input type="text" id="report-title" placeholder="월간보고 (2025.10)" value="월간보고">
+                </div>
+                <div style="display: flex; gap: 20px; margin-top: 10px;">
+                    <label>
+                        <input type="checkbox" id="include-toc" checked>
+                        목차 포함
+                    </label>
+                    <label>
+                        <input type="checkbox" id="save-report" checked>
+                        히스토리 저장
+                    </label>
+                </div>
+            </div>
+
+            <!-- 프롬프트 선택 -->
+            <div class="prompt-selector" id="prompt-selector">
+                <!-- 동적 생성 -->
+            </div>
+
+            <!-- 액션 버튼 -->
+            <div class="actions">
+                <button class="btn btn-secondary" onclick="selectAll()">전체 선택</button>
+                <button class="btn btn-secondary" onclick="deselectAll()">전체 해제</button>
+                <button class="btn btn-primary" onclick="generateReport()">🚀 보고서 생성</button>
+            </div>
+
+            <!-- 로딩 -->
+            <div id="loading-generate" class="loading">
+                <div class="spinner"></div>
+                <p>보고서 생성 중입니다... 잠시만 기다려주세요.</p>
+            </div>
+
+            <!-- 메시지 -->
+            <div id="message-generate" class="message"></div>
+
+            <!-- 미리보기 -->
+            <div id="preview-generate" class="preview">
+                <div class="preview-header">
+                    <h3>📄 생성된 보고서</h3>
+                    <button class="btn btn-primary" onclick="downloadReport()">💾 HTML 다운로드</button>
+                </div>
+                <div class="preview-content" id="preview-content"></div>
+            </div>
+        </div>
+
+        <!-- 프롬프트 관리 탭 -->
+        <div id="tab-prompts" class="tab-content">
+            <div class="section-header">
+                <h2>프롬프트 관리</h2>
+                <button class="btn btn-primary" onclick="showPromptModal()">+ 새 프롬프트</button>
+            </div>
+
+            <!-- 로딩 -->
+            <div id="loading-prompts" class="loading">
+                <div class="spinner"></div>
+                <p>프롬프트 로딩 중...</p>
+            </div>
+
+            <!-- 메시지 -->
+            <div id="message-prompts" class="message"></div>
+
+            <!-- 프롬프트 리스트 -->
+            <div id="prompt-list" class="prompt-list">
+                <!-- 동적 생성 -->
+            </div>
+        </div>
+
+        <!-- 히스토리 탭 -->
+        <div id="tab-history" class="tab-content">
+            <div class="section-header">
+                <h2>보고서 히스토리</h2>
+                <button class="btn btn-secondary" onclick="loadHistory()">🔄 새로고침</button>
+            </div>
+
+            <!-- 로딩 -->
+            <div id="loading-history" class="loading">
+                <div class="spinner"></div>
+                <p>히스토리 로딩 중...</p>
+            </div>
+
+            <!-- 메시지 -->
+            <div id="message-history" class="message"></div>
+
+            <!-- 히스토리 리스트 -->
+            <div id="history-list" class="history-list">
+                <!-- 동적 생성 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 프롬프트 모달 -->
+    <div id="prompt-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">새 프롬프트</h3>
+                <span class="modal-close" onclick="closePromptModal()">&times;</span>
+            </div>
+            <form id="prompt-form" onsubmit="savePrompt(event)">
+                <input type="hidden" id="prompt-id">
+
+                <div class="form-group">
+                    <label for="prompt-title">제목 *</label>
+                    <input type="text" id="prompt-title-input" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="prompt-category">카테고리</label>
+                    <select id="prompt-category">
+                        <option value="기타">기타</option>
+                        <option value="개요">개요</option>
+                        <option value="BMT">BMT</option>
+                        <option value="PM">PM</option>
+                        <option value="DB작업">DB작업</option>
+                        <option value="통계">통계</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="prompt-description">설명</label>
+                    <input type="text" id="prompt-description">
+                </div>
+
+                <div class="form-group">
+                    <label for="prompt-content">프롬프트 내용 *</label>
+                    <textarea id="prompt-content" required placeholder="예: NCMS BMT 현황표를 만들어줘&#10;&#10;JQL: labels='NCMS_BMT' AND created>='2025-10-01'&#10;&#10;테이블 형식:&#10;- 이슈 키&#10;- 요약&#10;- 상태"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="prompt-order">순서 (낮을수록 먼저 표시)</label>
+                    <input type="number" id="prompt-order" value="999">
+                </div>
+
+                <div class="form-group">
+                    <label for="prompt-system">담당 시스템 (선택)</label>
+                    <input type="text" id="prompt-system" placeholder="예: NCMS, EUXP, EDMP">
+                    <small style="color: #666; font-size: 0.9em;">그룹 프롬프트의 경우 담당 시스템을 입력하세요</small>
+                </div>
+
+                <div class="form-group" id="group-select-group" style="display: none;">
+                    <label for="prompt-group">그룹 (선택)</label>
+                    <select id="prompt-group">
+                        <option value="">개인 프롬프트</option>
+                        <!-- 동적 생성 -->
+                    </select>
+                    <small style="color: #666; font-size: 0.9em;">그룹을 선택하면 그룹 멤버들과 공유됩니다</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="prompt-public">
+                        공개 프롬프트 (다른 사용자도 사용 가능)
+                    </label>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-secondary" onclick="closePromptModal()">취소</button>
+                    <button type="submit" class="btn btn-primary">저장</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 보고서 뷰어 모달 -->
+    <div id="report-modal" class="modal">
+        <div class="modal-content" style="max-width: 90%; max-height: 90vh;">
+            <div class="modal-header">
+                <h3 id="report-modal-title"></h3>
+                <span class="modal-close" onclick="closeReportModal()">&times;</span>
+            </div>
+            <div id="report-modal-content" style="overflow-y: auto; max-height: 70vh;"></div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -6,7 +6,7 @@ Vector DB용 Mail 모델 및 관리자
 import os
 from dotenv import load_dotenv
 from dataclasses import dataclass, asdict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import uuid
 from datetime import datetime
 import chromadb
@@ -16,6 +16,9 @@ from chromadb_singleton import get_chromadb_client, get_chromadb_collection, res
 
 # 텍스트 전처리 모듈 import
 from text_preprocessor import preprocess_for_embedding
+
+# UnifiedChunk import
+from models.unified_chunk import UnifiedChunk, file_chunk_to_unified
 
 # 환경 변수 로드
 load_dotenv()
@@ -39,7 +42,16 @@ class Mail:
 
 @dataclass
 class FileChunk:
-    """파일 청크 모델 - Vector DB Collection용"""
+    """
+    파일 청크 모델 - Vector DB Collection용
+
+    ⚠️ DEPRECATED: 이 클래스는 하위 호환성을 위해 유지됩니다.
+    새로운 코드에서는 UnifiedChunk를 사용하세요.
+
+    Migration:
+        from models.unified_chunk import file_chunk_to_unified
+        unified_chunk = file_chunk_to_unified(file_chunk)
+    """
     chunk_id: str  # PK - 고유 청크 ID
     file_name: str  # 원본 파일명
     file_hash: str  # 파일 해시값 (중복 방지용)
@@ -801,10 +813,53 @@ class VectorDBManager:
             print(f"메일 개수 조회 실패: {e}")
             return 0
     
-    def add_file_chunk(self, file_chunk: FileChunk, embedding_client=None):
-        """파일 청크를 벡터 DB에 추가 (ChromaDB 기본 임베딩 사용)"""
+    def add_file_chunk(self, file_chunk: Union[FileChunk, UnifiedChunk], embedding_client=None):
+        """
+        파일 청크를 벡터 DB에 추가 (ChromaDB 기본 임베딩 사용)
+
+        Args:
+            file_chunk: FileChunk 또는 UnifiedChunk 객체
+            embedding_client: 임베딩 클라이언트 (사용하지 않음, 하위 호환성 유지)
+
+        Note:
+            - FileChunk를 받으면 자동으로 UnifiedChunk로 변환
+            - UnifiedChunk를 받으면 바로 저장
+            - 내부적으로 add_unified_chunk()를 호출
+        """
         try:
-            # 파일 청크용 별도 Collection 생성 (메일 컬렉션과 분리)
+            # FileChunk를 UnifiedChunk로 변환 (필요 시)
+            if isinstance(file_chunk, FileChunk):
+                print(f"🔄 FileChunk를 UnifiedChunk로 변환 중: {file_chunk.file_name}")
+                unified_chunk = file_chunk_to_unified(file_chunk)
+            elif isinstance(file_chunk, UnifiedChunk):
+                unified_chunk = file_chunk
+            else:
+                raise TypeError(f"Unsupported type: {type(file_chunk)}. Expected FileChunk or UnifiedChunk")
+
+            # UnifiedChunk 저장
+            self.add_unified_chunk(unified_chunk)
+
+        except Exception as e:
+            print(f"❌ 파일 청크 저장 실패: {e}")
+            raise e
+
+    def add_unified_chunk(self, unified_chunk: UnifiedChunk):
+        """
+        UnifiedChunk를 벡터 DB에 추가
+
+        Args:
+            unified_chunk: UnifiedChunk 객체
+
+        Raises:
+            ValueError: data_source가 "file"이 아닌 경우
+            Exception: 저장 중 오류 발생
+        """
+        try:
+            # 현재는 file 데이터만 처리
+            if unified_chunk.data_source != "file":
+                raise ValueError(f"현재는 data_source='file'만 지원합니다. (입력: {unified_chunk.data_source})")
+
+            # file_chunks 컬렉션 가져오기 또는 생성
             try:
                 collection = self.client.get_collection(name="file_chunks")
             except Exception:
@@ -813,40 +868,61 @@ class VectorDBManager:
                     name="file_chunks",
                     metadata={
                         "hnsw:space": "cosine",
-                        "description": "File chunks for RAG system",
-                        "created_at": datetime.now().isoformat()
+                        "description": "Unified file chunks for RAG system",
+                        "created_at": datetime.now().isoformat(),
+                        "schema_version": "unified_v1"
                     }
                 )
-            
-            # 메타데이터 준비
+
+            # 메타데이터 준비 (UnifiedChunk 구조)
             metadata = {
-                "chunk_id": file_chunk.chunk_id,
-                "file_name": file_chunk.file_name,
-                "file_hash": file_chunk.file_hash,
-                "architecture": file_chunk.architecture,
-                "processing_method": file_chunk.processing_method,
-                "vision_analysis": file_chunk.vision_analysis,
-                "section_title": file_chunk.section_title,
-                "page_number": file_chunk.page_number,
-                "element_count": file_chunk.element_count,
-                "file_type": file_chunk.file_type,
-                "created_at": file_chunk.created_at
+                # 공통 필드
+                "chunk_id": unified_chunk.chunk_id,
+                "data_source": unified_chunk.data_source,
+                "created_at": unified_chunk.created_at,
+                "updated_at": unified_chunk.updated_at,
             }
-            
+
+            # file_metadata 추가 (JSON 직렬화)
+            if unified_chunk.file_metadata:
+                # 주요 필드를 메타데이터 최상위에 추가 (검색 편의성)
+                metadata["file_name"] = unified_chunk.file_metadata.get("file_name", "")
+                metadata["file_type"] = unified_chunk.file_metadata.get("file_type", "")
+                metadata["file_hash"] = unified_chunk.file_metadata.get("file_hash", "")
+                metadata["page_number"] = unified_chunk.file_metadata.get("page_number", 1)
+                metadata["architecture"] = unified_chunk.file_metadata.get("architecture", "")
+                metadata["processing_method"] = unified_chunk.file_metadata.get("processing_method", "")
+                metadata["vision_analysis"] = unified_chunk.file_metadata.get("vision_analysis", False)
+                metadata["section_title"] = unified_chunk.file_metadata.get("section_title", "")
+                metadata["element_count"] = unified_chunk.file_metadata.get("element_count", 0)
+
+                # 전체 file_metadata를 JSON으로 저장 (백업용)
+                metadata["file_metadata_json"] = json.dumps(unified_chunk.file_metadata, ensure_ascii=False)
+
+            # jira_metadata 추가 (현재는 None)
+            # ChromaDB는 None을 허용하지 않으므로 빈 문자열로 저장
+            if unified_chunk.jira_metadata:
+                metadata["jira_metadata_json"] = json.dumps(unified_chunk.jira_metadata, ensure_ascii=False)
+            # Note: None 대신 필드를 생략하거나 빈 문자열 사용
+
+            # None 값 제거 (ChromaDB는 None을 허용하지 않음)
+            metadata = {k: v for k, v in metadata.items() if v is not None}
+
             # 텍스트 전처리 적용
-            preprocessed_text = preprocess_for_embedding(file_chunk.text_chunk)
-            
-            # ChromaDB 기본 임베딩 사용 (전처리된 텍스트)
+            preprocessed_text = preprocess_for_embedding(unified_chunk.text_chunk)
+
+            # ChromaDB에 저장
             collection.add(
                 documents=[preprocessed_text],
                 metadatas=[metadata],
-                ids=[file_chunk.chunk_id]
+                ids=[unified_chunk.chunk_id]
             )
-            
-            print(f"✅ 파일 청크 저장 완료: {file_chunk.file_name} (ID: {file_chunk.chunk_id})")
-            
+
+            file_name = unified_chunk.file_metadata.get("file_name", "Unknown") if unified_chunk.file_metadata else "Unknown"
+            print(f"✅ UnifiedChunk 저장 완료: {file_name} (ID: {unified_chunk.chunk_id})")
+
         except Exception as e:
-            print(f"❌ 파일 청크 저장 실패: {e}")
+            print(f"❌ UnifiedChunk 저장 실패: {e}")
             raise e
     
     def clear_all_data(self):
