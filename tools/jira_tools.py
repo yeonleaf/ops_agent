@@ -300,6 +300,17 @@ def _parse_issue(issue_raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         fix_versions = fields.get("fixVersions", [])
         issue["fixVersions"] = [v.get("name", "") for v in fix_versions]
 
+        # 커스텀 필드 추출 (customfield_* 형식의 모든 필드)
+        for field_key, field_value in fields.items():
+            if field_key.startswith("customfield_"):
+                # 커스텀 필드를 그대로 추가 (복잡한 객체는 문자열로 변환)
+                if isinstance(field_value, (dict, list)):
+                    # 딕셔너리나 리스트는 JSON 직렬화 가능한 형태로 유지
+                    issue[field_key] = field_value
+                else:
+                    # 문자열이나 숫자 등은 그대로 저장
+                    issue[field_key] = field_value
+
         return issue
 
     except Exception:

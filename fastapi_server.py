@@ -7,6 +7,7 @@ import re
 from fastapi import FastAPI, HTTPException, Depends, Cookie, Response, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -96,6 +97,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 정적 파일 서빙 (Monaco Editor 등)
+app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
+
+# 템플릿 에디터 및 보고서 API 라우터
+try:
+    from api.editor_routes import router as editor_router
+    from api.dynamic_report_api import router as report_router
+    from api.jira_api import router as jira_router
+    from api.variables_api import router as variables_router
+    from api.jql_api import router as jql_router
+    from api.report_editor_api import router as report_editor_router
+
+    app.include_router(editor_router)
+    app.include_router(report_router)
+    app.include_router(jira_router)
+    app.include_router(variables_router)
+    app.include_router(jql_router)
+    app.include_router(report_editor_router)
+    logging.info("✅ 템플릿 에디터, 보고서, Jira, Variables, JQL, 보고서 에디터 API 라우터 로드 완료")
+except Exception as e:
+    logging.warning(f"⚠️ API 라우터 로드 실패: {e}")
 
 # 데이터베이스 관리자
 db_manager = DatabaseManager()
@@ -1510,8 +1533,8 @@ async def update_jira_integration(
     try:
         from database_models import Integration
 
-        # API 토큰 암호화
-        encrypted_token = token_encryption.encrypt_token(request.jira_api_token)
+        # API 토큰 평문 저장 (암호화 제거)
+        # encrypted_token = token_encryption.encrypt_token(request.jira_api_token)
 
         # Jira Endpoint 저장
         endpoint_integration = Integration(
@@ -1525,13 +1548,13 @@ async def update_jira_integration(
         )
         db_manager.insert_integration(endpoint_integration)
 
-        # Jira Token 저장
+        # Jira Token 저장 (평문)
         token_integration = Integration(
             id=None,
             user_id=current_user.id,
             source='jira',
             type='token',
-            value=encrypted_token,
+            value=request.jira_api_token,  # 평문 저장
             created_at=None,
             updated_at=None
         )
@@ -1954,58 +1977,14 @@ async def save_oauth_token(user_email: str, refresh_token: str):
         logging.error(f"OAuth 토큰 저장 중 오류: {e}")
 
 # OAuth 로그인 URL 생성 endpoints
-@app.get("/auth/login/gmail")
-async def gmail_oauth_login(user_email: str = "unknown@example.com"):
-    """Gmail OAuth 로그인 리다이렉트"""
-    try:
-        state = json.dumps({"user_email": user_email})
-
-        # redirect_uri 디버그 로깅
-        logging.info(f"🔍 GOOGLE_REDIRECT_URI 값: {GOOGLE_REDIRECT_URI}")
-
-        auth_url = (
-            f"https://accounts.google.com/o/oauth2/v2/auth?"
-            f"client_id={GOOGLE_CLIENT_ID}&"
-            f"redirect_uri={quote(GOOGLE_REDIRECT_URI)}&"
-            f"scope=openid profile email https://www.googleapis.com/auth/gmail.readonly&"
-            f"response_type=code&"
-            f"state={quote(state)}&"
-            f"access_type=offline&"
-            f"prompt=consent"
-        )
-
-        logging.info(f"📧 Gmail OAuth로 리다이렉트: {user_email}")
-        logging.info(f"🔗 생성된 OAuth URL: {auth_url[:150]}...")
-        return RedirectResponse(url=auth_url)
-
-    except Exception as e:
-        logging.error(f"❌ Gmail OAuth 리다이렉트 오류: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/auth/login/microsoft")
-async def microsoft_oauth_login(user_email: str = "unknown@example.com"):
-    """Microsoft OAuth 로그인 리다이렉트"""
-    try:
-        state = json.dumps({"user_email": user_email})
-
-        auth_url = (
-            f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}/oauth2/v2.0/authorize?"
-            f"client_id={MICROSOFT_CLIENT_ID}&"
-            f"response_type=code&"
-            f"redirect_uri={MICROSOFT_REDIRECT_URI}&"
-            f"scope=openid profile email https://graph.microsoft.com/mail.read&"
-            f"state={state}&"
-            f"prompt=consent"
-        )
-
-        logging.info(f"Microsoft OAuth로 리다이렉트: {user_email}")
-        return RedirectResponse(url=auth_url)
-
-    except Exception as e:
-        logging.error(f"❌ Microsoft OAuth 리다이렉트 오류: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# OAuth 인증 상태 확인
+# Gmail OAuth - 제거됨 (보안 정책)
+"""
+
+"""
+# Microsoft OAuth - 제거됨 (보안 정책)
+"""
+
+"""
 @app.get("/auth/oauth-status/{provider}")
 async def check_oauth_status(provider: str, current_user: User = Depends(get_current_user)):
     """OAuth 인증 상태 확인"""
@@ -2505,14 +2484,14 @@ async def save_jira_credentials(
         )
         db_manager.insert_integration(endpoint_integration)
 
-        # Token 저장 (암호화)
-        encrypted_token = token_encryption.encrypt_token(request.jira_api_token)
+        # Token 저장 (평문 - 암호화 제거)
+        # encrypted_token = token_encryption.encrypt_token(request.jira_api_token)
         token_integration = Integration(
             id=None,
             user_id=user_id,
             source='jira',
             type='token',
-            value=encrypted_token,
+            value=request.jira_api_token,  # 평문 저장
             created_at=datetime.now().isoformat(),
             updated_at=datetime.now().isoformat()
         )
@@ -2553,8 +2532,9 @@ async def get_jira_projects(session_id: Optional[str] = Cookie(None)):
         if not endpoint_integration or not token_integration:
             raise HTTPException(status_code=404, detail="Jira 인증 정보를 찾을 수 없습니다")
 
-        # 토큰 복호화
-        decrypted_token = token_encryption.decrypt_token(token_integration.value)
+        # 토큰 평문 사용 (복호화 제거)
+        # decrypted_token = token_encryption.decrypt_token(token_integration.value)
+        plain_token = token_integration.value  # 평문으로 저장되어 있음
 
         # 이메일 가져오기
         user = db_manager.get_user_by_id(user_id)
@@ -2566,7 +2546,7 @@ async def get_jira_projects(session_id: Optional[str] = Cookie(None)):
 
         jira_conn = JiraConnector(
             url=endpoint_integration.value,
-            token=decrypted_token
+            token=plain_token  # 평문 토큰 사용
         )
 
         # /project API 호출
@@ -2652,8 +2632,9 @@ async def validate_jira_labels(
         if not endpoint_integration or not token_integration:
             raise HTTPException(status_code=404, detail="Jira 인증 정보를 찾을 수 없습니다")
 
-        # 토큰 복호화
-        decrypted_token = token_encryption.decrypt_token(token_integration.value)
+        # 토큰 평문 사용 (복호화 제거)
+        # decrypted_token = token_encryption.decrypt_token(token_integration.value)
+        plain_token = token_integration.value  # 평문으로 저장되어 있음
 
         # 이메일 가져오기
         user = db_manager.get_user_by_id(user_id)
@@ -2665,7 +2646,7 @@ async def validate_jira_labels(
 
         jira_conn = JiraConnector(
             url=endpoint_integration.value,
-            token=decrypted_token
+            token=plain_token  # 평문 토큰 사용
         )
 
         # JQL 검증
@@ -2777,13 +2758,13 @@ async def reset_jira_integration(session_id: Optional[str] = Cookie(None)):
 
 
 # ============================================
-# 그룹 협업 API 통합
+# 그룹 협업 API 통합 - 제거됨 (보안 정책)
 # ============================================
-from api.group_api import create_group_router
-
-# 그룹 API 라우터 생성 (이 파일의 get_current_user 전달)
-group_router = create_group_router(get_current_user)
-app.include_router(group_router)
+# from api.group_api import create_group_router
+#
+# # 그룹 API 라우터 생성 (이 파일의 get_current_user 전달)
+# group_router = create_group_router(get_current_user)
+# app.include_router(group_router)
 
 
 if __name__ == "__main__":

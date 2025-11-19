@@ -13,9 +13,15 @@ from dotenv import load_dotenv
 # 환경 변수 로드
 load_dotenv()
 
-# LangChain imports
+# LangChain imports - LangChain 1.0 호환
 try:
-    from langchain.retrievers.multi_query import MultiQueryRetriever
+    # LangChain 1.0+ - retrievers가 langchain_community로 이동
+    try:
+        from langchain_community.retrievers import MultiQueryRetriever
+    except ImportError:
+        # LangChain 0.2.x - 구버전 경로
+        from langchain.retrievers.multi_query import MultiQueryRetriever
+
     from langchain_openai import AzureChatOpenAI
     from langchain_core.documents import Document
     from langchain_core.retrievers import BaseRetriever
@@ -23,6 +29,11 @@ try:
 except ImportError as e:
     print(f"⚠️ LangChain 모듈 import 실패: {e}")
     LANGCHAIN_AVAILABLE = False
+    # Import 실패 시 타입 힌트용 더미 클래스
+    BaseRetriever = Any
+    MultiQueryRetriever = None
+    AzureChatOpenAI = None
+    Document = None
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)

@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 # LangChain imports
 from langchain_openai import AzureChatOpenAI
 
-# 라우터 에이전트 import
-from router_agent import create_router_agent
+# 라우터 에이전트 import - 제거됨 (이메일 기능 제거로 불필요)
+# from router_agent import create_router_agent
 
 # 새로운 UI import
 from enhanced_ticket_ui_v2 import (
@@ -115,56 +115,62 @@ st.set_page_config(
 )
 
 class RouterAgentClient:
-    """라우터 에이전트 클라이언트 래퍼"""
-    
-    def __init__(self, llm_client):
-        self.router_agent = create_router_agent(llm_client)
-    
-    def call_agent(self, user_query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """라우터 에이전트 호출"""
-        try:
-            # Gmail 토큰 관련 코드 제거됨
-            result = self.router_agent.execute(user_query, cookies="")
+    """라우터 에이전트 클라이언트 래퍼 - 이메일 기능 제거로 간소화됨"""
 
-            # SpecialistAgent에서 구조화된 데이터를 반환한 경우 처리
-            if isinstance(result, dict) and "message" in result:
+    def __init__(self, llm_client):
+        self.llm_client = llm_client
+        # router_agent 제거됨 (이메일 기능 의존성)
+
+    def call_agent(self, user_query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """에이전트 호출 - 간단한 LLM 응답만 제공"""
+        try:
+            # 이메일 관련 기능이 제거되었으므로 안내 메시지 제공
+            if any(keyword in user_query.lower() for keyword in ["메일", "email", "이메일", "gmail", "outlook"]):
+                message = """
+📧 **이메일 연동 기능이 제거되었습니다** (보안 정책)
+
+현재 사용 가능한 기능:
+✅ Jira 티켓 조회 및 관리
+✅ Kakao 알림 발송
+✅ Slack 메시지 발송
+✅ 월간보고 자동화
+
+다른 기능을 이용해주세요!
+                """
                 return {
                     "success": True,
-                    "message": result["message"],
-                    "data": {
-                        "non_work_emails": result.get("non_work_emails", []),
-                        "tickets": result.get("tickets", []),
-                        "display_mode": result.get("display_mode", "default")
-                    },
-                    "tools_used": ["router_agent"],
-                    "query": user_query
-                }
-            else:
-                # 기존 문자열 응답 처리
-                return {
-                    "success": True,
-                    "message": result,
+                    "message": message.strip(),
                     "data": None,
-                    "tools_used": ["router_agent"],
+                    "tools_used": ["info"],
                     "query": user_query
                 }
+
+            # 일반 질문은 LLM으로 응답
+            response = self.llm_client.invoke(user_query)
+            return {
+                "success": True,
+                "message": response.content if hasattr(response, 'content') else str(response),
+                "data": None,
+                "tools_used": ["llm"],
+                "query": user_query
+            }
         except Exception as e:
             return {
                 "success": False,
-                "message": f"에이전트 실행 중 오류가 발생했습니다: {str(e)}",
+                "message": f"처리 중 오류가 발생했습니다: {str(e)}",
                 "data": None,
                 "tools_used": [],
                 "error": str(e),
                 "query": user_query
             }
-    
+
     def get_server_status(self) -> Dict[str, Any]:
         """서버 상태 확인"""
         return {
             "status": "running",
-            "agent_type": "router_agent",
-            "available_agents": ["ViewingAgent", "AnalysisAgent", "TicketingAgent"],
-            "message": "에이전트 네트워크가 정상적으로 실행 중입니다."
+            "agent_type": "simplified_agent",
+            "available_features": ["Jira", "Kakao", "Slack", "월간보고"],
+            "message": "이메일 기능 제거 - Jira/Kakao/Slack 연동 사용 가능"
         }
 
 # display_correction_ui 함수 제거됨 (Gmail 연동 제거)
@@ -548,23 +554,60 @@ def display_ticket_management_with_async():
 
 def display_monthly_report_tab():
     """월간보고 JQL 생성기 탭"""
-    st.title("📊 월간보고 JQL 생성기")
+    st.title("📊 월간보고 자동화")
 
-    # 서브탭 추가: 월간보고 생성 / 그룹 관리 / 그룹 보고서
-    subtab1, subtab2, subtab3 = st.tabs([
-        "📊 월간보고 생성",
-        "👥 그룹 관리",
-        "📊 그룹 보고서"
-    ])
+    # 메인 탭: V1(JQL 생성기) / V2(템플릿 기반)
+    tab1, tab2 = st.tabs(["📝 JQL 생성기 (V1)", "🎨 템플릿 기반 보고서 (V2)"])
 
-    with subtab1:
+    with tab1:
         display_monthly_report_generation()
 
-    with subtab2:
-        display_group_management()
+    with tab2:
+        # 가장 간단한 테스트
+        st.title("🎨 템플릿 기반 보고서 V2")
+        st.success("✅ 이 메시지가 보이면 tab2가 작동합니다!")
 
-    with subtab3:
-        display_group_report_builder()
+        st.divider()
+
+        st.write("🔍 DEBUG: Tab2 블록 진입")
+        st.write(f"🔍 DEBUG: 세션 상태 키들: {list(st.session_state.keys())}")
+
+        # V2 UI 호출
+        try:
+            st.write("🔍 DEBUG: import 시도 중...")
+            from ui.monthly_report_v2_ui import display_monthly_report_v2_tab
+            st.write("🔍 DEBUG: import 성공")
+
+            # 디버깅 정보 표시
+            user_id = st.session_state.get('user_id')
+            llm_client = st.session_state.get('llm_client')
+
+            st.write(f"🔍 DEBUG: user_id={user_id}, llm_client={type(llm_client).__name__ if llm_client else None}")
+
+            if not user_id:
+                st.warning("⚠️ 로그인이 필요합니다")
+                st.info("좌측 사이드바에서 먼저 로그인해주세요.")
+                st.stop()
+
+            if not llm_client:
+                st.error("❌ LLM 클라이언트가 초기화되지 않았습니다")
+                st.info("Azure OpenAI 설정을 확인해주세요.")
+                st.stop()
+
+            st.write("🔍 DEBUG: display_monthly_report_v2_tab 호출 시작")
+
+            # V2 UI 표시
+            display_monthly_report_v2_tab(
+                llm_client=llm_client,
+                user_id=user_id
+            )
+
+            st.write("🔍 DEBUG: display_monthly_report_v2_tab 호출 완료")
+
+        except Exception as e:
+            st.error(f"❌ V2 UI 로딩 중 오류 발생: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
 
 
 # ============================================================
@@ -578,7 +621,7 @@ def get_prompt_service():
 
 
 def save_prompt_template(prompt_content: str, template_title: str, category: str = "월간보고",
-                        group_id: int = None, system: str = None):
+                        system: str = None):
     """프롬프트 템플릿 저장 (단순 텍스트)"""
     if not auth_client.is_logged_in():
         st.error("⚠️ 로그인이 필요합니다")
@@ -599,14 +642,12 @@ def save_prompt_template(prompt_content: str, template_title: str, category: str
             'prompt_content': prompt_content,
             'is_public': False,
             'order_index': 999,
-            'group_id': group_id,
             'system': system
         }
 
         prompt_id = prompt_service.create_prompt(user_id, prompt_data)
 
-        group_info = f" (그룹 프롬프트 - 시스템: {system})" if group_id else ""
-        st.success(f"✅ 프롬프트 템플릿 '{template_title}'이(가) 저장되었습니다{group_info} (ID: {prompt_id})")
+        st.success(f"✅ 프롬프트 템플릿 '{template_title}'이(가) 저장되었습니다 (ID: {prompt_id})")
         return True
     except Exception as e:
         st.error(f"❌ 저장 중 오류 발생: {str(e)}")
@@ -616,7 +657,7 @@ def save_prompt_template(prompt_content: str, template_title: str, category: str
 
 
 def save_current_prompts_to_template(pages_data: List[Dict], template_title: str, category: str = "월간보고",
-                                     group_id: int = None, system: str = None):
+                                     system: str = None):
     """현재 입력된 프롬프트들을 템플릿으로 저장"""
     if not auth_client.is_logged_in():
         st.error("⚠️ 로그인이 필요합니다")
@@ -640,14 +681,12 @@ def save_current_prompts_to_template(pages_data: List[Dict], template_title: str
             'prompt_content': prompt_content,
             'is_public': False,
             'order_index': 999,
-            'group_id': group_id,
             'system': system
         }
 
         prompt_id = prompt_service.create_prompt(user_id, prompt_data)
 
-        group_info = f" (그룹 프롬프트 - 시스템: {system})" if group_id else ""
-        st.success(f"✅ 프롬프트 템플릿 '{template_title}'이(가) 저장되었습니다{group_info} (ID: {prompt_id})")
+        st.success(f"✅ 프롬프트 템플릿 '{template_title}'이(가) 저장되었습니다 (ID: {prompt_id})")
         return True
     except Exception as e:
         st.error(f"❌ 저장 중 오류 발생: {str(e)}")
@@ -656,11 +695,10 @@ def save_current_prompts_to_template(pages_data: List[Dict], template_title: str
         session.close()
 
 
-def load_saved_prompts(group_id=None, category=None):
+def load_saved_prompts(category=None):
     """저장된 프롬프트 템플릿 목록 가져오기
 
     Args:
-        group_id: 그룹 ID (None이면 개인 프롬프트만)
         category: 카테고리 이름 (None이면 모든 카테고리)
     """
     if not auth_client.is_logged_in():
@@ -675,14 +713,6 @@ def load_saved_prompts(group_id=None, category=None):
     try:
         result = prompt_service.get_user_prompts(user_id, include_public=False)
         my_prompts = result.get('my_prompts', [])
-
-        # 그룹 필터링
-        if group_id is not None:
-            # 특정 그룹의 프롬프트만
-            my_prompts = [p for p in my_prompts if p.get('group_id') == group_id]
-        else:
-            # 개인 프롬프트만 (group_id가 None인 것)
-            my_prompts = [p for p in my_prompts if p.get('group_id') is None]
 
         # 카테고리 필터링
         if category is not None:
@@ -777,170 +807,24 @@ def update_prompt_template(prompt_id: int, template_title: str, category: str, p
 
 
 def display_monthly_report_generation():
-    """월간보고 생성 UI (그룹 전용)"""
-    # 그룹 선택 섹션
-    st.header("📁 그룹 선택")
+    """월간보고 생성 UI (V1 - 그룹 기능 제거됨)"""
 
-    selected_group_id = None
-    selected_group_name = None
-
-    groups_result = auth_client.get_groups()
-    if groups_result.get("success"):
-        available_groups = groups_result.get("groups", [])
-        if available_groups:
-            group_options = {g['id']: f"📁 {g['name']} ({g['role']})" for g in available_groups}
-            selected_group_id = st.selectbox(
-                "작업할 그룹을 선택하세요",
-                options=list(group_options.keys()),
-                format_func=lambda x: group_options[x],
-                key="monthly_selected_group",
-                help="선택한 그룹의 프롬프트와 카테고리를 사용합니다"
-            )
-            # 선택된 그룹 이름 저장
-            for g in available_groups:
-                if g['id'] == selected_group_id:
-                    selected_group_name = g['name']
-                    break
-        else:
-            st.warning("⚠️ 속한 그룹이 없습니다. 그룹 관리 탭에서 그룹을 생성하거나 참여하세요.")
-            st.stop()
-    else:
-        st.error("그룹 목록을 불러올 수 없습니다.")
-        st.stop()
-
-    # 카테고리 선택
-    selected_category = None
-    if selected_group_id:
-        st.subheader("📂 카테고리 선택")
-        categories_result = auth_client.get_group_categories(selected_group_id)
-        if categories_result.get("success"):
-            group_categories = categories_result.get("categories", [])
-            if group_categories:
-                category_options = ["전체 보기"] + [cat['name'] for cat in group_categories]
-                selected_category_display = st.selectbox(
-                    "작업할 카테고리를 선택하세요",
-                    options=category_options,
-                    key="monthly_selected_category",
-                    help="선택한 카테고리의 프롬프트만 표시됩니다"
-                )
-                # "전체 보기"가 아닐 때만 카테고리 설정
-                if selected_category_display != "전체 보기":
-                    selected_category = selected_category_display
-
-                st.info(f"📂 현재 카테고리: **{selected_category_display}**")
-            else:
-                st.warning("⚠️ 이 그룹에는 카테고리가 없습니다. 그룹 관리자에게 카테고리 추가를 요청하세요.")
-        else:
-            st.error("카테고리 목록을 불러올 수 없습니다.")
+    st.info("ℹ️ V1 (JQL 생성기)는 그룹 기능이 제거되어 현재 사용할 수 없습니다.")
+    st.success("✨ **V2 (템플릿 기반 보고서)** 탭을 사용해주세요!")
 
     st.divider()
 
-    # 자동으로 그룹-카테고리의 기존 프롬프트 로드
-    existing_prompt = None
-    existing_prompt_id = None
+    st.markdown("""
+    ### 🎨 V2로 이동하세요
 
-    if selected_group_id and selected_category:
-        # 해당 그룹-카테고리의 프롬프트 조회
-        saved_prompts = load_saved_prompts(group_id=selected_group_id, category=selected_category)
-        if saved_prompts:
-            # 1:1 구조이므로 첫 번째 프롬프트 사용
-            existing_prompt = saved_prompts[0]
-            existing_prompt_id = existing_prompt['id']
+    V2에서는 다음 기능을 사용할 수 있습니다:
+    - 📝 프롬프트 관리 (CRUD)
+    - ▶️ 프롬프트 실행 (캐싱 지원)
+    - 📄 템플릿 관리 (Markdown + placeholder)
+    - 🎨 보고서 생성 (HTML 출력)
+    - 📈 집계/분석 (Jira 이슈 통계)
+    """)
 
-            # 프롬프트 내용 로드
-            prompt_data = load_prompt_by_id(existing_prompt_id)
-            if prompt_data:
-                existing_prompt_content = prompt_data['prompt_content']
-                st.info(f"💡 기존 프롬프트를 불러왔습니다: **{existing_prompt['title']}** (시스템: {existing_prompt.get('system', 'N/A')})")
-            else:
-                existing_prompt_content = ""
-        else:
-            existing_prompt_content = ""
-    else:
-        existing_prompt_content = ""
-
-    # 프롬프트 입력 섹션
-    st.header("📝 프롬프트 작성")
-
-    # 단일 텍스트박스로 프롬프트 입력 (기존 내용 자동 로드)
-    prompt_content = st.text_area(
-        "프롬프트 내용",
-        value=existing_prompt_content,
-        height=400,
-        key=f"prompt_content_{selected_group_id}_{selected_category}",
-        placeholder="""예시:
-# 2024년 10월 월간보고
-
-## 1. 주요 업무 현황
-- BTVO 프로젝트 상용 DB 작업: user1, NCMS_상용작업(DB) 라벨
-- 시스템 업그레이드: user2, Database 컴포넌트
-
-## 2. 완료 이슈
-- 프로젝트: BTVO
-- 기간: 2024-10-01 ~ 2024-10-31
-- 상태: 완료
-
-## 3. 진행 중 이슈
-...
-        """,
-        help="마크다운 형식으로 작성하면 구조화된 프롬프트를 만들 수 있습니다"
-    )
-
-
-    # 저장 섹션
-    if auth_client.is_logged_in() and selected_category:
-        st.divider()
-        st.header("💾 저장")
-
-        # 현재 작업 정보 표시
-        st.info(f"📁 **{selected_group_name}** > 📂 **{selected_category}**")
-
-        # 담당 시스템 입력
-        default_system = existing_prompt.get('system', '') if existing_prompt else ''
-        prompt_system = st.text_input(
-            "담당 시스템",
-            value=default_system,
-            placeholder="예: NCMS, EUXP, EDMP",
-            key="prompt_system_input",
-            help="그룹 보고서 생성 시 시스템별로 정렬됩니다"
-        )
-
-        # 저장 버튼
-        col_save1, col_save2, col_save3 = st.columns([1, 2, 1])
-        with col_save2:
-            if st.button("💾 저장하기", use_container_width=True, key="save_prompt_btn", type="primary"):
-                if not prompt_content.strip():
-                    st.error("⚠️ 프롬프트 내용을 입력해주세요")
-                else:
-                    # 템플릿 이름 자동 생성
-                    template_title = f"{selected_group_name} - {selected_category}"
-                    system_to_save = prompt_system.strip() if prompt_system and prompt_system.strip() else None
-
-                    # 기존 프롬프트가 있으면 update, 없으면 create
-                    if existing_prompt_id:
-                        # Update
-                        if update_prompt_template(existing_prompt_id, template_title, selected_category, prompt_content):
-                            st.success("✅ 프롬프트가 업데이트되었습니다")
-                            st.rerun()
-                    else:
-                        # Create
-                        if save_prompt_template(
-                            prompt_content,
-                            template_title,
-                            selected_category,
-                            selected_group_id,
-                            system_to_save
-                        ):
-                            st.rerun()
-
-
-def display_group_management():
-    """그룹 관리 UI"""
-    st.header("👥 그룹 관리")
-
-    if not auth_client.is_logged_in():
-        st.warning("⚠️ 로그인이 필요합니다")
-        return
 
     st.info("""
 💡 **그룹 협업 기능**

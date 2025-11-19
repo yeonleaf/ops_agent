@@ -20,13 +20,14 @@ class PromptService:
         """
         self.db = db_session
 
-    def get_user_prompts(self, user_id: int, include_public: bool = False) -> Dict:
+    def get_user_prompts(self, user_id: int, include_public: bool = False, category: str = None) -> Dict:
         """
-        사용자의 프롬프트 조회 (+ 옵션: 공개 프롬프트)
+        사용자의 프롬프트 조회 (+ 옵션: 공개 프롬프트, 카테고리 필터)
 
         Args:
             user_id: 사용자 ID
             include_public: 공개 프롬프트 포함 여부
+            category: 필터링할 카테고리 (None이면 전체)
 
         Returns:
             {
@@ -35,11 +36,14 @@ class PromptService:
                 "categories": [...]
             }
         """
-        # 내 프롬프트
-        my_prompts = self.db.query(PromptTemplate)\
-            .filter_by(user_id=user_id)\
-            .order_by(PromptTemplate.order_index, PromptTemplate.title)\
-            .all()
+        # 내 프롬프트 쿼리
+        my_query = self.db.query(PromptTemplate).filter_by(user_id=user_id)
+
+        # 카테고리 필터 적용
+        if category:
+            my_query = my_query.filter(PromptTemplate.category == category)
+
+        my_prompts = my_query.order_by(PromptTemplate.order_index, PromptTemplate.title).all()
 
         result = {
             "my_prompts": [p.to_dict(include_content=True) for p in my_prompts]
@@ -47,15 +51,19 @@ class PromptService:
 
         # 공개 프롬프트
         if include_public:
-            public_prompts = self.db.query(PromptTemplate)\
+            public_query = self.db.query(PromptTemplate)\
                 .filter(
                     and_(
                         PromptTemplate.is_public == True,
                         PromptTemplate.user_id != user_id
                     )
-                )\
-                .order_by(PromptTemplate.order_index, PromptTemplate.title)\
-                .all()
+                )
+
+            # 카테고리 필터 적용
+            if category:
+                public_query = public_query.filter(PromptTemplate.category == category)
+
+            public_prompts = public_query.order_by(PromptTemplate.order_index, PromptTemplate.title).all()
 
             result["public_prompts"] = [
                 p.to_dict(include_content=True, include_owner=True)
@@ -64,8 +72,16 @@ class PromptService:
         else:
             result["public_prompts"] = []
 
-        # 카테고리 추출
-        all_prompts = my_prompts + result["public_prompts"]
+        # 카테고리 추출 (필터 적용 전 전체 카테고리 목록 제공)
+        # 사용자가 볼 수 있는 모든 프롬프트의 카테고리를 반환
+        all_prompts_query = self.db.query(PromptTemplate).filter(
+            or_(
+                PromptTemplate.user_id == user_id,
+                PromptTemplate.is_public == True if include_public else False
+            )
+        )
+        all_prompts = all_prompts_query.all()
+
         if all_prompts:
             categories = sorted(set(p.category for p in all_prompts))
         else:
@@ -114,7 +130,6 @@ class PromptService:
                 "prompt_content": str,
                 "is_public": bool (optional),
                 "order_index": int (optional),
-                "group_id": int (optional),
                 "system": str (optional)
             }
 
@@ -129,7 +144,6 @@ class PromptService:
             prompt_content=data['prompt_content'],
             is_public=data.get('is_public', False),
             order_index=data.get('order_index', 999),
-            group_id=data.get('group_id'),
             system=data.get('system')
         )
 
@@ -160,7 +174,7 @@ class PromptService:
             raise ValueError("프롬프트를 찾을 수 없거나 권한이 없습니다")
 
         # 수정 가능한 필드
-        allowed_fields = ['title', 'category', 'description', 'prompt_content', 'is_public', 'order_index', 'group_id', 'system']
+        allowed_fields = ['title', 'category', 'description', 'prompt_content', 'is_public', 'order_index', 'system']
 
         for key, value in data.items():
             if key in allowed_fields:

@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2025년 09월 월간보고서</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', 'Malgun Gothic', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .report-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .report-header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #4CAF50;
+        }
+        .report-header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .report-date {
+            color: #7f8c8d;
+            font-size: 1.1em;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: #2c3e50;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }
+        h2 {
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        table th {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px;
+            text-align: left;
+        }
+        table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        table tr:hover {
+            background-color: #f5f5f5;
+        }
+        .missing-execution-warning, .missing-prompt-warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .missing-execution-warning strong, .missing-prompt-warning strong {
+            color: #856404;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        @media print {
+            body {
+                background-color: white;
+                padding: 0;
+            }
+            .report-container {
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="report-container">
+        <div class="report-header">
+            <h1>2025년 09월 월간보고서</h1>
+            <p class="report-date">2025-11-18</p>
+        </div>
+        <h1>월간 보고서</h1>
+<h2>집계표</h2>
+<div class="component">
+    <h3>업무 현황: 87건(87M/M)</h3>
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구 분</th>
+                <th>운영 지원</th>
+                <th>운영 개발</th>
+                <th>상용 작업</th>
+                <th>합계</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>NCMS</td>
+                <td>27건<br>(<span class="done">완료 0건</span> / <span class="progress">진행 27건</span>)</td>
+                <td>1건<br>(<span class="done">완료 1건</span> / <span class="progress">진행 0건</span>)</td>
+                <td>2건<br>(<span class="done">완료 0건</span> / <span class="progress">진행 2건</span>)</td>
+                <td>30건<br>(<span class="done">완료 1건</span> / <span class="progress">진행 29건</span>)</td>
+            </tr>
+            <tr>
+                <td>EDMP</td>
+                <td>27건<br>(<span class="done">완료 0건</span> / <span class="progress">진행 27건</span>)</td>
+                <td>1건<br>(<span class="done">완료 0건</span> / <span class="progress">진행 1건</span>)</td>
+                <td>1건<br>(<span class="done">완료 0건</span> / <span class="progress">진행 1건</span>)</td>
+                <td>29건<br>(<span class="done">완료 0건</span> / <span class="progress">진행 29건</span>)</td>
+            </tr>
+            <tr>
+                <td>ACS</td>
+                <td>28건<br>(<span class="done">완료 28건</span> / <span class="progress">진행 0건</span>)</td>
+                <td>2건<br>(<span class="done">완료 2건</span> / <span class="progress">진행 0건</span>)</td>
+                <td>1건<br>(<span class="done">완료 1건</span> / <span class="progress">진행 0건</span>)</td>
+                <td>31건<br>(<span class="done">완료 31건</span> / <span class="progress">진행 0건</span>)</td>
+            </tr>
+            <tr>
+                <td>합계</td>
+                <td>82건</td>
+                <td>4건</td>
+                <td>4건</td>
+                <td>87건<br>87M/M</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<h2>사전 검증(BMT) 현황</h2>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구분</th>
+                <th>일자</th>
+                <th>대상</th>
+                <th>버전</th>
+                <th>설명</th>
+                <th>검증 결과</th>
+                <th>배포 일자</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>NCMS</td>
+                <td>2025-02-03</td>
+                <td>BMT</td>
+                <td>RD5.4.3-9</td>
+                <td>BTVO-61594: [NCMS] RD5.4.3-9 BMT 관련 테스트 케이스 검증 완료</td>
+                <td>PASS</td>
+                <td>2025-02-07</td>
+            </tr>
+            <tr>
+                <td>NCMS</td>
+                <td>2025-01-27</td>
+                <td>BMT</td>
+                <td>RD5.4.3-8</td>
+                <td>BTVO-61591: [NCMS] RD5.4.3-8 BMT 검증 및 결과 보고</td>
+                <td>PASS</td>
+                <td>2025-01-31</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구분</th>
+                <th>일자</th>
+                <th>대상</th>
+                <th>버전</th>
+                <th>설명</th>
+                <th>검증 결과</th>
+                <th>배포 일자</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>EDMP</td>
+                <td>09/17</td>
+                <td>BMT</td>
+                <td>R/2.2.7</td>
+                <td>BTVO-61446 [EDMP] (09/17) 운영개발 R/2.2.7 BMT 수행</td>
+                <td>PASS</td>
+                <td>09/17</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<h2>변경 관리 현황_상용 배포</h2>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구분</th>
+                <th>일자</th>
+                <th>대상</th>
+                <th>버전</th>
+                <th>설명</th>
+                <th>작업자</th>
+                <th>결과</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>NCMS</td>
+                <td>2025-02-03</td>
+                <td>BMT</td>
+                <td>RD5.4.3-9</td>
+                <td>BTVO-61595 관련 이슈: BTVO-61596 [NCMS_BMT] 기능 점검, BTVO-61597 [NCMS_BMT] 테스트 케이스 검토</td>
+                <td>SK(주) 조주연 매니저</td>
+                <td>특이사항 없음</td>
+            </tr>
+            <tr>
+                <td>NCMS</td>
+                <td>2025-01-27</td>
+                <td>Admin</td>
+                <td>RD5.4.3-8</td>
+                <td>BTVO-61592 관련 이슈: BTVO-61593 [NCMS_Admin] 배포 준비, BTVO-61594 [NCMS_Admin] QA 검증</td>
+                <td>SK(주) 조주연 매니저</td>
+                <td>특이사항 없음</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구분</th>
+                <th>일자</th>
+                <th>대상</th>
+                <th>버전</th>
+                <th>설명</th>
+                <th>작업자</th>
+                <th>결과</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>EDMP</td>
+                <td>09/24</td>
+                <td>EDMP</td>
+                <td>R/2.2.7</td>
+                <td>BTVO-61451 [EDMP] (09/24) 운영개발 R/2.2.7 PM 작업</td>
+                <td>SK(주) 오지웅 매니저</td>
+                <td>특이사항 없음</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구분</th>
+                <th>일자</th>
+                <th>대상</th>
+                <th>버전</th>
+                <th>설명</th>
+                <th>작업자</th>
+                <th>결과</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>ACS</td>
+                <td>2024-09-03</td>
+                <td>all</td>
+                <td>-</td>
+                <td>BTVO-60991 [ACS] 신 메일서버 적용건 PM 수행 (9/3 수)</td>
+                <td>SK(주) 이현주 매니저</td>
+                <td>특이사항 없음</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<h2>변경 관리 현황_DB 작업</h2>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구분</th>
+                <th>이슈</th>
+                <th>일자</th>
+                <th>내용</th>
+                <th>작업자</th>
+                <th>특이사항</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>NCMS</td>
+                <td>BTVDB-3465</td>
+                <td>--/--</td>
+                <td>[NCMS] 최강야구 외 1건 (총 2건) 메타 수정 SQL</td>
+                <td>SK(주) 조주연 매니저</td>
+                <td>없음</td>
+            </tr>
+            <tr>
+                <td>NCMS</td>
+                <td>BTVDB-3445</td>
+                <td>--/--</td>
+                <td>[NCMS] 메뉴명 변경 및 미사용 메뉴 삭제</td>
+                <td>SK(주) 조주연 매니저</td>
+                <td>없음</td>
+            </tr>
+            <tr>
+                <td>NCMS</td>
+                <td>BTVDB-3438</td>
+                <td>--/--</td>
+                <td>[NCMS] 에피소드메타가 시리즈메타로 변경된 케이스 데이터 보정 작업</td>
+                <td>SK(주) 조주연 매니저</td>
+                <td>없음</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+<p>(이 요청에서는 단계 1의 JQL 실행 결과가 “이슈 없음”으로 명시되어 있으므로, 처리할 일감이 0건입니다. 규칙에 따라 <strong>어떠한 HTML 태그도 출력하지 않습니다.</strong>)</p>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>구분</th>
+                <th>이슈</th>
+                <th>일자</th>
+                <th>내용</th>
+                <th>작업자</th>
+                <th>특이사항</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>ACS</td>
+                <td>BTVDB-3449</td>
+                <td>--/--</td>
+                <td>[ACS] 데이터 삭제 요청</td>
+                <td>SK(주) 유재곤 매니저</td>
+                <td>없음</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<h2>개발 현황</h2>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr><th>구분</th><th>상세</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>NCMS</td>
+                <td>BPM-47543: [B tv+] 시리즈 콘텐츠 편성정책 변경에 따른 요구사항 반영 - NCMS</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr><th>구분</th><th>상세</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>EDMP</td>
+                <td>BTVO-61438: [EDMP] (09/12) EDMP-AQUA STB 버전, 업그레이드 정보 연동 추가 개발</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+<div class="component">
+    <table class="report-table">
+        <thead>
+            <tr><th>구분</th><th>상세</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>ACS</td>
+                <td>BTVO-60938: [BPM-47963] B캐시 충전 활성화를 위한 기능 개발 (바로가기 랜딩, 충전 버튼 강조) - ACS</td>
+            </tr>
+            <tr>
+                <td>ACS</td>
+                <td>BTVO-60711: [ACS] 현업부서 개선 요구사항 기능 개발</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<h2>운영 insight</h2>
+<div class="component">
+    <h3>2025년 9월 시스템별 운영 Insight</h3>
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th>시스템</th>
+                <th>주요 개선 영역</th>
+                <th>Insight (초안)</th>
+                <th>관련 작업</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td rowspan="3">NCMS</td>
+                <td>데이터 품질 관리</td>
+                <td>메타데이터 오류 수정 및 누락값 검증 작업 다수 수행으로 데이터 품질 강화 추정</td>
+                <td>약 10건</td>
+            </tr>
+            <tr>
+                <td>운영 효율성</td>
+                <td>PrePRD, STG, PM 등 환경별 배포 및 점검 자동화로 운영 효율성 향상</td>
+                <td>약 8건</td>
+            </tr>
+            <tr>
+                <td>시스템 안정성</td>
+                <td>API 타임아웃 및 배치잡 오류 대응을 통한 서비스 안정성 강화</td>
+                <td>약 5건</td>
+            </tr>
+            <tr>
+                <td rowspan="3">EDMP</td>
+                <td>시스템 안정성</td>
+                <td>Redis, DB, API 오류 분석 및 후조치 수행으로 장애 대응력 강화</td>
+                <td>약 9건</td>
+            </tr>
+            <tr>
+                <td>데이터 품질 및 정책 관리</td>
+                <td>단말, 계획서, API 연동 관련 데이터 정합성 검증을 통한 품질 개선</td>
+                <td>약 10건</td>
+            </tr>
+            <tr>
+                <td>운영 효율성</td>
+                <td>일일점검, 로그 분석, 영향도 검증 등 정기 운영체계 강화</td>
+                <td>약 8건</td>
+            </tr>
+            <tr>
+                <td rowspan="3">ACS</td>
+                <td>캠페인 운영 효율성</td>
+                <td>캠페인 승인, 일정 변경, 중지 요청 등 반복적 운영 프로세스 자동화 기반 강화</td>
+                <td>약 10건</td>
+            </tr>
+            <tr>
+                <td>보안 및 개인정보 관리</td>
+                <td>보안 실사 대응 및 개인정보 처리 시스템 점검으로 컴플라이언스 강화</td>
+                <td>약 5건</td>
+            </tr>
+            <tr>
+                <td>시스템 안정성</td>
+                <td>메일 서버 변경, 팝업 오류 대응 등 상용 환경 안정화 작업 수행</td>
+                <td>약 6건</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="insight-note">
+        <strong>📝 검토 필요</strong>
+        <ul>
+            <li>각 insight는 이슈 제목 기반 추정이며, 담당자 검토를 통해 세부 내용 보완 필요</li>
+            <li>정량적 수치(건수, 개선율 등)는 실제 운영 데이터로 확인 필요</li>
+            <li>특히 NCMS의 메타 자동화 및 EDMP의 오류 분석 결과는 고객 영향도 검증 후 반영 권장</li>
+        </ul>
+    </div>
+</div>
+    </div>
+</body>
+</html>

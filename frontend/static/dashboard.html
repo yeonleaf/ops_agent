@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>월간 보고서 자동화 시스템</title>
+
+    <!-- Monaco Editor CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@latest/min/vs/editor/editor.main.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/jql-styles.css">
+</head>
+<body>
+    <!-- 로그인 모달 -->
+    <div id="login-modal" class="modal">
+        <div class="modal-content login-modal">
+            <div class="modal-header">
+                <h2>🔐 로그인</h2>
+            </div>
+            <div class="modal-body">
+                <form id="login-form">
+                    <div class="form-group">
+                        <label>사용자명</label>
+                        <input type="text" id="login-username" required>
+                    </div>
+                    <div class="form-group">
+                        <label>비밀번호</label>
+                        <input type="password" id="login-password" required>
+                    </div>
+                    <div id="login-error" class="error-message"></div>
+                    <button type="submit" class="btn-primary btn-block">로그인</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 메인 컨테이너 -->
+    <div class="dashboard-container">
+        <!-- 사이드바 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>📊 월간 보고서</h1>
+                <div class="user-info">
+                    <span id="username-display">사용자</span>
+                    <button id="logout-btn" class="btn-link">로그아웃</button>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <button class="nav-item" data-section="jql">
+                    <span class="icon">🔍</span>
+                    <span>JQL 관리</span>
+                </button>
+                <button class="nav-item active" data-section="prompts">
+                    <span class="icon">📝</span>
+                    <span>프롬프트 관리</span>
+                </button>
+                <button class="nav-item" data-section="templates">
+                    <span class="icon">📄</span>
+                    <span>템플릿 에디터</span>
+                </button>
+                <button class="nav-item" data-section="generate">
+                    <span class="icon">⚡</span>
+                    <span>보고서 생성</span>
+                </button>
+                <button class="nav-item" data-section="reports">
+                    <span class="icon">📚</span>
+                    <span>보고서 목록</span>
+                </button>
+                <button class="nav-item" data-section="variables">
+                    <span class="icon">⚙️</span>
+                    <span>변수 관리</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <small>v2.0.0 | Ops Agent</small>
+            </div>
+        </aside>
+
+        <!-- 메인 컨텐츠 -->
+        <main class="main-content">
+            <!-- JQL 관리 섹션 -->
+            <section id="section-jql" class="content-section">
+                <div class="section-header">
+                    <h2>🔍 JQL 관리</h2>
+                    <button id="create-jql-btn" class="btn-primary">+ 새 JQL</button>
+                </div>
+
+                <div class="filter-bar">
+                    <input type="text" id="jql-search" placeholder="JQL 검색...">
+                    <select id="jql-system-filter">
+                        <option value="">모든 시스템</option>
+                    </select>
+                    <select id="jql-category-filter">
+                        <option value="">모든 카테고리</option>
+                    </select>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="show-public-jqls">
+                        공개 JQL 포함
+                    </label>
+                </div>
+
+                <div id="jqls-list" class="cards-grid">
+                    <div class="loading-message">JQL 로딩 중...</div>
+                </div>
+            </section>
+
+            <!-- 프롬프트 관리 섹션 -->
+            <section id="section-prompts" class="content-section active">
+                <div class="section-header">
+                    <h2>📝 프롬프트 관리</h2>
+                    <button id="create-prompt-btn" class="btn-primary">+ 새 프롬프트</button>
+                </div>
+
+                <div class="filter-bar">
+                    <input type="text" id="prompt-search" placeholder="프롬프트 검색...">
+                    <select id="prompt-category-filter">
+                        <option value="">모든 카테고리</option>
+                    </select>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="show-public-prompts">
+                        공개 프롬프트 포함
+                    </label>
+                </div>
+
+                <div id="prompts-list" class="cards-grid">
+                    <div class="loading-message">프롬프트 로딩 중...</div>
+                </div>
+            </section>
+
+            <!-- 템플릿 에디터 섹션 -->
+            <section id="section-templates" class="content-section">
+                <div class="section-header">
+                    <h2>📄 템플릿 에디터</h2>
+                    <div class="header-actions">
+                        <button id="load-template-btn" class="btn-secondary">불러오기</button>
+                        <button id="save-template-btn" class="btn-primary">저장</button>
+                    </div>
+                </div>
+
+                <div class="template-editor-container">
+                    <div class="prompts-sidebar">
+                        <h3>사용 가능한 프롬프트</h3>
+                        <input type="text" id="template-prompt-search" placeholder="제목, 카테고리, ID로 검색...">
+                        <select id="template-category-filter" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                            <option value="">모든 카테고리</option>
+                        </select>
+                        <div id="template-prompts-list" class="prompts-list-small">
+                            <!-- 프롬프트 목록 -->
+                        </div>
+                    </div>
+
+                    <div class="editor-main">
+                        <div class="editor-toolbar">
+                            <input type="text" id="template-title" placeholder="템플릿 이름" class="template-title-input">
+                            <input type="text" id="template-description" placeholder="설명 (선택사항)" class="template-desc-input">
+                            <button id="validate-template-btn" class="btn-small">유효성 검사</button>
+                            <span id="template-validation-status" class="status-badge"></span>
+                        </div>
+                        <div id="monaco-editor"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 보고서 생성 섹션 -->
+            <section id="section-generate" class="content-section">
+                <div class="section-header">
+                    <h2>⚡ 보고서 생성</h2>
+                </div>
+
+                <div class="generate-container">
+                    <div class="step-card">
+                        <h3>템플릿 선택</h3>
+                        <select id="select-template" class="form-select">
+                            <option value="">템플릿 선택...</option>
+                        </select>
+                        <div id="template-preview" class="template-preview"></div>
+                    </div>
+
+                    <div class="step-card">
+                        <h3>보고서 생성</h3>
+                        <div class="form-group">
+                            <label>보고서 제목</label>
+                            <input type="text" id="report-title" placeholder="예: 2024년 11월 월간 보고서" class="form-input">
+                        </div>
+
+                        <div id="prompts-to-execute" class="prompts-info-list">
+                            <p class="text-muted">템플릿을 선택하면 실행될 프롬프트 목록이 표시됩니다</p>
+                        </div>
+
+                        <button id="generate-report-btn" class="btn-success" disabled>
+                            <span class="btn-icon">⚡</span> 보고서 생성 (프롬프트 자동 실행)
+                        </button>
+
+                        <!-- 실행 로그 영역 -->
+                        <div id="execution-log" class="execution-log" style="display: none;">
+                            <div class="log-header">
+                                <h4>📋 실행 로그</h4>
+                                <button class="btn-small" onclick="clearExecutionLog()">지우기</button>
+                            </div>
+                            <div id="log-content" class="log-content"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 보고서 목록 섹션 -->
+            <section id="section-reports" class="content-section">
+                <div class="section-header">
+                    <h2>📚 보고서 목록</h2>
+                    <button id="refresh-reports-btn" class="btn-secondary">새로고침</button>
+                </div>
+
+                <div id="reports-list" class="reports-list">
+                    <div class="loading-message">보고서 로딩 중...</div>
+                </div>
+            </section>
+
+            <!-- 변수 관리 섹션 -->
+            <section id="section-variables" class="content-section">
+                <div class="section-header">
+                    <h2>⚙️ 변수 관리</h2>
+                    <button id="create-variable-btn" class="btn-primary">+ 새 변수</button>
+                </div>
+
+                <div class="variables-info">
+                    <p>전역 변수를 정의하고 프롬프트 및 JQL에서 <code>{{변수명}}</code> 형식으로 사용할 수 있습니다.</p>
+                </div>
+
+                <div id="variables-list" class="variables-table-container">
+                    <table class="variables-table">
+                        <thead>
+                            <tr>
+                                <th>변수명</th>
+                                <th>값</th>
+                                <th>설명</th>
+                                <th>수정일</th>
+                                <th>작업</th>
+                            </tr>
+                        </thead>
+                        <tbody id="variables-tbody">
+                            <tr>
+                                <td colspan="5" class="loading-message">변수 로딩 중...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 프롬프트 편집 모달 -->
+    <div id="prompt-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="prompt-modal-title">프롬프트 추가</h2>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="prompt-form">
+                    <div class="form-group">
+                        <label>제목 *</label>
+                        <input type="text" id="prompt-title" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>카테고리</label>
+                            <input type="text" id="prompt-category" value="기타">
+                        </div>
+                        <div class="form-group">
+                            <label>순서</label>
+                            <input type="number" id="prompt-order" value="999">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>설명</label>
+                        <textarea id="prompt-description" rows="2"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>저장된 JQL 선택 (선택사항)</label>
+                        <div class="form-row">
+                            <select id="saved-jql-select" style="flex: 1;">
+                                <option value="">JQL 선택...</option>
+                            </select>
+                            <button type="button" id="load-jql-btn" class="btn-secondary" onclick="loadSelectedJQL()">{{jql:id}} 형식으로 삽입</button>
+                        </div>
+                        <small class="form-help">JQL을 선택하면 프롬프트 내용에 {{jql:id}} 형식으로 삽입됩니다. 실행 시 자동으로 JQL이 실행됩니다.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>프롬프트 내용 *</label>
+                        <div class="jql-editor-container">
+                            <div class="jql-editor-header">
+                                <div class="jql-editor-tabs">
+                                    <button type="button" class="jql-tab active" data-tab="text">텍스트</button>
+                                    <button type="button" class="jql-tab" data-tab="jql">JQL 에디터</button>
+                                </div>
+                                <button type="button" id="test-jql-btn" class="btn-test-jql" style="display: none;">
+                                    <span class="test-icon">▶</span> 테스트
+                                </button>
+                            </div>
+                            <div id="jql-text-editor" class="jql-editor-panel active">
+                                <textarea id="prompt-content" rows="10" required></textarea>
+                            </div>
+                            <div id="jql-monaco-editor" class="jql-editor-panel" style="display: none; height: 200px; border: 1px solid #ddd;"></div>
+                        </div>
+                        <div id="jql-test-results" class="jql-test-results" style="display: none;"></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="prompt-is-public">
+                            공개 프롬프트로 설정
+                        </label>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-secondary" onclick="closePromptModal()">취소</button>
+                        <button type="submit" class="btn-primary">저장</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 템플릿 목록 모달 -->
+    <div id="templates-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>저장된 템플릿</h2>
+                <button class="close-btn" onclick="closeTemplatesModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="templates-list-modal"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 보고서 미리보기 모달 -->
+    <div id="report-preview-modal" class="modal">
+        <div class="modal-content modal-fullscreen">
+            <div class="modal-header">
+                <h2 id="report-preview-title">보고서 미리보기</h2>
+                <div>
+                    <button id="export-html-btn" class="btn-secondary">HTML 다운로드</button>
+                    <button class="close-btn" onclick="closeReportPreview()">&times;</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <iframe id="report-preview-iframe" style="width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <!-- 변수 편집 모달 -->
+    <div id="variable-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="variable-modal-title">변수 추가</h2>
+                <button class="close-btn" onclick="closeVariableModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="variable-form">
+                    <div class="form-group">
+                        <label>변수명 *</label>
+                        <input type="text" id="variable-name" required placeholder="예: fixVersion" pattern="[a-zA-Z][a-zA-Z0-9_]*">
+                        <small class="form-help">영문자로 시작, 영문자/숫자/언더스코어만 사용 가능</small>
+                    </div>
+                    <div class="form-group">
+                        <label>값 *</label>
+                        <input type="text" id="variable-value" required placeholder="예: 25.09">
+                    </div>
+                    <div class="form-group">
+                        <label>설명</label>
+                        <textarea id="variable-description" rows="3" placeholder="선택사항"></textarea>
+                    </div>
+                    <div id="variable-error" class="error-message"></div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-secondary" onclick="closeVariableModal()">취소</button>
+                        <button type="submit" class="btn-primary">저장</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 변수 삭제 확인 모달 -->
+    <div id="variable-delete-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>변수 삭제 확인</h2>
+                <button class="close-btn" onclick="closeDeleteModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="delete-variable-message"></p>
+                <div id="delete-variable-usage" class="variable-usage-warning"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="closeDeleteModal()">취소</button>
+                    <button type="button" id="confirm-delete-btn" class="btn-danger">삭제</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JQL 생성/수정 모달 -->
+    <div id="jql-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="jql-modal-title">새 JQL 생성</h2>
+                <button class="close-btn" onclick="closeJQLModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="jql-form">
+                    <input type="hidden" id="jql-id">
+
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 2;">
+                            <label>JQL 이름 *</label>
+                            <input type="text" id="jql-name" required placeholder="예: NCMS_BMT, EUXP_PM작업">
+                        </div>
+                        <div class="form-group">
+                            <label>시스템</label>
+                            <select id="jql-system">
+                                <option value="">선택 안함</option>
+                                <option value="NCMS">NCMS</option>
+                                <option value="EUXP">EUXP</option>
+                                <option value="EDMP">EDMP</option>
+                                <option value="ACS">ACS</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>카테고리</label>
+                            <select id="jql-category">
+                                <option value="">선택 안함</option>
+                                <option value="BMT">BMT</option>
+                                <option value="PM">PM</option>
+                                <option value="DB작업">DB작업</option>
+                                <option value="개발">개발</option>
+                                <option value="운영지원">운영지원</option>
+                                <option value="운영개발">운영개발</option>
+                                <option value="상용작업">상용작업</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>설명</label>
+                        <textarea id="jql-description" rows="2" placeholder="JQL 설명 (선택사항)"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>JQL 쿼리 *</label>
+                        <div id="jql-editor-container" style="height: 300px; border: 1px solid #ddd;"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <button type="button" id="test-jql-btn-modal" class="btn-secondary">🧪 JQL 테스트</button>
+                        <span id="jql-test-result" style="margin-left: 10px;"></span>
+                    </div>
+
+                    <div id="jql-test-output" style="display: none; margin-top: 10px;">
+                        <h4>테스트 결과</h4>
+                        <div id="jql-test-content"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="jql-is-public">
+                            공개 JQL로 설정
+                        </label>
+                    </div>
+
+                    <div class="modal-actions">
+                        <button type="button" class="btn-secondary" onclick="closeJQLModal()">취소</button>
+                        <button type="submit" class="btn-primary">저장</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 토스트 알림 -->
+    <div id="toast" class="toast"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@latest/min/vs/loader.js"></script>
+    <script src="/static/js/jql-editor.js"></script>
+    <script src="/static/js/jql-test.js"></script>
+    <script src="/static/js/jql-manager.js"></script>
+    <script src="/static/js/variables.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

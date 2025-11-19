@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>보고서 에디터</title>
+
+    <!-- TinyMCE CDN -->
+    <script src="https://cdn.tiny.cloud/1/no-api-key/tinymce/6/tinymce.min.js" referrerpolicy="origin"></script>
+
+    <!-- 한글 언어팩 -->
+    <script src="https://cdn.tiny.cloud/1/no-api-key/tinymce/6/langs/ko_KR.js" referrerpolicy="origin"></script>
+
+    <!-- Editor CSS -->
+    <link rel="stylesheet" href="/static/css/report-editor.css">
+</head>
+<body>
+    <!-- 토스트 알림 -->
+    <div id="toast" class="toast"></div>
+
+    <!-- 메인 컨테이너 -->
+    <div class="editor-container">
+        <!-- 헤더 -->
+        <header class="editor-header">
+            <h1>📝 보고서 에디터</h1>
+            <div class="header-controls">
+                <select id="file-selector" class="file-selector">
+                    <option value="">보고서 선택...</option>
+                </select>
+                <button id="load-btn" class="btn btn-secondary" disabled>📂 불러오기</button>
+                <button id="save-btn" class="btn btn-primary" disabled>💾 저장</button>
+                <button id="save-as-btn" class="btn btn-secondary" disabled>💾 다른 이름으로 저장</button>
+                <button id="preview-btn" class="btn btn-info" disabled>👁️ 미리보기</button>
+            </div>
+        </header>
+
+        <!-- 에디터 영역 -->
+        <div class="editor-main">
+            <textarea id="tinymce-editor"></textarea>
+        </div>
+
+        <!-- 상태 바 -->
+        <footer class="editor-footer">
+            <div class="status-bar">
+                <span id="current-file">파일 없음</span>
+                <span id="last-saved">저장 안 됨</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="/static/js/report-editor.js"></script>
+</body>
+</html>

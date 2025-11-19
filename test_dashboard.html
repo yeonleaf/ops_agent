@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard Test</title>
+</head>
+<body>
+    <h1>Dashboard Test Page</h1>
+    <p>If you see this, the route works!</p>
+
+    <script>
+        console.log('Testing dashboard access...');
+
+        // Test API
+        fetch('/api/v2/health')
+            .then(r => r.json())
+            .then(data => {
+                console.log('API Health:', data);
+                document.body.innerHTML += '<p>API Working: ' + JSON.stringify(data) + '</p>';
+            })
+            .catch(err => {
+                console.error('API Error:', err);
+                document.body.innerHTML += '<p style="color:red;">API Error: ' + err.message + '</p>';
+            });
+
+        // Test static files
+        fetch('/static/css/dashboard.css')
+            .then(r => {
+                console.log('CSS Load:', r.status);
+                document.body.innerHTML += '<p>CSS Status: ' + r.status + '</p>';
+            })
+            .catch(err => {
+                console.error('CSS Error:', err);
+                document.body.innerHTML += '<p style="color:red;">CSS Error: ' + err.message + '</p>';
+            });
+    </script>
+</body>
+</html>

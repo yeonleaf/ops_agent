@@ -1,0 +1,25 @@
+# 이 파일은 fastmcp_server.py에서 제거된 이메일 관련 함수들의 참고용 백업입니다
+# line 293부터 line 730까지의 모든 이메일 관련 함수들이 주석처리되었습니다
+
+주석처리된 섹션:
+1. process_emails_with_ticket_logic_async_raw() - line 293-550
+2. @mcp.tool() 이메일 관련 도구들 - line 556-730
+   - process_emails_with_ticket_logic_async
+   - get_async_task_status
+   - list_active_tasks
+   - resume_paused_task
+   - check_oauth_status
+   - get_email_provider_status_tool
+   - get_mail_content_by_id_tool
+   - create_ticket_from_single_email_tool
+   - fetch_emails_sync_tool
+   - email_agent_tool
+   - get_available_providers
+   - get_default_provider
+   - test_work_related_filtering
+   - test_email_fetch_logic
+   - test_ticket_creation_logic
+   - set_user_email_context
+   - get_user_email_context
+
+보안 정책에 따라 사내 이메일 연동이 제거되었습니다.

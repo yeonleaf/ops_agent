@@ -6,7 +6,7 @@ Tool Registry - Tool 등록 및 OpenAI Function Schema 관리
 from typing import Dict, List, Callable, Any, Optional
 import json
 
-from tools.jira_tools import search_issues, get_linked_issues
+from tools.jira_tools import search_issues, get_linked_issues, get_issue_detail
 from tools.cache_tools import get_cached_issues, get_cache_summary
 from tools.text_tools import extract_version, extract_pattern, extract_all_patterns, format_date
 from tools.data_tools import (
@@ -57,6 +57,11 @@ class ToolRegistry:
                 link_type=link_type,
                 db_path=self.db_path
             ),
+            "get_issue_detail": lambda issue_key: get_issue_detail(
+                user_id=self.user_id,
+                issue_key=issue_key,
+                db_path=self.db_path
+            ),
             # Cache Tools
             "get_cached_issues": lambda: get_cached_issues(
                 user_id=self.user_id,
@@ -99,13 +104,13 @@ class ToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "search_issues",
-                    "description": "JQL 쿼리로 Jira 이슈를 검색합니다. 프로젝트, 라벨, 상태, 담당자 등으로 필터링할 수 있습니다.",
+                    "description": "JQL 쿼리로 Jira 이슈를 검색합니다. ⚠️ 주의: 프롬프트에 이미 이슈 데이터가 포함되어 있으면 이 tool을 사용하지 마세요. 존재 여부가 확실한 JQL 조건만 사용하세요.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "jql": {
                                 "type": "string",
-                                "description": "Jira JQL 쿼리. 예시:\n- 'project = BTVO AND labels = \"NCMS_BMT\"'\n- 'status = \"완료\" AND created >= \"2025-10-01\"'\n- 'assignee = \"김철수\" AND priority = High'"
+                                "description": "Jira JQL 쿼리. 반드시 존재하는 프로젝트/라벨만 사용하세요. 예시:\n- 'project = BTVO AND labels = \"NCMS_BMT\"'\n- 'status = \"완료\" AND created >= \"2025-10-01\"'\n⚠️ 임의로 JQL 조건을 생성하지 마세요. 프롬프트에 명시되지 않은 라벨/프로젝트는 사용하지 마세요."
                             },
                             "max_results": {
                                 "type": "integer",
@@ -134,6 +139,24 @@ class ToolRegistry:
                                 "type": "string",
                                 "description": "연결 타입 (선택사항). 예: 'Blocks', 'Relates', 'Duplicates'. 지정하지 않으면 모든 타입 반환",
                                 "default": None
+                            }
+                        },
+                        "required": ["issue_key"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_issue_detail",
+                    "description": "특정 이슈의 상세 정보를 조회합니다. search_issues는 기본 필드만 반환하지만, 이 도구는 커스텀 필드(customfield_*)를 포함한 모든 필드를 반환합니다. 예: customfield_10134(Start Date), customfield_12345 등",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {
+                                "type": "string",
+                                "description": "이슈 키 (예: BTVO-61032, PROJ-456)"
                             }
                         },
                         "required": ["issue_key"],

@@ -1,0 +1,577 @@
+/* JQL 에디터 스타일 */
+
+.jql-editor-container {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.jql-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #f5f5f5;
+    border-bottom: 1px solid #ddd;
+    padding: 8px 12px;
+}
+
+.jql-editor-tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.jql-tab {
+    padding: 6px 16px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    color: #666;
+    border-radius: 4px 4px 0 0;
+    transition: all 0.2s;
+}
+
+.jql-tab:hover {
+    background: #e0e0e0;
+    color: #333;
+}
+
+.jql-tab.active {
+    background: white;
+    color: #2563eb;
+    font-weight: 600;
+    border-bottom: 2px solid #2563eb;
+}
+
+.btn-test-jql {
+    padding: 6px 16px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+}
+
+.btn-test-jql:hover {
+    background: #1d4ed8;
+}
+
+.btn-test-jql:disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+}
+
+.test-icon {
+    font-size: 12px;
+}
+
+.jql-editor-panel {
+    padding: 0;
+}
+
+.jql-editor-panel.active {
+    display: block;
+}
+
+.jql-editor-panel textarea {
+    width: 100%;
+    border: none;
+    padding: 12px;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 13px;
+    resize: vertical;
+}
+
+#jql-monaco-editor {
+    min-height: 200px;
+}
+
+/* JQL 테스트 결과 */
+
+.jql-test-results {
+    margin-top: 16px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    overflow: hidden;
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.jql-results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.jql-results-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 14px;
+    color: #64748b;
+}
+
+.jql-results-info strong {
+    color: #1e293b;
+    font-weight: 600;
+}
+
+.jql-view-toggle {
+    display: flex;
+    gap: 4px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 2px;
+}
+
+.jql-view-btn {
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    color: #64748b;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.jql-view-btn:hover {
+    background: #f1f5f9;
+    color: #334155;
+}
+
+.jql-view-btn.active {
+    background: #2563eb;
+    color: white;
+    font-weight: 500;
+}
+
+.jql-results-body {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* 카드 뷰 */
+
+.jql-cards-view {
+    padding: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+    gap: 16px;
+}
+
+.jql-issue-card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.jql-issue-card:hover {
+    border-color: #2563eb;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
+    transform: translateY(-2px);
+}
+
+.jql-issue-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.jql-issue-key {
+    font-weight: 600;
+    color: #2563eb;
+    text-decoration: none;
+    font-size: 14px;
+}
+
+.jql-issue-key:hover {
+    text-decoration: underline;
+}
+
+.jql-issue-type {
+    font-size: 12px;
+    padding: 2px 8px;
+    background: #f1f5f9;
+    color: #475569;
+    border-radius: 4px;
+}
+
+.jql-issue-summary {
+    font-size: 15px;
+    font-weight: 500;
+    color: #1e293b;
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
+.jql-issue-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: #64748b;
+    flex-wrap: wrap;
+}
+
+.jql-issue-status {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.jql-issue-status.done {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.jql-issue-status.in-progress {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.jql-issue-status.todo {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.jql-issue-priority {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.jql-priority-icon {
+    font-size: 16px;
+}
+
+.jql-priority-icon.highest {
+    color: #dc2626;
+}
+
+.jql-priority-icon.high {
+    color: #ea580c;
+}
+
+.jql-priority-icon.medium {
+    color: #eab308;
+}
+
+.jql-priority-icon.low {
+    color: #84cc16;
+}
+
+.jql-priority-icon.lowest {
+    color: #64748b;
+}
+
+.jql-issue-assignee {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.jql-assignee-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.jql-assignee-default {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.jql-issue-updated {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+/* 테이블 뷰 */
+
+.jql-table-view {
+    width: 100%;
+}
+
+.jql-table-view table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.jql-table-view thead {
+    background: #f8fafc;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.jql-table-view th {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #475569;
+    white-space: nowrap;
+}
+
+.jql-table-view td {
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #334155;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.jql-table-view tbody tr:hover {
+    background: #f8fafc;
+}
+
+/* JSON 뷰 */
+
+.jql-json-view {
+    padding: 16px;
+    background: #1e293b;
+    color: #e2e8f0;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.jql-json-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #334155;
+}
+
+.jql-json-header button {
+    padding: 4px 12px;
+    background: #475569;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+}
+
+.jql-json-header button:hover {
+    background: #64748b;
+}
+
+.jql-json-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* 로딩 상태 */
+
+.jql-loading {
+    padding: 32px;
+    text-align: center;
+    color: #64748b;
+}
+
+.jql-loading-spinner {
+    display: inline-block;
+    width: 32px;
+    height: 32px;
+    border: 3px solid #e2e8f0;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.jql-loading-text {
+    margin-top: 12px;
+    font-size: 14px;
+}
+
+/* 에러 상태 */
+
+.jql-error {
+    padding: 24px;
+    background: #fef2f2;
+    border-left: 4px solid #dc2626;
+}
+
+.jql-error-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #dc2626;
+    margin-bottom: 8px;
+}
+
+.jql-error-message {
+    font-size: 14px;
+    color: #7f1d1d;
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+
+.jql-error-suggestion {
+    padding: 12px;
+    background: white;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #991b1b;
+}
+
+.jql-error-suggestion strong {
+    display: block;
+    margin-bottom: 4px;
+}
+
+/* 빈 결과 */
+
+.jql-empty {
+    padding: 48px;
+    text-align: center;
+    color: #94a3b8;
+}
+
+.jql-empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.jql-empty-text {
+    font-size: 16px;
+}
+
+/* 변수 치환 정보 표시 */
+.jql-substitution-info {
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.jql-substitution-title {
+    font-weight: 600;
+    color: #0369a1;
+    margin-bottom: 12px;
+    font-size: 14px;
+}
+
+.jql-substitution-details {
+    font-size: 13px;
+    color: #334155;
+}
+
+.jql-substitution-details > div {
+    margin-bottom: 8px;
+}
+
+.jql-substitution-details strong {
+    display: inline-block;
+    width: 100px;
+    color: #0f172a;
+}
+
+.jql-substitution-details code {
+    background: #e0f2fe;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 12px;
+    color: #075985;
+}
+
+.jql-substitution-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 8px 0 0 100px;
+}
+
+.jql-substitution-list li {
+    padding: 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* JQL 카드 추가 스타일 (목록 뷰용) */
+.jql-card .jql-preview {
+    background: var(--gray-100, #f5f5f5);
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin: 0.75rem 0;
+    font-family: 'Courier New', 'Monaco', monospace;
+    font-size: 0.85rem;
+    color: var(--gray-700, #4a5568);
+    overflow-x: auto;
+}
+
+.jql-card .jql-preview code {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.jql-card-metadata {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+    color: var(--gray-500, #718096);
+    margin-bottom: 0.75rem;
+}
+
+/* 배지 간격 조정 */
+.jql-card .prompt-card-category {
+    margin-left: 0;
+    margin-right: 0.25rem;
+}
+
+.jql-card .prompt-card-header > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem;
+}

@@ -71,14 +71,15 @@ class JiraQueryTool:
             if 'endpoint' not in config or 'token' not in config:
                 raise ValueError(f"Jira 설정이 불완전합니다. endpoint 또는 token이 없습니다.")
 
-            # 토큰 복호화
-            token_encryption = TokenEncryption()
-            decrypted_token = token_encryption.decrypt_token(config['token'])
+            # 토큰 평문 사용 (복호화 제거)
+            # token_encryption = TokenEncryption()
+            # decrypted_token = token_encryption.decrypt_token(config['token'])
+            plain_token = config['token']  # 평문으로 저장되어 있음
 
             # JiraClient 생성
             jira_client = JiraClient(
                 endpoint=config['endpoint'],
-                token=decrypted_token
+                token=plain_token  # 평문 토큰 사용
             )
 
             # CachedJiraClient로 래핑 (캐싱 기능 추가)

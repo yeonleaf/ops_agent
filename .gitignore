@@ -1,5 +1,6 @@
 .env
 .venv
+venv
 __pycache__
 *.pyc
 *.pyo
@@ -20,3 +21,4 @@ whoosh_index/
 *.md
 *.db*
 *.xlsx
+<sql*

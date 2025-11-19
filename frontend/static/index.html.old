@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>월간 보고서 템플릿 에디터</title>
+
+    <!-- Monaco Editor CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@latest/min/vs/editor/editor.main.css">
+    <link rel="stylesheet" href="/static/css/editor.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>월간 보고서 템플릿 에디터</h1>
+            <div class="actions">
+                <button id="save-btn" class="btn-primary">저장</button>
+                <button id="load-btn" class="btn-secondary">불러오기</button>
+                <button id="new-btn" class="btn-secondary">새 템플릿</button>
+            </div>
+        </header>
+
+        <div class="editor-container">
+            <div class="sidebar">
+                <h3>사용 가능한 프롬프트</h3>
+                <div class="search-box">
+                    <input type="text" id="prompt-search" placeholder="프롬프트 검색...">
+                </div>
+                <div id="prompt-list" class="prompt-list">
+                    <!-- 동적으로 채워짐 -->
+                    <div class="loading">프롬프트 로딩 중...</div>
+                </div>
+            </div>
+
+            <div class="editor-wrapper">
+                <div class="editor-toolbar">
+                    <div class="template-info">
+                        <input type="text" id="template-title" placeholder="템플릿 이름" value="새 템플릿">
+                        <input type="text" id="template-description" placeholder="템플릿 설명 (선택사항)">
+                    </div>
+                    <div class="toolbar-actions">
+                        <button id="validate-btn" class="btn-small">유효성 검사</button>
+                        <span id="validation-status" class="status-badge"></span>
+                    </div>
+                </div>
+                <div id="editor"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 템플릿 목록 모달 -->
+    <div id="templates-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>저장된 템플릿</h2>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="templates-list">
+                    <!-- 동적으로 채워짐 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 로그인 모달 -->
+    <div id="login-modal" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2>로그인</h2>
+            </div>
+            <div class="modal-body">
+                <form id="login-form">
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: #2c3e50;">사용자명</label>
+                        <input type="text" id="login-username" required style="width: 100%; padding: 0.5rem; border: 1px solid #dee2e6; border-radius: 4px;">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: #2c3e50;">비밀번호</label>
+                        <input type="password" id="login-password" required style="width: 100%; padding: 0.5rem; border: 1px solid #dee2e6; border-radius: 4px;">
+                    </div>
+                    <div id="login-error" style="color: #e74c3c; margin-bottom: 1rem; display: none;"></div>
+                    <button type="submit" class="btn-primary" style="width: 100%;">로그인</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 알림 토스트 -->
+    <div id="toast" class="toast"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@latest/min/vs/loader.js"></script>
+    <script src="/static/js/editor.js"></script>
+</body>
+</html>

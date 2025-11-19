@@ -9,9 +9,22 @@ import logging
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 
-# LangChain imports
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain.tools import Tool
+# LangChain imports - LangChain 1.0 호환
+try:
+    # LangChain 0.2.x (구버전)
+    from langchain.agents import AgentExecutor, create_openai_tools_agent
+    from langchain.tools import Tool
+except ImportError:
+    # LangChain 1.0+ (신버전)
+    try:
+        from langgraph.prebuilt import create_react_agent
+    except ImportError:
+        create_react_agent = None
+
+    from langchain_core.tools import Tool, StructuredTool
+    AgentExecutor = None
+    create_openai_tools_agent = None
+
 from langchain.schema import SystemMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
