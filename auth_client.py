@@ -583,6 +583,122 @@ class AuthClient:
         except Exception as e:
             return {"success": False, "message": f"Jira 레이블 저장 실패: {str(e)}"}
 
+    def validate_jira_jql(self, jql: str) -> Dict[str, Any]:
+        """
+        사용자가 입력한 JQL 쿼리를 검증
+
+        Args:
+            jql: 검증할 JQL 쿼리
+
+        Returns:
+            검증 결과 (성공 여부, 이슈 개수, 샘플 이슈 등)
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.post(
+                f"{self.base_url}/jira/validate-jql",
+                json={"jql": jql},
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류: {response.text}"}
+
+        except Exception as e:
+            return {"success": False, "message": f"JQL 검증 실패: {str(e)}"}
+
+    def save_jira_jql(self, jql: str) -> Dict[str, Any]:
+        """
+        JQL 쿼리를 저장 (신규 방식)
+
+        Args:
+            jql: 저장할 JQL 쿼리
+
+        Returns:
+            저장 결과
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.post(
+                f"{self.base_url}/jira/jql",
+                json={"jql": jql},
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류: {response.text}"}
+
+        except Exception as e:
+            return {"success": False, "message": f"JQL 저장 실패: {str(e)}"}
+
+    def trigger_jira_sync(self, force_full_sync: bool = False) -> Dict[str, Any]:
+        """
+        수동으로 Jira 동기화 시작
+
+        Args:
+            force_full_sync: True이면 전체 재동기화
+
+        Returns:
+            트리거 결과
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.post(
+                f"{self.base_url}/jira/sync/trigger",
+                json={"force_full_sync": force_full_sync},
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류: {response.text}"}
+
+        except Exception as e:
+            return {"success": False, "message": f"Jira 동기화 트리거 실패: {str(e)}"}
+
+    def get_jira_sync_status(self) -> Dict[str, Any]:
+        """
+        Jira 동기화 상태 조회
+
+        Returns:
+            동기화 상태 정보
+        """
+        try:
+            cookies = self._get_cookies()
+            response = self.session.get(
+                f"{self.base_url}/jira/sync/status",
+                cookies=cookies
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_data = response.json()
+                    return {"success": False, "message": error_data.get("detail", f"HTTP {response.status_code} 오류")}
+                except json.JSONDecodeError:
+                    return {"success": False, "message": f"HTTP {response.status_code} 오류: {response.text}"}
+
+        except Exception as e:
+            return {"success": False, "message": f"동기화 상태 조회 실패: {str(e)}"}
+
     def reset_jira_integration(self) -> Dict[str, Any]:
         """
         Jira 연동 정보 전체 삭제 (재설정용)

@@ -1376,6 +1376,127 @@ class JiraConnector:
                 "message": "JQL 쿼리 검증 중 오류가 발생했습니다."
             }
 
+    def validate_jql(self, jql: str, max_results: int = 10) -> Dict[str, Any]:
+        """
+        사용자가 입력한 JQL 쿼리를 직접 검증 (Bearer Token 사용)
+
+        Args:
+            jql: 검증할 JQL 쿼리
+            max_results: 조회할 최대 이슈 개수 (기본 10개)
+
+        Returns:
+            검증 결과 (성공 여부, 이슈 개수, 샘플 이슈 등)
+        """
+        try:
+            logger.info(f"🔍 JQL 쿼리 검증 시작 (Bearer Token): {jql}")
+
+            # requests를 사용하여 직접 JQL 검색 API 호출
+            import requests
+
+            url = f"{self.url}/rest/api/2/search"
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            params = {
+                "jql": jql,
+                "maxResults": max_results,
+                "fields": "key,summary,status,priority,updated"
+            }
+
+            logger.info(f"🔗 API 호출: {url}")
+
+            response = requests.get(url, headers=headers, params=params, verify=True, timeout=30)
+
+            logger.info(f"📊 응답 상태 코드: {response.status_code}")
+
+            # 상태 코드 확인
+            if response.status_code == 400:
+                logger.error("❌ 400 Bad Request: JQL 쿼리 오류")
+                error_detail = ""
+                try:
+                    error_json = response.json()
+                    if "errorMessages" in error_json:
+                        error_detail = " ".join(error_json["errorMessages"])
+                except:
+                    error_detail = response.text[:200]
+
+                return {
+                    "success": False,
+                    "error": f"잘못된 JQL 쿼리: {error_detail}",
+                    "message": "JQL 쿼리 문법을 확인해주세요.",
+                    "jql_query": jql
+                }
+            elif response.status_code == 401:
+                logger.error("❌ 401 Unauthorized")
+                return {
+                    "success": False,
+                    "error": "인증 실패: Bearer API 토큰이 만료되었거나 잘못되었습니다.",
+                    "message": "Bearer API 토큰을 다시 확인해주세요."
+                }
+            elif response.status_code != 200:
+                logger.error(f"❌ HTTP {response.status_code}: {response.text}")
+                return {
+                    "success": False,
+                    "error": f"Jira API 오류 (HTTP {response.status_code}): {response.text[:100]}",
+                    "message": "JQL 쿼리 검증 중 오류가 발생했습니다."
+                }
+
+            # JSON 파싱
+            try:
+                result = response.json()
+                issue_count = result.get("total", 0)
+                issues = result.get("issues", [])
+
+                # 샘플 이슈 데이터 추출
+                sample_issues = []
+                for issue in issues[:5]:  # 최대 5개만
+                    fields = issue.get("fields", {})
+                    sample_issues.append({
+                        "key": issue.get("key"),
+                        "summary": fields.get("summary"),
+                        "status": fields.get("status", {}).get("name"),
+                        "priority": fields.get("priority", {}).get("name") if fields.get("priority") else None,
+                        "updated": fields.get("updated")
+                    })
+
+                logger.info(f"✅ JQL 쿼리 검증 성공: {issue_count}개 이슈 발견")
+
+                return {
+                    "success": True,
+                    "issue_count": issue_count,
+                    "sample_issues": sample_issues,
+                    "jql_query": jql,
+                    "has_issues": issue_count > 0,
+                    "message": f"{issue_count}개의 이슈를 찾았습니다." if issue_count > 0 else "조회된 이슈가 없습니다."
+                }
+            except ValueError as json_error:
+                logger.error(f"❌ JSON 파싱 실패: {json_error}")
+                logger.error(f"📊 응답 본문: {response.text[:200]}")
+                return {
+                    "success": False,
+                    "error": f"응답 파싱 실패: {str(json_error)}",
+                    "message": "Jira 응답을 처리할 수 없습니다."
+                }
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ HTTP 요청 실패: {e}")
+            return {
+                "success": False,
+                "error": f"네트워크 오류: {str(e)}",
+                "message": "Jira 서버에 연결할 수 없습니다."
+            }
+        except Exception as e:
+            logger.error(f"❌ JQL 쿼리 검증 중 예상치 못한 오류: {e}")
+            import traceback
+            logger.error(f"📊 스택 트레이스:\n{traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "JQL 쿼리 검증 중 오류가 발생했습니다."
+            }
+
     def close(self):
         """리소스 정리"""
         try:

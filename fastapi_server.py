@@ -4,7 +4,7 @@
 회원가입, 로그인, 외부 서비스 연동 관리
 """
 import re
-from fastapi import FastAPI, HTTPException, Depends, Cookie, Response, Request
+from fastapi import FastAPI, HTTPException, Depends, Cookie, Response, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,7 @@ from auth_utils import password_manager, token_encryption, session_manager
 import datefinder
 from dateutil.parser import parse as dateutil_parse
 import dateparser
+import urllib.parse
 
 # .env 파일 로드 (반드시 os.getenv() 호출 전에 실행)
 dotenv.load_dotenv()
@@ -319,12 +320,12 @@ async def link_kakao_account(
         logging.info(f"세션에 사용자 ID 저장: {current_user.id}")
 
         # 카카오 OAuth 인증 URL 생성
-        kakao_auth_url = (
-            f"https://kauth.kakao.com/oauth/authorize?"
-            f"client_id={KAKAO_CLIENT_ID}&"
-            f"redirect_uri={quote(KAKAO_REDIRECT_URI)}&"
-            f"response_type=code"
-        )
+        params = {
+            'client_id': KAKAO_CLIENT_ID,
+            'redirect_uri': KAKAO_REDIRECT_URI,
+            'response_type': 'code'
+        }
+        kakao_auth_url = f"https://kauth.kakao.com/oauth/authorize?{urllib.parse.urlencode(params)}"
 
         logging.info(f"카카오 OAuth URL로 리다이렉트: {kakao_auth_url}")
         return RedirectResponse(url=kakao_auth_url)
@@ -1596,7 +1597,8 @@ async def get_jira_integration(current_user: User = Depends(get_current_user)):
         jira_data = {
             "has_api_token": False,
             "has_projects": False,
-            "has_labels": False
+            "has_labels": False,
+            "has_jql": False
         }
 
         for integration in jira_integrations:
@@ -1608,12 +1610,15 @@ async def get_jira_integration(current_user: User = Depends(get_current_user)):
                 jira_data['has_projects'] = True
             elif integration.type == 'labels':
                 jira_data['has_labels'] = True
+            elif integration.type == 'jql':
+                jira_data['has_jql'] = True
+                jira_data['jql'] = integration.value
 
         # 모든 단계가 완료되었는지 확인
+        # 신규 방식(JQL) 또는 기존 방식(project + labels) 중 하나만 있으면 완료
         jira_data['is_complete'] = (
             jira_data['has_api_token'] and
-            jira_data['has_projects'] and
-            jira_data['has_labels']
+            (jira_data['has_jql'] or (jira_data['has_projects'] and jira_data['has_labels']))
         )
 
         return {
@@ -2409,6 +2414,18 @@ class JiraValidateLabelsRequest(BaseModel):
     labels: list
 
 
+class JiraValidateJQLRequest(BaseModel):
+    jql: str
+
+
+class JiraJQLRequest(BaseModel):
+    jql: str
+
+
+class JiraSyncTriggerRequest(BaseModel):
+    force_full_sync: bool = False
+
+
 @app.post("/jira/validate")
 async def validate_jira_credentials(
     request: JiraCredentialsRequest,
@@ -2659,6 +2676,101 @@ async def validate_jira_labels(
         raise HTTPException(status_code=500, detail=f"JQL 쿼리 검증 중 오류가 발생했습니다: {str(e)}")
 
 
+@app.post("/jira/validate-jql")
+async def validate_jira_jql(
+    request: JiraValidateJQLRequest,
+    session_id: Optional[str] = Cookie(None)
+):
+    """
+    사용자가 입력한 JQL 쿼리를 직접 검증
+    """
+    try:
+        # 세션 검증
+        if not session_id:
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다")
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=401, detail="세션이 만료되었습니다")
+
+        user_id = session.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="사용자 정보를 찾을 수 없습니다")
+
+        # Integration 테이블에서 Jira 정보 가져오기
+        endpoint_integration = db_manager.get_integration(user_id, 'jira', 'endpoint')
+        token_integration = db_manager.get_integration(user_id, 'jira', 'token')
+
+        if not endpoint_integration or not token_integration:
+            raise HTTPException(status_code=404, detail="Jira 인증 정보를 찾을 수 없습니다")
+
+        # 토큰 평문 사용
+        plain_token = token_integration.value
+
+        # JiraConnector를 사용하여 JQL 검증
+        from jira_connector import JiraConnector
+
+        jira_conn = JiraConnector(
+            url=endpoint_integration.value,
+            token=plain_token
+        )
+
+        # JQL 검증
+        result = jira_conn.validate_jql(request.jql)
+
+        return result
+
+    except Exception as e:
+        logging.error(f"JQL 쿼리 검증 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"JQL 쿼리 검증 중 오류가 발생했습니다: {str(e)}")
+
+
+@app.post("/jira/jql")
+async def save_jira_jql(
+    request: JiraJQLRequest,
+    session_id: Optional[str] = Cookie(None)
+):
+    """
+    JQL 쿼리를 저장 (신규 방식)
+    """
+    try:
+        # 세션 검증
+        if not session_id:
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다")
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=401, detail="세션이 만료되었습니다")
+
+        user_id = session.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="사용자 정보를 찾을 수 없습니다")
+
+        from database_models import Integration
+
+        # JQL 저장
+        jql_integration = Integration(
+            id=None,
+            user_id=user_id,
+            source='jira',
+            type='jql',
+            value=request.jql,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat()
+        )
+        db_manager.insert_integration(jql_integration)
+
+        return {
+            "success": True,
+            "message": "JQL 쿼리가 저장되었습니다.",
+            "jql": request.jql
+        }
+
+    except Exception as e:
+        logging.error(f"JQL 저장 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"JQL 저장 중 오류가 발생했습니다: {str(e)}")
+
+
 @app.post("/jira/labels")
 async def save_jira_labels(
     request: JiraLabelsRequest,
@@ -2755,6 +2867,113 @@ async def reset_jira_integration(session_id: Optional[str] = Cookie(None)):
     except Exception as e:
         logging.error(f"❌ Jira 연동 정보 삭제 중 오류: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Jira 연동 정보 삭제 중 오류가 발생했습니다: {str(e)}")
+
+
+@app.post("/jira/sync/trigger")
+async def trigger_jira_sync(
+    request: JiraSyncTriggerRequest,
+    background_tasks: BackgroundTasks,
+    session_id: Optional[str] = Cookie(None)
+):
+    """
+    수동으로 Jira 동기화 시작
+    """
+    try:
+        # 세션 검증
+        if not session_id:
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다")
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=401, detail="세션이 만료되었습니다")
+
+        user_id = session.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="사용자 정보를 찾을 수 없습니다")
+
+        # Jira 설정 확인
+        from batch.jira_config import load_jira_config
+        logging.info(f"🔍 사용자 {user_id}의 Jira 설정 로드 시도")
+        config = load_jira_config(user_id)
+        logging.info(f"📋 Jira 설정 로드 결과: {config}")
+        if not config:
+            logging.error(f"❌ 사용자 {user_id}의 Jira 연동 정보 없음 또는 로드 실패")
+            raise HTTPException(status_code=404, detail="Jira 연동 정보를 찾을 수 없습니다. Integration 테이블을 확인하세요.")
+
+        # 백그라운드에서 동기화 실행
+        def run_sync():
+            try:
+                from batch.jira_sync import run_jira_sync_batch
+                logging.info(f"🔄 사용자 {user_id}의 Jira 동기화 시작 (수동 트리거)")
+                result = run_jira_sync_batch(
+                    user_id=user_id,
+                    force_full_sync=request.force_full_sync
+                )
+                logging.info(f"✅ Jira 동기화 완료: {result}")
+            except Exception as e:
+                logging.error(f"❌ Jira 동기화 실패: {e}")
+
+        background_tasks.add_task(run_sync)
+
+        return {
+            "success": True,
+            "message": "Jira 동기화가 시작되었습니다.",
+            "force_full_sync": request.force_full_sync
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Jira 동기화 트리거 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Jira 동기화 트리거 중 오류가 발생했습니다: {str(e)}")
+
+
+@app.get("/jira/sync/status")
+async def get_jira_sync_status(session_id: Optional[str] = Cookie(None)):
+    """
+    Jira 동기화 상태 조회
+    """
+    try:
+        # 세션 검증
+        if not session_id:
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다")
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=401, detail="세션이 만료되었습니다")
+
+        user_id = session.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="사용자 정보를 찾을 수 없습니다")
+
+        # 배치 이력 조회
+        from batch.jira_config import get_batch_history
+        history = get_batch_history(user_id, batch_type="jira_sync")
+
+        if history:
+            return {
+                "success": True,
+                "last_run_at": history.get("last_run_at"),
+                "status": history.get("status"),
+                "processed_count": history.get("processed_count"),
+                "error_message": history.get("error_message"),
+                "is_running": False  # TODO: 실행 중 상태 추가 필요
+            }
+        else:
+            return {
+                "success": True,
+                "last_run_at": None,
+                "status": None,
+                "processed_count": 0,
+                "error_message": None,
+                "is_running": False
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"동기화 상태 조회 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"동기화 상태 조회 중 오류가 발생했습니다: {str(e)}")
 
 
 # ============================================

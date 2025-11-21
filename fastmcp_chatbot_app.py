@@ -115,14 +115,137 @@ st.set_page_config(
 )
 
 class RouterAgentClient:
-    """라우터 에이전트 클라이언트 래퍼 - 이메일 기능 제거로 간소화됨"""
+    """라우터 에이전트 클라이언트 래퍼 - RAG 파이프라인 통합 (RRF 지원)"""
 
     def __init__(self, llm_client):
         self.llm_client = llm_client
-        # router_agent 제거됨 (이메일 기능 의존성)
+
+        # RRF 시스템 초기화 (우선)
+        self.rrf_system = None
+        try:
+            from rrf_fusion_rag_system import RRFRAGSystem
+            self.rrf_system = RRFRAGSystem("jira_chunks")
+            print("✅ RAG: RRF 시스템 초기화 완료 (멀티쿼리 + HyDE + RRF 융합)")
+        except Exception as e:
+            print(f"⚠️ RAG: RRF 시스템 초기화 실패, 기본 검색으로 폴백: {e}")
+
+        # ChromaDB 클라이언트 초기화 (폴백용)
+        from chromadb_singleton import get_chromadb_collection
+        self.jira_collection = None
+        try:
+            self.jira_collection = get_chromadb_collection("jira_chunks", create_if_not_exists=False)
+            print("✅ RAG: jira_chunks 컬렉션 로드 성공 (폴백용)")
+        except Exception as e:
+            print(f"⚠️ RAG: jira_chunks 컬렉션 없음 (동기화 필요): {e}")
+
+    def search_knowledge_base(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        ChromaDB에서 관련 문서 검색 (RRF 기반 멀티쿼리 + HyDE)
+
+        Args:
+            query: 검색 쿼리
+            top_k: 반환할 최대 문서 수
+
+        Returns:
+            검색된 문서 리스트
+        """
+        # 1. RRF 시스템 사용 (우선)
+        if self.rrf_system:
+            try:
+                print(f"🚀 RRF 기반 검색: '{query}' (멀티쿼리 + HyDE + Rank Fusion)")
+                rrf_results = self.rrf_system.rrf_search(query)
+
+                if rrf_results:
+                    # RRF 결과를 기존 형식으로 변환
+                    documents = []
+                    for result in rrf_results[:top_k]:
+                        content = result.get('content', '')
+                        metadata = result.get('metadata', {})
+                        score = result.get('score', result.get('cosine_score', 0.0))
+
+                        documents.append({
+                            "content": content,
+                            "metadata": metadata,
+                            "distance": 1 - score,  # score -> distance 변환
+                            "similarity": score,
+                            "rrf_rank": result.get('rrf_rank', 0),
+                            "search_method": "rrf_fusion"
+                        })
+
+                    print(f"✅ RRF 검색 완료: {len(documents)}개 결과")
+                    return documents
+                else:
+                    print("⚠️ RRF 검색 결과 없음, 폴백 검색 시도")
+            except Exception as e:
+                print(f"⚠️ RRF 검색 실패, 기본 검색으로 폴백: {e}")
+
+        # 2. 기본 ChromaDB 검색 (폴백)
+        if not self.jira_collection:
+            return []
+
+        try:
+            print(f"🔍 기본 벡터 검색: '{query}'")
+            results = self.jira_collection.query(
+                query_texts=[query],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"]
+            )
+
+            # 결과 파싱
+            documents = []
+            if results and results.get("documents") and len(results["documents"]) > 0:
+                for i, doc in enumerate(results["documents"][0]):
+                    metadata = results["metadatas"][0][i] if results.get("metadatas") else {}
+                    distance = results["distances"][0][i] if results.get("distances") else 1.0
+
+                    documents.append({
+                        "content": doc,
+                        "metadata": metadata,
+                        "distance": distance,
+                        "similarity": 1 - distance,  # cosine distance -> similarity
+                        "search_method": "basic_vector"
+                    })
+
+            print(f"✅ 기본 검색 완료: {len(documents)}개 결과")
+            return documents
+        except Exception as e:
+            print(f"❌ RAG 검색 실패: {e}")
+            return []
+
+    def build_rag_context(self, documents: List[Dict[str, Any]]) -> str:
+        """
+        검색된 문서들을 RAG context로 구성
+
+        Args:
+            documents: 검색된 문서 리스트
+
+        Returns:
+            포맷된 context 문자열
+        """
+        if not documents:
+            return ""
+
+        context_parts = []
+        for i, doc in enumerate(documents, 1):
+            metadata = doc.get("metadata", {})
+            content = doc.get("content", "")
+            similarity = doc.get("similarity", 0)
+
+            # 메타데이터에서 주요 정보 추출
+            issue_key = metadata.get("issue_key", "N/A")
+            source_type = metadata.get("source_type", "unknown")
+
+            context_parts.append(
+                f"[문서 {i}] (유사도: {similarity:.2f})\n"
+                f"이슈: {issue_key}\n"
+                f"타입: {source_type}\n"
+                f"내용: {content}\n"
+            )
+
+        return "\n---\n".join(context_parts)
 
     def call_agent(self, user_query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """에이전트 호출 - 간단한 LLM 응답만 제공"""
+        """에이전트 호출 - RAG 파이프라인 적용"""
         try:
             # 이메일 관련 기능이 제거되었으므로 안내 메시지 제공
             if any(keyword in user_query.lower() for keyword in ["메일", "email", "이메일", "gmail", "outlook"]):
@@ -130,10 +253,10 @@ class RouterAgentClient:
 📧 **이메일 연동 기능이 제거되었습니다** (보안 정책)
 
 현재 사용 가능한 기능:
-✅ Jira 티켓 조회 및 관리
+✅ Jira 티켓 조회 및 관리 (RAG 지원)
 ✅ Kakao 알림 발송
 ✅ Slack 메시지 발송
-✅ 월간보고 자동화
+📊 월간보고는 웹 인터페이스(http://localhost:8002/editor)를 이용해주세요
 
 다른 기능을 이용해주세요!
                 """
@@ -145,16 +268,70 @@ class RouterAgentClient:
                     "query": user_query
                 }
 
-            # 일반 질문은 LLM으로 응답
-            response = self.llm_client.invoke(user_query)
-            return {
-                "success": True,
-                "message": response.content if hasattr(response, 'content') else str(response),
-                "data": None,
-                "tools_used": ["llm"],
-                "query": user_query
-            }
+            # RAG: ChromaDB에서 관련 문서 검색
+            print(f"🔍 RAG 검색 시작: {user_query}")
+            related_docs = self.search_knowledge_base(user_query, top_k=5)
+
+            if related_docs:
+                # RAG context 구성
+                rag_context = self.build_rag_context(related_docs)
+                print(f"📚 RAG: {len(related_docs)}개 문서 검색됨")
+
+                # RAG 프롬프트 템플릿
+                rag_prompt = f"""다음은 Jira 이슈 데이터베이스에서 검색된 관련 정보입니다:
+
+{rag_context}
+
+---
+
+위 정보를 참고하여 다음 질문에 답변해주세요:
+질문: {user_query}
+
+답변 시 주의사항:
+1. 검색된 문서의 내용을 기반으로 정확하게 답변하세요
+2. 이슈 키(예: NCMS-1234)를 언급할 때는 정확히 표기하세요
+3. 검색된 정보에 없는 내용은 추측하지 말고 "해당 정보를 찾을 수 없습니다"라고 답변하세요
+4. 한국어로 자연스럽게 답변하세요
+"""
+
+                # LLM 호출 (RAG context 포함)
+                response = self.llm_client.invoke(rag_prompt)
+                return {
+                    "success": True,
+                    "message": response.content if hasattr(response, 'content') else str(response),
+                    "data": {"related_docs": related_docs},
+                    "tools_used": ["rag", "llm"],
+                    "query": user_query,
+                    "rag_docs_count": len(related_docs)
+                }
+            else:
+                # RAG 검색 결과 없음 - 일반 LLM 응답
+                print("⚠️ RAG: 관련 문서 없음, 일반 LLM 응답")
+                fallback_prompt = f"""질문: {user_query}
+
+답변: Jira 데이터베이스에서 관련 정보를 찾을 수 없었습니다.
+Jira 동기화가 완료되지 않았거나, 검색어와 관련된 이슈가 없을 수 있습니다.
+
+다음을 확인해주세요:
+1. Jira 연동이 완료되었는지 확인 (🔧 Jira 관리 탭)
+2. Jira 동기화를 실행했는지 확인 (증분 동기화 버튼)
+3. 검색어를 다르게 표현해보세요 (예: 이슈 키, 프로젝트명, 키워드 등)
+
+일반적인 질문이라면 답변 가능합니다. 무엇을 도와드릴까요?
+"""
+                response = self.llm_client.invoke(fallback_prompt)
+                return {
+                    "success": True,
+                    "message": response.content if hasattr(response, 'content') else str(response),
+                    "data": None,
+                    "tools_used": ["llm"],
+                    "query": user_query,
+                    "rag_docs_count": 0
+                }
         except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            print(f"❌ RAG 처리 중 오류:\n{error_detail}")
             return {
                 "success": False,
                 "message": f"처리 중 오류가 발생했습니다: {str(e)}",
@@ -169,8 +346,8 @@ class RouterAgentClient:
         return {
             "status": "running",
             "agent_type": "simplified_agent",
-            "available_features": ["Jira", "Kakao", "Slack", "월간보고"],
-            "message": "이메일 기능 제거 - Jira/Kakao/Slack 연동 사용 가능"
+            "available_features": ["Jira", "Kakao", "Slack"],
+            "message": "이메일 기능 제거 - Jira/Kakao/Slack 연동 사용 가능. 월간보고는 http://localhost:8002/editor 이용"
         }
 
 # display_correction_ui 함수 제거됨 (Gmail 연동 제거)
@@ -320,7 +497,7 @@ def main():
     chatbot = AgentNetworkChatBot(st.session_state.llm_client)
 
     # 탭 생성
-    tab1, tab2, tab3, tab4 = st.tabs(["💬 AI 챗봇", "🎫 티켓 관리", "📚 RAG 데이터 관리자", "📊 월간보고"])
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 AI 챗봇", "🎫 티켓 관리", "📚 RAG 데이터 관리자", "🔧 Jira 관리"])
 
     # 자동 탭 전환 처리
     if st.session_state.auto_switch_to_tickets:
@@ -339,7 +516,10 @@ def main():
         create_rag_manager_tab()
 
     with tab4:
-        display_monthly_report_tab()
+        from jira_management_ui import render_jira_management
+        from auth_client import AuthClient
+        auth_client = AuthClient()
+        render_jira_management(auth_client)
 
 
 def display_chat_interface(chatbot):

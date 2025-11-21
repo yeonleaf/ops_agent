@@ -122,13 +122,34 @@ class VectorDBManager:
             print(f"⚠️ ChromaDB 파일 권한 설정 실패: {e}")
 
     def _init_rrf_system(self):
-        """RRF 시스템 초기화"""
+        """RRF 시스템 초기화 (스마트 컬렉션 감지)"""
         try:
             from rrf_fusion_rag_system import RRFRAGSystem
 
-            # file_chunks 컬렉션으로 RRF 시스템 초기화
-            self.rrf_system = RRFRAGSystem("file_chunks")
-            print("✅ RRF 시스템 초기화 완료")
+            # 사용 가능한 컬렉션 확인
+            available_collections = [col.name for col in self.client.list_collections()]
+
+            # 우선순위: jira_chunks > file_chunks > 기타
+            target_collection = None
+            if "jira_chunks" in available_collections:
+                target_collection = "jira_chunks"
+            elif "file_chunks" in available_collections:
+                target_collection = "file_chunks"
+            elif available_collections:
+                # 첫 번째 비어있지 않은 컬렉션 사용
+                for col_name in available_collections:
+                    col = self.client.get_collection(col_name)
+                    if col.count() > 0:
+                        target_collection = col_name
+                        break
+
+            if target_collection:
+                self.rrf_system = RRFRAGSystem(target_collection)
+                print(f"✅ RRF 시스템 초기화 완료 (컬렉션: {target_collection})")
+            else:
+                print("⚠️ RRF 초기화 불가: 사용 가능한 컬렉션 없음")
+                self.rrf_system = None
+
         except Exception as e:
             print(f"⚠️ RRF 시스템 초기화 실패: {e}")
             print("🔄 기본 벡터 검색으로 폴백")

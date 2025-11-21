@@ -18,22 +18,68 @@ from models.unified_chunk import UnifiedChunk
 logger = logging.getLogger(__name__)
 
 
-def build_jira_jql(config: Dict, last_sync_time: datetime) -> str:
+def build_jira_jql(config: Dict, last_sync_time: Optional[datetime] = None) -> str:
     """
     JQL 쿼리 생성
+
+    Args:
+        config:
+            신규 방식 (JQL 직접 입력):
+            {
+                "jql": "project = BTVO AND labels IN (NCMS)"
+            }
+
+            기존 방식 (하위 호환):
+            {
+                "projects": ["BTVO"],
+                "labels": {"BTVO": ["NCMS"]}
+            }
+        last_sync_time: 마지막 동기화 시각 (None이면 전체 조회)
+
+    Returns:
+        JQL 쿼리 문자열
+
+    Example:
+        신규: project = BTVO AND labels IN (NCMS) AND updated >= '2025-10-23'
+        기존: (project = BTVO AND labels IN (NCMS)) AND updated >= '2025-10-23' ORDER BY updated DESC
+    """
+    # 신규 방식: JQL 직접 사용
+    if "jql" in config and config["jql"]:
+        jql_base = config["jql"]
+        logger.info(f"📝 JQL 직접 사용 (신규 방식): {jql_base}")
+    else:
+        # 기존 방식: projects + labels로 JQL 생성 (하위 호환)
+        jql_base = _build_jql_from_projects_labels(config)
+        logger.info(f"📝 JQL 자동 생성 (기존 방식): {jql_base}")
+
+    # 시간 조건 추가 (incremental sync)
+    if last_sync_time:
+        date_str = last_sync_time.strftime("%Y-%m-%d")
+        jql = f"({jql_base}) AND updated >= '{date_str}'"
+    else:
+        # 전체 조회 (force_full_sync)
+        jql = jql_base
+
+    # ORDER BY가 없으면 추가
+    if "ORDER BY" not in jql.upper():
+        jql += " ORDER BY updated DESC"
+
+    logger.debug(f"🔍 최종 JQL: {jql}")
+    return jql
+
+
+def _build_jql_from_projects_labels(config: Dict) -> str:
+    """
+    기존 방식: projects + labels로 JQL 생성 (하위 호환)
 
     Args:
         config: {
             "projects": ["BTVO"],
             "labels": {"BTVO": ["NCMS"]}
         }
-        last_sync_time: 마지막 동기화 시각
 
     Returns:
-        JQL 쿼리 문자열
-
-    Example:
-        project = BTVO AND labels IN (NCMS) AND updated >= '2025-10-23 09:00'
+        JQL 베이스 쿼리 (시간 조건 제외)
     """
     labels = config.get("labels", {})
 
@@ -41,7 +87,7 @@ def build_jira_jql(config: Dict, last_sync_time: datetime) -> str:
         # labels가 없으면 projects만 사용
         projects = config.get("projects", [])
         if not projects:
-            raise ValueError("projects 또는 labels 중 하나는 필수입니다")
+            raise ValueError("jql, projects, 또는 labels 중 하나는 필수입니다")
 
         project_conditions = [f"project = {p}" for p in projects]
         jql_base = " OR ".join(project_conditions)
@@ -61,15 +107,7 @@ def build_jira_jql(config: Dict, last_sync_time: datetime) -> str:
 
         jql_base = " OR ".join(conditions)
 
-    # 시간 조건 추가 (Jira JQL은 날짜만 지원)
-    date_str = last_sync_time.strftime("%Y-%m-%d")
-    jql = f"({jql_base}) AND updated >= '{date_str}'"
-
-    # 정렬 추가 (최신순)
-    jql += " ORDER BY updated DESC"
-
-    logger.debug(f"생성된 JQL: {jql}")
-    return jql
+    return jql_base
 
 
 def chunk_text(text: str, max_length: int = 1000) -> List[str]:

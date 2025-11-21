@@ -69,12 +69,21 @@ def load_jira_config(user_id: int, db_path: str = "tickets.db") -> Optional[Dict
         db_path: SQLite DB 경로
 
     Returns:
+        신규 방식 (JQL 직접 입력):
         {
             "endpoint": "https://jira.skbroadband.com",
-            "token": "decrypted_token",  # 복호화된 토큰
+            "token": "decrypted_token",
+            "jql": "project = BTVO AND labels IN (NCMS)"
+        }
+
+        기존 방식 (하위 호환):
+        {
+            "endpoint": "https://jira.skbroadband.com",
+            "token": "decrypted_token",
             "projects": ["BTVO"],
             "labels": {"BTVO": ["NCMS"]}
         }
+
         또는 None (설정 없음)
     """
     try:
@@ -100,14 +109,22 @@ def load_jira_config(user_id: int, db_path: str = "tickets.db") -> Optional[Dict
             if type_name == "endpoint":
                 config["endpoint"] = value
             elif type_name == "token":
-                # 토큰 복호화
-                token_encryption = TokenEncryption()
-                config["token"] = token_encryption.decrypt_token(value)
+                # 토큰 복호화 시도 (실패 시 평문 사용)
+                try:
+                    token_encryption = TokenEncryption()
+                    config["token"] = token_encryption.decrypt_token(value)
+                except Exception as decrypt_error:
+                    # 복호화 실패 시 평문으로 간주 (신규 방식)
+                    logger.warning(f"토큰 복호화 실패, 평문으로 사용: {decrypt_error}")
+                    config["token"] = value
+            elif type_name == "jql":
+                # JQL 직접 저장 (신규 방식)
+                config["jql"] = value
             elif type_name == "project":
-                # JSON 배열 파싱
+                # JSON 배열 파싱 (기존 방식)
                 config["projects"] = json.loads(value)
             elif type_name == "labels":
-                # JSON 객체 파싱
+                # JSON 객체 파싱 (기존 방식)
                 config["labels"] = json.loads(value)
 
         # 필수 필드 확인
@@ -115,23 +132,32 @@ def load_jira_config(user_id: int, db_path: str = "tickets.db") -> Optional[Dict
             logger.error(f"❌ User {user_id}의 Jira 필수 정보 누락 (endpoint 또는 token)")
             return None
 
-        # projects가 없으면 빈 리스트
-        if "projects" not in config:
-            config["projects"] = []
+        # JQL이 있으면 신규 방식
+        if "jql" in config:
+            logger.info(f"✅ User {user_id} Jira 설정 로드 완료 (신규 JQL 방식)")
+            logger.debug(f"   - Endpoint: {config['endpoint']}")
+            logger.debug(f"   - JQL: {config['jql']}")
+        else:
+            # 기존 방식 (하위 호환)
+            # projects가 없으면 빈 리스트
+            if "projects" not in config:
+                config["projects"] = []
 
-        # labels가 없으면 빈 객체
-        if "labels" not in config:
-            config["labels"] = {}
+            # labels가 없으면 빈 객체
+            if "labels" not in config:
+                config["labels"] = {}
 
-        logger.info(f"✅ User {user_id} Jira 설정 로드 완료")
-        logger.debug(f"   - Endpoint: {config['endpoint']}")
-        logger.debug(f"   - Projects: {config['projects']}")
-        logger.debug(f"   - Labels: {config['labels']}")
+            logger.info(f"✅ User {user_id} Jira 설정 로드 완료 (기존 project-labels 방식)")
+            logger.debug(f"   - Endpoint: {config['endpoint']}")
+            logger.debug(f"   - Projects: {config['projects']}")
+            logger.debug(f"   - Labels: {config['labels']}")
 
         return config
 
     except Exception as e:
         logger.error(f"❌ Jira 설정 로드 실패: {e}")
+        import traceback
+        logger.error(f"상세 오류:\n{traceback.format_exc()}")
         return None
 
 

@@ -11,12 +11,11 @@ import json
 
 def render_jira_onboarding_tab(auth_client: AuthClient, email: str):
     """
-    Jira 4단계 온보딩 탭 렌더링
+    Jira 3단계 온보딩 탭 렌더링 (신규 JQL 방식)
 
     Step 1: Endpoint & Token 입력
     Step 2: /myself API 검증 및 저장
-    Step 3: /project API 호출 및 프로젝트 선택
-    Step 4: 레이블 입력 및 /jql 검증
+    Step 3: JQL 쿼리 입력 및 검증
 
     Args:
         auth_client: AuthClient 인스턴스
@@ -46,12 +45,10 @@ def render_jira_onboarding_tab(auth_client: AuthClient, email: str):
         st.session_state.jira_api_token = ""
     if 'jira_user_info' not in st.session_state:
         st.session_state.jira_user_info = None
-    if 'jira_available_projects' not in st.session_state:
-        st.session_state.jira_available_projects = []
-    if 'jira_selected_projects' not in st.session_state:
-        st.session_state.jira_selected_projects = []
-    if 'jira_labels_config' not in st.session_state:
-        st.session_state.jira_labels_config = {}
+    if 'jira_jql' not in st.session_state:
+        st.session_state.jira_jql = ""
+    if 'jira_jql_validated' not in st.session_state:
+        st.session_state.jira_jql_validated = False
 
     # 연동 완료 상태 확인 (모든 단계가 완료되었는지 확인)
     jira_status = auth_client.get_jira_integration()
@@ -81,9 +78,8 @@ def render_jira_onboarding_tab(auth_client: AuthClient, email: str):
                     st.session_state.jira_endpoint = ""
                     st.session_state.jira_api_token = ""
                     st.session_state.jira_user_info = None
-                    st.session_state.jira_available_projects = []
-                    st.session_state.jira_selected_projects = []
-                    st.session_state.jira_labels_config = {}
+                    st.session_state.jira_jql = ""
+                    st.session_state.jira_jql_validated = False
                     st.session_state.atlassian_connected = False
 
                     st.success("✅ Jira 연동 정보가 삭제되었습니다.")
@@ -95,8 +91,8 @@ def render_jira_onboarding_tab(auth_client: AuthClient, email: str):
     # 진행 단계 표시
     st.markdown("### Jira 연동 설정")
     current_step = st.session_state.jira_onboarding_step
-    st.progress(current_step / 4)
-    st.markdown(f"**진행 단계: {current_step}/4**")
+    st.progress(current_step / 3)
+    st.markdown(f"**진행 단계: {current_step}/3**")
 
     # 디버깅 정보
     with st.expander("🔍 디버깅 정보"):
@@ -104,8 +100,8 @@ def render_jira_onboarding_tab(auth_client: AuthClient, email: str):
         st.write(f"endpoint: {st.session_state.jira_endpoint}")
         st.write(f"token 저장됨: {bool(st.session_state.jira_api_token)}")
         st.write(f"user_info: {st.session_state.jira_user_info}")
-        st.write(f"선택된 프로젝트: {st.session_state.jira_selected_projects}")
-        st.write(f"레이블 설정: {st.session_state.jira_labels_config}")
+        st.write(f"JQL: {st.session_state.jira_jql}")
+        st.write(f"JQL 검증됨: {st.session_state.jira_jql_validated}")
 
     # 단계별 UI 렌더링
     if current_step == 1:
@@ -113,9 +109,7 @@ def render_jira_onboarding_tab(auth_client: AuthClient, email: str):
     elif current_step == 2:
         _render_step2_validation(auth_client)
     elif current_step == 3:
-        _render_step3_projects(auth_client)
-    elif current_step == 4:
-        _render_step4_labels(auth_client)
+        _render_step3_jql(auth_client)
 
 
 def _render_step1_credentials(auth_client: AuthClient):
@@ -219,8 +213,144 @@ def _render_step2_validation(auth_client: AuthClient):
                         st.error(f"상세 오류: {result['error']}")
 
 
+def _render_step3_jql(auth_client: AuthClient):
+    """Step 3: JQL 쿼리 입력 및 검증 (신규 방식)"""
+
+    st.markdown("#### Step 3: JQL 쿼리 입력")
+    st.markdown("연동할 Jira 이슈를 조회할 JQL 쿼리를 입력해주세요.")
+
+    # JQL 입력 초기화
+    if "jira_jql" not in st.session_state:
+        st.session_state.jira_jql = ""
+    if "jira_jql_validated" not in st.session_state:
+        st.session_state.jira_jql_validated = False
+
+    # JQL 예시 표시
+    with st.expander("📖 JQL 쿼리 예시 보기"):
+        st.markdown("""
+**JQL (Jira Query Language) 예시:**
+
+1. **특정 프로젝트의 모든 이슈**
+   ```
+   project = BTVO ORDER BY updated DESC
+   ```
+
+2. **특정 레이블이 있는 이슈**
+   ```
+   project = BTVO AND labels IN (NCMS, BTVO) ORDER BY updated DESC
+   ```
+
+3. **여러 프로젝트에서 조회**
+   ```
+   (project = BTVO OR project = PROJ2) ORDER BY updated DESC
+   ```
+
+4. **특정 상태의 이슈**
+   ```
+   project = BTVO AND status IN (Open, "In Progress") ORDER BY updated DESC
+   ```
+
+5. **담당자가 지정된 이슈**
+   ```
+   project = BTVO AND assignee = currentUser() ORDER BY updated DESC
+   ```
+
+**참고:** `updated >=` 조건은 자동으로 추가되므로 입력하지 않아도 됩니다.
+        """)
+
+    # JQL 입력
+    jql_input = st.text_area(
+        "JQL 쿼리",
+        value=st.session_state.jira_jql,
+        height=150,
+        placeholder="예: project = BTVO AND labels IN (NCMS) ORDER BY updated DESC",
+        help="조회할 이슈를 필터링할 JQL 쿼리를 입력하세요."
+    )
+
+    st.session_state.jira_jql = jql_input
+
+    # JQL 검증 버튼
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        validate_button = st.button(
+            "🔍 JQL 검증",
+            key="validate_jql",
+            use_container_width=True,
+            type="primary",
+            disabled=not jql_input.strip()
+        )
+
+    if validate_button and jql_input.strip():
+        with st.spinner("JQL 쿼리 검증 중..."):
+            result = auth_client.validate_jira_jql(jql_input.strip())
+
+            if result.get("success"):
+                issue_count = result.get("issue_count", 0)
+                sample_issues = result.get("sample_issues", [])
+
+                st.success(f"✅ 검증 완료: {issue_count}개의 이슈를 찾았습니다.")
+
+                # 샘플 이슈 표시
+                if sample_issues:
+                    st.markdown("**조회된 이슈 샘플 (최대 5개):**")
+                    for issue in sample_issues:
+                        with st.container():
+                            st.markdown(f"- **{issue['key']}**: {issue['summary']}")
+                            if issue.get('status'):
+                                st.caption(f"  상태: {issue['status']} | 우선순위: {issue.get('priority', 'N/A')} | 업데이트: {issue.get('updated', 'N/A')}")
+
+                st.session_state.jira_jql_validated = True
+            else:
+                st.error(f"❌ 검증 실패: {result.get('message', '알 수 없는 오류')}")
+                if result.get('error'):
+                    st.error(f"상세 오류: {result['error']}")
+                st.session_state.jira_jql_validated = False
+
+    # 검증 상태 표시
+    if st.session_state.jira_jql_validated and st.session_state.jira_jql:
+        st.info("✅ JQL 쿼리가 검증되었습니다.")
+
+    # 네비게이션 버튼
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("← 이전 단계", key="back_to_step2", use_container_width=True):
+            st.session_state.jira_onboarding_step = 2
+            st.rerun()
+
+    with col2:
+        if st.button(
+            "연동 완료",
+            key="complete_onboarding",
+            type="primary",
+            use_container_width=True,
+            disabled=not st.session_state.jira_jql_validated
+        ):
+            if not st.session_state.jira_jql_validated:
+                st.error("JQL 쿼리를 먼저 검증해주세요.")
+            else:
+                with st.spinner("JQL 쿼리 저장 중..."):
+                    # JQL 저장
+                    result = auth_client.save_jira_jql(st.session_state.jira_jql)
+
+                    if result.get("success"):
+                        st.success("🎉 Jira 연동이 완료되었습니다!")
+                        # 세션 상태 초기화
+                        st.session_state.jira_onboarding_step = 1
+                        st.session_state.jira_endpoint = ""
+                        st.session_state.jira_api_token = ""
+                        st.session_state.jira_user_info = None
+                        st.session_state.jira_jql = ""
+                        st.session_state.jira_jql_validated = False
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error(f"❌ JQL 저장 실패: {result.get('message', '알 수 없는 오류')}")
+
+
 def _render_step3_projects(auth_client: AuthClient):
-    """Step 3: /project API 호출 및 프로젝트 선택"""
+    """Step 3: /project API 호출 및 프로젝트 선택 (구버전 - 사용 안 함)"""
 
     st.markdown("#### Step 3: 연동할 프로젝트 선택")
     st.markdown("연동할 Jira 프로젝트를 선택해주세요.")

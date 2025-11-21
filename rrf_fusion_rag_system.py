@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RRF (Reciprocal Rank Fusion) 기반 RAG 시스템
-Multi-Query와 HyDE 검색 결과를 순위 기반으로 지능적 융합
+Multi-Query, HyDE, BM25 검색 결과를 순위 기반으로 지능적 융합 (Hybrid Search)
 """
 
 import os
@@ -21,22 +21,117 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from intelligent_chunk_weighting import IntelligentChunkWeighting
 from hyde_rag_system_mock import MockHyDEGenerator, HyDEConfig
 
+# BM25 관련 import
+try:
+    from rank_bm25 import BM25Okapi
+    BM25_AVAILABLE = True
+except ImportError:
+    BM25_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ rank_bm25 미설치. BM25 검색 비활성화. 설치: pip install rank-bm25")
+
+# 한국어 형태소 분석기 import
+try:
+    from kiwipiepy import Kiwi
+    KIWI_AVAILABLE = True
+except ImportError:
+    KIWI_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ kiwipiepy 미설치. 기본 토크나이저 사용. 설치: pip install kiwipiepy")
+
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class KoreanTokenizer:
+    """한국어 형태소 분석 토크나이저 (Kiwipiepy 기반)"""
+
+    def __init__(self, use_kiwi: bool = True):
+        """
+        토크나이저 초기화
+
+        Args:
+            use_kiwi: Kiwipiepy 사용 여부
+        """
+        self.use_kiwi = use_kiwi and KIWI_AVAILABLE
+        self.kiwi = None
+
+        if self.use_kiwi:
+            try:
+                self.kiwi = Kiwi()
+                logger.info("✅ Kiwipiepy 한국어 형태소 분석기 초기화 완료")
+            except Exception as e:
+                logger.warning(f"⚠️ Kiwipiepy 초기화 실패, 기본 토크나이저 사용: {e}")
+                self.use_kiwi = False
+
+    def tokenize(self, text: str) -> List[str]:
+        """
+        텍스트를 토큰으로 분리 (하이픈 복합어 보존)
+
+        Args:
+            text: 입력 텍스트
+
+        Returns:
+            토큰 리스트
+        """
+        if not text:
+            return []
+
+        if self.use_kiwi and self.kiwi:
+            try:
+                # Kiwipiepy 형태소 분석
+                result = self.kiwi.tokenize(text)
+
+                # 하이픈 복합어 재결합 (예: NCMS-EUXP)
+                tokens = []
+                i = 0
+                while i < len(result):
+                    token = result[i]
+
+                    # 영어/숫자 + 하이픈 + 영어/숫자 패턴 감지
+                    if (token.tag in ['SL', 'SN'] and
+                        i + 2 < len(result) and
+                        result[i + 1].form == '-' and
+                        result[i + 2].tag in ['SL', 'SN']):
+                        # 복합어로 결합: "NCMS" + "-" + "EUXP" → "ncms-euxp"
+                        compound = token.form.lower() + '-' + result[i + 2].form.lower()
+                        tokens.append(compound)
+                        i += 3  # 3개 토큰 건너뛰기
+                    elif token.tag in ['NNG', 'NNP', 'VV', 'VA', 'SL', 'SN', 'XR', 'SH']:
+                        # 일반 토큰
+                        form = token.form.lower() if token.tag in ['SL', 'SN'] else token.form
+                        tokens.append(form)
+                        i += 1
+                    else:
+                        i += 1
+
+                return tokens
+
+            except Exception as e:
+                logger.warning(f"⚠️ Kiwipiepy 토크나이징 실패, 기본 방식 사용: {e}")
+
+        # 기본 토크나이저 (공백 분리)
+        return text.lower().split()
+
+
 @dataclass
 class RRFConfig:
-    """RRF 시스템 설정"""
+    """RRF 시스템 설정 (Hybrid Search 지원)"""
     # RRF 설정
     rrf_k: int = 60  # RRF 상수 (일반적으로 60 사용)
     multi_query_results: int = 20  # 멀티쿼리 검색 결과 수
     hyde_results: int = 20  # HyDE 검색 결과 수
+    bm25_results: int = 20  # BM25 검색 결과 수
     final_candidates: int = 30  # 최종 후보 수
 
     # 기존 HyDE 설정
     multi_query_count: int = 3
     top_k_per_query: int = 15
+
+    # BM25 설정
+    enable_bm25: bool = True  # BM25 검색 활성화 여부
+    bm25_tokenizer: str = "korean"  # simple 또는 korean (기본: 한국어 형태소 분석)
 
 class RRFFusionEngine:
     """RRF (Reciprocal Rank Fusion) 융합 엔진"""
@@ -52,13 +147,15 @@ class RRFFusionEngine:
         logger.info(f"✅ RRF 융합 엔진 초기화 (k={config.rrf_k})")
 
     def calculate_rrf_scores(self, multi_query_results: List[Dict[str, Any]],
-                           hyde_results: List[Dict[str, Any]]) -> Dict[str, float]:
+                           hyde_results: List[Dict[str, Any]],
+                           bm25_results: Optional[List[Dict[str, Any]]] = None) -> Dict[str, float]:
         """
-        RRF 점수 계산
+        RRF 점수 계산 (3-way: Multi-Query + HyDE + BM25)
 
         Args:
             multi_query_results: 멀티쿼리 검색 결과 (순위 순)
             hyde_results: HyDE 검색 결과 (순위 순)
+            bm25_results: BM25 검색 결과 (순위 순, optional)
 
         Returns:
             문서 ID별 RRF 점수 딕셔너리
@@ -83,24 +180,38 @@ class RRFFusionEngine:
 
             logger.debug(f"  HyDE {rank}위: {doc_id} → +{rrf_score:.6f}")
 
+        # 3. BM25 결과 처리 (있는 경우) - 키워드 정확 매칭이므로 6배 가중치
+        if bm25_results:
+            logger.info(f"🔄 BM25 결과 RRF 점수 계산: {len(bm25_results)}개 (가중치 6.0x)")
+            for rank, doc in enumerate(bm25_results, 1):
+                doc_id = doc['id']
+                rrf_score = 1.0 / (self.config.rrf_k + rank)
+                # BM25는 키워드 정확 매칭이므로 6배 가중치 적용
+                weighted_score = rrf_score * 6.0
+                rrf_scores[doc_id] += weighted_score
+
+                logger.debug(f"  BM25 {rank}위: {doc_id} → +{weighted_score:.6f} (기본:{rrf_score:.6f} x6)")
+
         logger.info(f"✅ RRF 점수 계산 완료: {len(rrf_scores)}개 고유 문서")
         return dict(rrf_scores)
 
     def fuse_results(self, multi_query_results: List[Dict[str, Any]],
-                    hyde_results: List[Dict[str, Any]]) -> List[str]:
+                    hyde_results: List[Dict[str, Any]],
+                    bm25_results: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], Dict[str, float]]:
         """
-        두 검색 결과를 RRF로 융합하여 최종 후보군 생성
+        검색 결과들을 RRF로 융합하여 최종 후보군 생성 (Hybrid Search)
 
         Args:
             multi_query_results: 멀티쿼리 검색 결과
             hyde_results: HyDE 검색 결과
+            bm25_results: BM25 검색 결과 (optional)
 
         Returns:
-            RRF 점수 순으로 정렬된 문서 ID 리스트
+            (RRF 점수 순으로 정렬된 문서 ID 리스트, RRF 점수 딕셔너리)
         """
         try:
             # RRF 점수 계산
-            rrf_scores = self.calculate_rrf_scores(multi_query_results, hyde_results)
+            rrf_scores = self.calculate_rrf_scores(multi_query_results, hyde_results, bm25_results)
 
             # RRF 점수 기준으로 정렬
             sorted_doc_ids = sorted(rrf_scores.keys(), key=lambda doc_id: rrf_scores[doc_id], reverse=True)
@@ -108,7 +219,10 @@ class RRFFusionEngine:
             # 상위 N개 선택
             final_candidates = sorted_doc_ids[:self.config.final_candidates]
 
-            logger.info(f"🎯 RRF 융합 완료: {len(final_candidates)}개 최종 후보")
+            search_methods = "Multi-Query + HyDE"
+            if bm25_results:
+                search_methods += " + BM25"
+            logger.info(f"🎯 RRF 융합 완료 ({search_methods}): {len(final_candidates)}개 최종 후보")
 
             # 상위 5개 RRF 점수 출력
             logger.info("📊 상위 5개 RRF 점수:")
@@ -116,11 +230,11 @@ class RRFFusionEngine:
                 score = rrf_scores[doc_id]
                 logger.info(f"  {i}. {doc_id[:12]}... → {score:.6f}")
 
-            return final_candidates
+            return final_candidates, rrf_scores
 
         except Exception as e:
             logger.error(f"❌ RRF 융합 실패: {e}")
-            return []
+            return [], {}
 
     def analyze_fusion_effect(self, multi_query_results: List[Dict[str, Any]],
                             hyde_results: List[Dict[str, Any]],
@@ -200,10 +314,16 @@ class RRFRAGSystem:
         self.weighting_system = None
         self.rrf_engine = None
 
+        # BM25 관련
+        self.bm25_index = None
+        self.bm25_documents = []  # (doc_id, content) 리스트
+        self.bm25_corpus_tokenized = []  # 토크나이즈된 코퍼스
+        self.tokenizer = None  # 한국어 토크나이저
+
         self._init_components()
 
     def _init_components(self):
-        """시스템 컴포넌트 초기화"""
+        """시스템 컴포넌트 초기화 (Hybrid Search 지원)"""
         try:
             # ChromaDB 연결
             self.client = chromadb.PersistentClient(
@@ -222,11 +342,53 @@ class RRFRAGSystem:
             # RRF 융합 엔진
             self.rrf_engine = RRFFusionEngine(self.config)
 
+            # 한국어 토크나이저 초기화
+            use_korean_tokenizer = self.config.bm25_tokenizer == "korean"
+            self.tokenizer = KoreanTokenizer(use_kiwi=use_korean_tokenizer)
+
+            # BM25 인덱스 초기화
+            if self.config.enable_bm25 and BM25_AVAILABLE:
+                self._init_bm25_index()
+
             logger.info(f"✅ RRF RAG 시스템 초기화 완료: {self.collection.count()}개 문서")
 
         except Exception as e:
             logger.error(f"❌ RRF RAG 시스템 초기화 실패: {e}")
             raise e
+
+    def _init_bm25_index(self):
+        """BM25 인덱스 초기화"""
+        try:
+            logger.info("🔨 BM25 인덱스 구축 시작...")
+
+            # 모든 문서 가져오기
+            all_docs = self.collection.get(include=["documents", "metadatas"])
+
+            if not all_docs['ids']:
+                logger.warning("⚠️ BM25: 문서가 없어 인덱스 구축 불가")
+                return
+
+            # 문서 리스트 구축
+            for i, doc_id in enumerate(all_docs['ids']):
+                content = all_docs['documents'][i] if all_docs['documents'] else ""
+                if content:
+                    self.bm25_documents.append((doc_id, content))
+
+            # 토크나이징 (한국어 형태소 분석 또는 공백 기반)
+            for doc_id, content in self.bm25_documents:
+                tokens = self.tokenizer.tokenize(content)
+                self.bm25_corpus_tokenized.append(tokens)
+
+            # BM25 인덱스 생성
+            if self.bm25_corpus_tokenized:
+                self.bm25_index = BM25Okapi(self.bm25_corpus_tokenized)
+                logger.info(f"✅ BM25 인덱스 구축 완료: {len(self.bm25_documents)}개 문서")
+            else:
+                logger.warning("⚠️ BM25: 토크나이징된 문서가 없음")
+
+        except Exception as e:
+            logger.warning(f"⚠️ BM25 인덱스 구축 실패: {e}")
+            self.bm25_index = None
 
     def multi_query_search(self, query: str) -> List[Dict[str, Any]]:
         """
@@ -332,6 +494,51 @@ class RRFRAGSystem:
             logger.error(f"❌ HyDE 검색 실패: {e}")
             return []
 
+    def bm25_search(self, query: str) -> List[Dict[str, Any]]:
+        """
+        BM25 키워드 검색 (독립 실행)
+
+        Args:
+            query: 검색 쿼리
+
+        Returns:
+            BM25 검색 결과 (순위 순)
+        """
+        if not self.bm25_index:
+            logger.warning("⚠️ BM25 인덱스가 초기화되지 않음")
+            return []
+
+        try:
+            # 쿼리 토크나이징 (한국어 형태소 분석)
+            query_tokens = self.tokenizer.tokenize(query)
+
+            # BM25 점수 계산
+            bm25_scores = self.bm25_index.get_scores(query_tokens)
+
+            # 결과 구성
+            results = []
+            for idx, score in enumerate(bm25_scores):
+                if score > 0:  # 점수가 0보다 큰 것만
+                    doc_id, content = self.bm25_documents[idx]
+                    results.append({
+                        'id': doc_id,
+                        'content': content,
+                        'bm25_score': float(score),
+                        'cosine_score': float(score),  # 호환성을 위해
+                        'distance': 1.0 - min(float(score), 1.0)  # 호환성을 위해
+                    })
+
+            # BM25 점수 순으로 정렬
+            sorted_results = sorted(results, key=lambda x: x['bm25_score'], reverse=True)
+            final_results = sorted_results[:self.config.bm25_results]
+
+            logger.info(f"✅ BM25 검색 완료: {len(final_results)}개 결과")
+            return final_results
+
+        except Exception as e:
+            logger.error(f"❌ BM25 검색 실패: {e}")
+            return []
+
     def _deduplicate_and_score(self, all_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """검색 결과 중복 제거 및 점수 통합"""
         unique_docs = {}
@@ -402,7 +609,7 @@ class RRFRAGSystem:
 
     def rrf_search(self, query: str) -> List[Dict[str, Any]]:
         """
-        RRF 기반 하이브리드 검색
+        RRF 기반 하이브리드 검색 (Multi-Query + HyDE + BM25)
 
         Args:
             query: 검색 쿼리
@@ -411,20 +618,39 @@ class RRFRAGSystem:
             RRF 융합된 최종 검색 결과
         """
         try:
-            logger.info(f"🚀 RRF 기반 검색 시작: '{query}'")
+            search_methods = []
+            logger.info(f"🚀 RRF 기반 하이브리드 검색 시작: '{query}'")
 
-            # 1. 멀티쿼리와 HyDE 검색을 독립적으로 실행
+            # 1. 멀티쿼리, HyDE, BM25 검색을 독립적으로 실행
             logger.info("📊 1단계: 독립 검색 실행")
             multi_query_results = self.multi_query_search(query)
-            hyde_results = self.hyde_search(query)
+            if multi_query_results:
+                search_methods.append("Multi-Query")
 
-            if not multi_query_results and not hyde_results:
+            hyde_results = self.hyde_search(query)
+            if hyde_results:
+                search_methods.append("HyDE")
+
+            # BM25 검색 (활성화된 경우)
+            bm25_results = []
+            if self.config.enable_bm25 and self.bm25_index:
+                bm25_results = self.bm25_search(query)
+                if bm25_results:
+                    search_methods.append("BM25")
+
+            if not multi_query_results and not hyde_results and not bm25_results:
                 logger.warning("⚠️ 모든 검색 결과가 비어있음")
                 return []
 
+            logger.info(f"🔍 사용된 검색 방식: {' + '.join(search_methods)}")
+
             # 2. RRF로 결과 융합
             logger.info("🔄 2단계: RRF 융합")
-            final_candidate_ids = self.rrf_engine.fuse_results(multi_query_results, hyde_results)
+            final_candidate_ids, rrf_scores = self.rrf_engine.fuse_results(
+                multi_query_results,
+                hyde_results,
+                bm25_results if bm25_results else None
+            )
 
             if not final_candidate_ids:
                 logger.warning("⚠️ RRF 융합 결과가 비어있음")
@@ -435,8 +661,8 @@ class RRFRAGSystem:
             final_documents = self.load_documents_by_ids(final_candidate_ids)
 
             # 4. 가중치 적용
-            logger.info("⚖️ 4단계: 가중치 적용")
-            weighted_results = self._apply_weighting_to_documents(final_documents, query)
+            logger.info("⚖️ 4단계: RRF 점수 적용")
+            weighted_results = self._apply_weighting_to_documents(final_documents, query, rrf_scores)
 
             # 5. 융합 효과 분석
             fusion_analysis = self.rrf_engine.analyze_fusion_effect(
@@ -457,50 +683,32 @@ class RRFRAGSystem:
             logger.error(f"❌ RRF 기반 검색 실패: {e}")
             return []
 
-    def _apply_weighting_to_documents(self, documents: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
-        """문서에 가중치 적용"""
+    def _apply_weighting_to_documents(self, documents: List[Dict[str, Any]], query: str,
+                                     rrf_scores: Dict[str, float]) -> List[Dict[str, Any]]:
+        """문서에 RRF 점수 적용 (청크 타입 가중치는 사용하지 않음)"""
         try:
             if not documents:
                 return []
 
-            # 가중치 시스템 형식으로 변환
-            search_results = []
-            for doc in documents:
+            # RRF 점수를 직접 사용 (청크 타입 가중치 무시)
+            final_results = []
+            for i, doc in enumerate(documents):
+                doc_id = doc['id']
+                rrf_score = rrf_scores.get(doc_id, 0.0)
                 chunk_type = self._estimate_chunk_type(doc['content'])
 
-                search_result = {
-                    'id': doc['id'],
-                    'content': doc['content'],
-                    'chunk_type': chunk_type,
-                    'cosine_score': 0.8,  # RRF 기반이므로 가상 점수
-                    'embedding': [],
-                    'metadata': doc.get('metadata', {})
-                }
-                search_results.append(search_result)
-
-            # 가중치 적용
-            mock_query_embedding = np.random.normal(0, 1, 384).tolist()
-            weighted_results = self.weighting_system.apply_weighted_scoring(
-                search_results, mock_query_embedding
-            )
-
-            # 최종 형식으로 변환
-            final_results = []
-            for i, weighted_result in enumerate(weighted_results):
                 result = {
-                    'id': weighted_result.id,
-                    'content': weighted_result.content,
-                    'score': weighted_result.weighted_score,
-                    'raw_score': weighted_result.cosine_score,
-                    'weight': weighted_result.weight,
-                    'chunk_type': weighted_result.chunk_type,
+                    'id': doc_id,
+                    'content': doc['content'],
+                    'score': rrf_score,  # RRF 점수 직접 사용
+                    'chunk_type': chunk_type,
                     'rrf_rank': i + 1,  # RRF 순위 추가
                     'method': 'rrf_fusion',
                     'source': 'rrf_rag_system',
                     'metadata': {
-                        **weighted_result.metadata,
+                        **doc.get('metadata', {}),
                         'rrf_enhanced': True,
-                        'weight_applied': True
+                        'rrf_score': rrf_score
                     }
                 }
                 final_results.append(result)
