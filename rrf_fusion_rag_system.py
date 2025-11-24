@@ -133,6 +133,10 @@ class RRFConfig:
     enable_bm25: bool = True  # BM25 검색 활성화 여부
     bm25_tokenizer: str = "korean"  # simple 또는 korean (기본: 한국어 형태소 분석)
 
+    # 티켓 중복 제거 설정
+    deduplicate_tickets: bool = True  # 티켓 중복 제거 활성화
+    deduplication_strategy: str = "max_score"  # max_score, first, merge, all_scores
+
 class RRFFusionEngine:
     """RRF (Reciprocal Rank Fusion) 융합 엔진"""
 
@@ -676,8 +680,17 @@ class RRFRAGSystem:
                 logger.info(f"  원본: Multi({orig_stats['multi_query_count']}) + HyDE({orig_stats['hyde_count']}) → 고유({orig_stats['both_methods'] + orig_stats['multi_only'] + orig_stats['hyde_only']})")
                 logger.info(f"  최종: {final_comp['total_candidates']}개 (양쪽:{final_comp['from_both_methods']}, Multi만:{final_comp['from_multi_only']}, HyDE만:{final_comp['from_hyde_only']})")
 
-            logger.info(f"✅ RRF 기반 검색 완료: {len(weighted_results)}개 결과")
-            return weighted_results
+            # 6. 티켓 중복 제거 (옵션)
+            final_results = weighted_results
+            if self.config.deduplicate_tickets:
+                logger.info("🎯 5단계: 티켓 중복 제거")
+                final_results = self.deduplicate_by_ticket(
+                    weighted_results,
+                    strategy=self.config.deduplication_strategy
+                )
+
+            logger.info(f"✅ RRF 기반 검색 완료: {len(final_results)}개 결과")
+            return final_results
 
         except Exception as e:
             logger.error(f"❌ RRF 기반 검색 실패: {e}")
@@ -718,6 +731,80 @@ class RRFRAGSystem:
         except Exception as e:
             logger.error(f"❌ 가중치 적용 실패: {e}")
             return []
+
+    def deduplicate_by_ticket(self, results: List[Dict[str, Any]],
+                             strategy: str = 'max_score') -> List[Dict[str, Any]]:
+        """
+        티켓 단위로 중복 제거
+
+        Args:
+            results: 검색 결과 리스트
+            strategy: 중복 제거 전략
+                - 'max_score': 최고 점수 청크만 선택 (기본)
+                - 'first': 첫 번째 청크만 선택
+                - 'merge': 모든 청크를 하나로 병합
+                - 'all_scores': 모든 청크 점수 합산
+
+        Returns:
+            티켓 단위로 중복 제거된 결과
+        """
+        from collections import defaultdict
+
+        # 티켓 ID별로 그룹화
+        ticket_groups = defaultdict(list)
+
+        for result in results:
+            metadata = result.get('metadata', {})
+            # ticket_id 추출
+            ticket_id = None
+            for key in ['ticket_id', 'ticket_key', 'jira_key', 'issue_key', 'key']:
+                if key in metadata:
+                    ticket_id = metadata[key]
+                    break
+
+            if ticket_id:
+                ticket_groups[ticket_id].append(result)
+            else:
+                # ticket_id가 없는 경우 chunk_id를 그대로 사용
+                ticket_groups[result['id']].append(result)
+
+        # 전략에 따라 대표 청크 선택
+        deduplicated_results = []
+
+        for ticket_id, chunks in ticket_groups.items():
+            if strategy == 'max_score':
+                # 최고 점수 청크 선택
+                best_chunk = max(chunks, key=lambda x: x.get('score', 0.0))
+                deduplicated_results.append(best_chunk)
+
+            elif strategy == 'first':
+                # 첫 번째 청크 선택
+                deduplicated_results.append(chunks[0])
+
+            elif strategy == 'all_scores':
+                # 점수 합산
+                best_chunk = max(chunks, key=lambda x: x.get('score', 0.0))
+                total_score = sum(c.get('score', 0.0) for c in chunks)
+                best_chunk['score'] = total_score
+                best_chunk['metadata']['aggregated_chunks'] = len(chunks)
+                best_chunk['metadata']['original_score'] = best_chunk.get('score', 0.0)
+                deduplicated_results.append(best_chunk)
+
+            elif strategy == 'merge':
+                # 모든 청크 내용 병합
+                best_chunk = chunks[0].copy()
+                merged_content = '\n\n'.join([c['content'] for c in chunks])
+                best_chunk['content'] = merged_content
+                best_chunk['score'] = max(c.get('score', 0.0) for c in chunks)
+                best_chunk['metadata']['merged_chunks'] = len(chunks)
+                deduplicated_results.append(best_chunk)
+
+        # 점수 순으로 재정렬
+        deduplicated_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
+
+        logger.info(f"🔄 티켓 중복 제거: {len(results)}개 청크 → {len(deduplicated_results)}개 티켓 (전략: {strategy})")
+
+        return deduplicated_results
 
     def _estimate_chunk_type(self, content: str) -> str:
         """chunk_type 추정"""

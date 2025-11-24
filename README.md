@@ -1,279 +1,156 @@
-# 🤖 AI 메일 조회 챗봇 (통합 이메일 서비스)
-
-Azure OpenAI와 LangChain을 사용한 지능형 메일 관리 시스템으로, Gmail과 Microsoft Graph API를 선택적으로 사용할 수 있습니다.
-
-## ✨ 주요 기능
-
-### 🔄 **유연한 이메일 제공자 선택**
-- **Gmail API**: Google Gmail 연동
-- **Microsoft Graph API**: Outlook/Office 365 연동
-- **동적 전환**: 설정 파일 하나만 변경하면 즉시 전환 가능
-- **자동 감지**: 환경변수에 따라 사용 가능한 제공자 자동 감지
-
-### 🎯 **통일된 데이터 모델**
-- Gmail과 Graph API의 데이터를 동일한 형식으로 변환
-- 기존 티켓 UI와 완벽 호환
-- 타입 안전성을 위한 Pydantic 모델 사용
-
-### 🧠 **AI 기반 메일 관리**
-- LangChain을 사용한 지능형 메일 분석
-- 자연어로 메일 검색 및 분류
-- 티켓 형태로 메일 관리
-
-### 🎨 **직관적인 사용자 인터페이스**
-- Streamlit 기반의 현대적인 웹 UI
-- 메일 제목을 클릭 가능한 버튼으로 표시
-- 우측 사이드바에 상세 메일 내용 표시
-- 실시간 상태 모니터링
-
-### 🆕 **향상된 티켓 처리 시스템 (NEW!)**
-- **이중 분류 시스템**: AI가 '업무용'과 '업무용이 아님'으로 메일을 분류
-- **사용자 정정 기능**: AI 분류 결과를 사용자가 직접 수정 가능
-- **실시간 티켓 변환**: '정정' 버튼 클릭 한 번으로 즉시 티켓 생성
-- **스마트 분류**: 메일 내용과 사용자 요청을 종합하여 정확한 분류 수행
-- **중복 티켓 생성 방지**: 메일의 고유 ID로 중복 티켓 생성을 자동으로 방지
-
-## 🏗️ 아키텍처
-
-### **추상화 계층**
-```
-EmailProvider (ABC)
-├── GmailProvider
-└── GraphApiProvider
-```
-
-### **데이터 흐름**
-```
-API Response → EmailMessage (통일된 모델) → AI 분류 → Tickets + Non-work Emails → UI
-```
-
-### **Factory 패턴**
-- `create_provider()`: 제공자 인스턴스 생성
-- `get_available_providers()`: 사용 가능한 제공자 목록
-- `get_default_provider()`: 기본 제공자 자동 감지
-
-### **향상된 티켓 처리 아키텍처**
-```
-메일 수신 → AI 분류기 → 분류 결과
-    ↓
-├── 업무용 메일 → 중복 체크 → 티켓 생성 → SQLite + VectorDB 저장
-└── 업무용이 아닌 메일 → non_work_emails 목록 → 사용자 정정 대기
-    ↓
-사용자 정정 → 중복 체크 → create_ticket_from_single_email() → 즉시 티켓 생성
-```
-
-**중복 방지 메커니즘:**
-- 메일의 `message_id`를 기준으로 기존 티켓 존재 여부 확인
-- 데이터베이스 레벨에서 UNIQUE 제약조건으로 이중 보호
-- 중복 시도 시 기존 티켓 정보 반환하여 일관성 유지
-
-## 🚀 설치 및 설정
-
-### **1. 저장소 클론**
-```bash
-git clone <repository-url>
-cd ops_agent
-```
-
-### **2. 가상환경 생성 및 활성화**
-```bash
-python3 -m venv venv
-source venv/bin/activate  # macOS/Linux
-# 또는
-venv\Scripts\activate  # Windows
-```
-
-### **3. 의존성 설치**
-```bash
-pip install -r requirements.txt
-```
-
-### **4. 환경변수 설정 (.env 파일)**
-```bash
-# Azure OpenAI 설정
-AZURE_OPENAI_ENDPOINT=your_endpoint
-AZURE_OPENAI_API_KEY=your_api_key
-AZURE_OPENAI_API_VERSION=2024-10-21
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
-
-# Gmail API 설정 (선택사항)
-GMAIL_CLIENT_ID=your_gmail_client_id
-GMAIL_CLIENT_SECRET=your_gmail_client_secret
-GMAIL_REFRESH_TOKEN=your_gmail_refresh_token
-
-# Microsoft Graph API 설정 (선택사항)
-GRAPH_CLIENT_ID=your_graph_client_id
-GRAPH_CLIENT_SECRET=your_graph_client_secret
-GRAPH_REFRESH_TOKEN=your_graph_refresh_token
-GRAPH_TENANT_ID=your_tenant_id
-
-# 기본 이메일 제공자 설정 (선택사항)
-EMAIL_PROVIDER=gmail  # 또는 'graph'
-```
-
-## 🔧 사용법
-
-### **1. 기본 실행**
-```bash
-streamlit run langchain_chatbot_app.py
-```
-
-### **2. 제공자 선택**
-- 사이드바에서 "이메일 제공자 선택" 드롭다운 사용
-
-### **3. 향상된 티켓 처리 시스템 사용법**
-
-#### **자동 메일 분류**
-사용자가 "오늘 처리해야 할 티켓 보여줘"라고 요청하면:
-1. AI가 모든 메일을 분석하여 '업무용'과 '업무용이 아님'으로 분류
-2. '업무용' 메일은 자동으로 티켓으로 생성
-3. '업무용이 아님' 메일은 별도 섹션에 표시
-
-#### **사용자 정정 기능**
-1. **업무용이 아닌 메일 확인**: 하단 섹션에서 AI 분류 결과 확인
-2. **정정 버튼 클릭**: 티켓으로 변환이 필요한 메일의 "정정" 버튼 클릭
-3. **자동 티켓 생성**: 백엔드에서 즉시 티켓 생성 프로세스 실행
-4. **실시간 업데이트**: 화면 새로고침으로 새 티켓이 상단 목록에 표시
-
-#### **정정 버튼 동작 과정**
-```
-정정 버튼 클릭 → st.spinner("티켓 생성 중...") → 
-create_ticket_from_single_email() 호출 → 
-티켓 생성 및 DB 저장 → 
-st.success("✅ 티켓이 성공적으로 생성되었습니다!") → 
-st.rerun()으로 화면 새로고침
-```
-
-### **4. 고급 기능**
-- **메일 필터링**: 읽음/안읽음, 발신자, 날짜 등으로 메일 필터링
-- **티켓 상태 관리**: 생성된 티켓의 상태를 pending → approved → rejected로 변경
-- **VectorDB 연동**: 메일 내용을 벡터화하여 유사도 검색 지원
-
-## 📁 프로젝트 구조
-
-```
-ops_agent/
-├── 📄 email_models.py          # 통일된 이메일 데이터 모델
-├── 📄 email_provider.py        # 추상화 계층 및 Factory
-├── 📄 gmail_provider.py        # Gmail API 구현
-├── 📄 graph_provider.py        # Microsoft Graph API 구현
-├── 📄 unified_email_service.py # 통합 이메일 서비스
-├── 📄 langchain_chatbot_app.py # 메인 애플리케이션
-├── 📄 enhanced_ticket_ui.py    # 티켓 UI 컴포넌트
-├── 📄 requirements.txt         # 의존성 목록
-└── 📄 README.md               # 프로젝트 문서
-```
-
-## 🔌 API 연동 가이드
-
-### **Gmail API 설정**
-1. [Google Cloud Console](https://console.cloud.google.com/)에서 프로젝트 생성
-2. Gmail API 활성화
-3. OAuth 2.0 클라이언트 ID 생성
-4. Refresh Token 획득
-
-### **Microsoft Graph API 설정**
-1. [Azure Portal](https://portal.azure.com/)에서 앱 등록
-2. Microsoft Graph API 권한 추가
-3. 클라이언트 시크릿 생성
-4. 테넌트 ID 확인
-
-## 🧪 테스트
-
-### **개별 제공자 테스트**
-```bash
-# Gmail 제공자 테스트
-python3 -c "from gmail_provider import GmailProvider; print('Gmail Provider OK')"
-
-# Graph API 제공자 테스트
-python3 -c "from graph_provider import GraphApiProvider; print('Graph Provider OK')"
-```
-
-### **중복 티켓 생성 방지 테스트**
-```python
-from database_models import MailParser, Mail
-
-# 메일 파서 생성
-mail_parser = MailParser()
-
-# 첫 번째 티켓 생성
-mail1 = Mail(message_id="msg_001", ...)
-ticket1 = mail_parser.create_ticket_from_mail(mail1)
-result1 = mail_parser.save_mail_and_ticket(mail1, ticket1)
-
-# 같은 메일 ID로 두 번째 티켓 생성 시도
-mail2 = Mail(message_id="msg_001", ...)  # 같은 message_id
-ticket2 = mail_parser.create_ticket_from_mail(mail2)
-result2 = mail_parser.save_mail_and_ticket(mail2, ticket2)
-
-# result2['duplicate_prevented']가 True로 반환됨
-# result2['ticket_id']는 첫 번째 티켓의 ID와 동일
-```
-
-### **통합 서비스 테스트**
-```bash
-# 통합 이메일 서비스 테스트
-python3 -c "from unified_email_service import UnifiedEmailService; print('Unified Service OK')"
-```
-
-## 🔄 마이그레이션 가이드
-
-### **기존 Gmail 전용 코드에서**
-```python
-# 기존 코드
-from gmail_integration import fetch_gmail_tickets_sync
-
-# 새로운 코드
-from unified_email_service import fetch_emails_sync
-# 또는
-from unified_email_service import fetch_gmail_tickets_sync  # 호환성 유지
-```
-
-### **제공자 전환**
-```python
-# Gmail 사용
-tickets = fetch_emails_sync('gmail')
-
-# Microsoft Graph 사용
-tickets = fetch_emails_sync('graph')
-
-# 기본 제공자 사용
-tickets = fetch_emails_sync()
-```
-
-## 🚧 제한사항
-
-- **Gmail API**: 일일 할당량 제한 (1,000,000,000 quota units)
-- **Microsoft Graph API**: 요청당 최대 999개 메시지
-- **인증**: Refresh Token 만료 시 재인증 필요
-
-## 🔮 향후 계획
-
-- [ ] **추가 이메일 제공자**: Yahoo Mail, IMAP 등
-- [ ] **배치 처리**: 대량 메일 처리 최적화
-- [ ] **실시간 동기화**: 웹훅 기반 실시간 업데이트
-- [ ] **고급 검색**: AI 기반 스마트 검색
-- [ ] **메일 분류**: 자동 라벨링 및 카테고리화
-
-## 🤝 기여하기
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## 📄 라이선스
-
-이 프로젝트는 MIT 라이선스 하에 배포됩니다.
-
-## 📞 지원
-
-문제가 발생하거나 질문이 있으시면:
-1. [Issues](../../issues) 페이지에서 버그 리포트
-2. [Discussions](../../discussions) 페이지에서 질문
-3. 프로젝트 문서 확인
+# ops_agent
+운영 티켓 자동화 시스템 + Jira 실데이터 기반 RAG 성능 최적화 실험
 
 ---
 
-**⭐ 이 프로젝트가 도움이 되었다면 Star를 눌러주세요!**
+## 0. 한 줄 소개
+AI 기반 운영 티켓 자동화 시스템 + RAG 성능 최적화 실험 프로젝트
+> Jira 실데이터를 활용한 Multi-Query, HyDE, RRF 기법 비교·검증
+
+---
+
+## 1. 프로젝트 배경
+
+### AS-IS (기존 운영 프로세스)
+- 업무 메일/메신저를 수동으로 확인 → 분류 → 해결 → Jira 티켓 생성
+- 평균 1~3시간 소요, 중요 메일 누락 위험
+- 반복 작업에 따른 인적 오류, 티켓 분류 일관성 부족
+
+### TO-BE (AI 기반 운영 에이전트)
+- Gmail/Slack/Kakao 메시지를 자동 수집
+- LLM이 업무 관련성/종류를 분류
+- RAG 기반으로 유사 티켓/문서를 찾아 해결 방향 추천
+- Human-in-the-loop으로 운영자가 승인/거절
+- 운영 리드타임(MTTC) 단축 + 자동 처리율 향상
+
+---
+
+## 2. 듀얼 포지셔닝
+
+### (A) 운영 자동화 시스템
+- **챗 기반 질의응답:**  
+  시스템/프로젝트 관련 질문 → Jira 이슈 + 내부 문서 기반 RAG 답변
+- **티켓 자동 생성:**  
+  Slack/Kakao 이벤트 감지 → AI 의견 포함 “가짜 티켓” 생성 → 승인 시 Jira 반영
+- **월간 보고 자동화:**  
+  Jira 데이터를 기반으로 LLM이 보고서 초안 생성 → 사용자가 편집 후 완성
+
+### (B) RAG 성능 최적화 실험 플랫폼
+- Jira 실데이터를 그대로 사용해 **Retriever 성능 병목을 진단**
+- 다음 기법의 실전 성능을 비교/검증
+  - Multi-Query Retrieval
+  - HyDE (Hypothetical Document Embeddings)
+  - Chunking 전략(컬럼 단위, 가중치 기반)
+  - RRF(Reciprocal Rank Fusion) 기반 결과 융합
+- **MRR 기반 정량 평가로 개선 효과 측정**
+
+---
+
+## 3. 핵심 기능
+
+### 3.1 챗 기반 Q&A
+- 자연어 질문 의도 파악
+- Jira/문서 임베딩 검색
+- 프로젝트 컨텍스트 기반 답변 생성
+
+### 3.2 Gmail 연동 및 메일 선별
+- Gmail API 기반 메일 수집
+- LLM이 자연어 요청을 동적 Gmail Query로 변환
+- 업무 관련 메일 자동 필터링
+
+### 3.3 Slack/Kakao 기반 티켓 자동 생성
+- 이벤트 감지 → 메일/메시지 본문 전처리
+- Few-shot/CoT 분류기로 업무 유형 분류
+- RAG로 유사 케이스/해결책 검색
+- AI 의견을 포함한 가짜 티켓 생성
+- 운영자 승인 시 Jira 반영
+
+### 3.4 Human-in-the-loop + 지속 학습
+- 운영자의 approve/reject/correction을 메모리 저장
+- 다음 유사 메일 분류 시 동적 few-shot 프롬프트 자동 구성
+- 시간이 지날수록 분류/추천 정확도 개선
+
+### 3.5 월간 보고 자동화
+- Jira MCP 툴을 활용해 이슈/작업 추출
+- LLM이 보고서 템플릿에 맞춰 초안 생성
+- 에디터에서 Human-in-the-loop 최종 편집
+
+---
+
+## 4. RAG 고도화 & 실험 요약
+
+### 4.1 문제
+- Jira 이슈는 노이즈(식별자/로그/특수문자)가 많고 길이가 가변적
+- 기본 임베딩 검색만으로는 유사도/정답 순위가 낮음
+
+### 4.2 개선 과정
+1. **데이터 정제 파이프라인**
+   - 식별자/노이즈 제거, 의미 중심 텍스트 추출
+2. **컬럼 단위 청킹**
+   - summary/description/comment 등 의미 축 분리
+3. **Chunk Weighting**
+   - 제목/본문/부가정보 중요도 가중치 부여
+4. **Multi-Query**
+   - 질의 확장으로 검색 폭 확보
+5. **HyDE**
+   - 이상적 답변을 생성해 검색 깊이 확보
+6. **RRF 융합**
+   - 점수 체계가 다른 결과를 순위 기반으로 통합
+
+### 4.3 결과 (MRR 기준)
+- Multi-Query, HyDE 각각 단독보다  
+  **RRF 통합이 가장 높은 검색 품질을 달성**
+- 복합 키워드/불완전 질의에서 정답 순위 안정화
+- Retriever 후보군 부족 실패 케이스를 다음 개선 목표로 도출
+
+## 5. 시스템 아키텍처 (요약)
+```mermaid
+flowchart LR
+    %% --- Input Sources ---
+    subgraph INPUTS["📥 External Inputs"]
+        Gmail["📧 Gmail\n(업무 메일 수집)"]
+        Slack["💬 Slack 이벤트"]
+        Kakao["💬 Kakao 이벤트"]
+        UserChat["🧑‍💻 사용자 챗 질의"]
+    end
+
+    %% --- Event Collector ---
+    Gmail --> EventCollector
+    Slack --> EventCollector
+    Kakao --> EventCollector
+    UserChat --> ChatController
+
+    EventCollector["🗂️ Event Collector\n메일/메시지 수집 & 파싱"]
+
+    %% --- Preprocessing ---
+    EventCollector --> Preprocess["🔧 Preprocessor\n(text 정제/구조화)"]
+
+    %% --- LLM Classification ---
+    Preprocess --> Classifier["🧠 LLM Classifier\n(Few-shot / CoT)\n업무 분류/의도 분석"]
+
+    %% --- Memory System (Human-in-the-loop) ---
+    Classifier --> MemoryStore["💾 Mem0 Memory Store\n(AI decision + user feedback)"]
+    MemoryStore --> Classifier
+    MemoryStore --> PromptGen["✨ Dynamic Few-shot Prompt Generator"]
+
+    %% --- RAG Retrieval ---
+    PromptGen --> Retriever["🔍 RAG Retriever\n(Multi-Query / HyDE / RRF)"]
+    ChatController --> Retriever
+    Retriever --> Ranker["📊 RRF Rank Fusion\n(순위 기반 통합)"]
+
+    %% --- Ticket Creation ---
+    Ranker --> FakeTicket["📄 Fake Ticket DB\n(AI 생성 티켓 초안)"]
+    FakeTicket --> HITL_UI["👀 Human-in-the-loop UI\n승인/거절/수정"]
+
+    %% --- Jira Sync ---
+    HITL_UI --> JiraWriter["📝 Jira Sync\n(승인 시 실제 티켓 생성)"]
+
+    %% --- Monthly Report Automation ---
+    JiraDB["🗄️ Jira DB / MCP Tools"]
+    JiraDB --> ReportEngine["📘 Report Generator\n(월간 보고서 초안 생성)"]
+    ReportEngine --> HITL_UI
+
+    %% --- Output ---
+    HITL_UI --> Ops["🎯 최종 운영 결과물\n- 생성된 Jira 티켓\n- 개선된 분류/추천 정확도"]
+```
+
