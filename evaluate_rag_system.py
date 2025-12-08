@@ -46,26 +46,33 @@ class RAGEvaluator:
         self.rag_system = rag_system
         self.results = []
 
-    def load_test_data(self, csv_path: str) -> List[Dict[str, str]]:
+    def load_test_data(self, csv_path: str) -> List[Dict[str, Any]]:
         """
-        테스트 데이터 로드
+        테스트 데이터 로드 (여러 정답 지원)
 
         Args:
             csv_path: CSV 파일 경로
 
         Returns:
-            테스트 케이스 리스트 [{'query': '...', 'answer_ticket_id': '...'}, ...]
+            테스트 케이스 리스트 [{'query': '...', 'answer_ticket_ids': ['...', '...']}, ...]
         """
         test_cases = []
         try:
             with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    # 세미콜론(;)으로 구분된 여러 정답 처리
+                    answer_ids = [id.strip() for id in row['answer_ticket_id'].split(';') if id.strip()]
+                    # 중복 제거
+                    answer_ids = list(dict.fromkeys(answer_ids))
+
                     test_cases.append({
                         'query': row['query'],
-                        'answer_ticket_id': row['answer_ticket_id']
+                        'answer_ticket_ids': answer_ids  # 리스트로 변경
                     })
-            logger.info(f"✅ 테스트 데이터 로드 완료: {len(test_cases)}개 케이스")
+
+            total_answers = sum(len(tc['answer_ticket_ids']) for tc in test_cases)
+            logger.info(f"✅ 테스트 데이터 로드 완료: {len(test_cases)}개 케이스, {total_answers}개 정답")
             return test_cases
         except Exception as e:
             logger.error(f"❌ 테스트 데이터 로드 실패: {e}")
@@ -95,40 +102,50 @@ class RAGEvaluator:
         logger.debug(f"메타데이터에서 ticket_id를 찾을 수 없음: {metadata}")
         return None
 
-    def find_answer_rank(self, search_results: List[Dict[str, Any]],
-                        answer_ticket_id: str) -> Tuple[int, bool]:
+    def find_best_answer_rank(self, search_results: List[Dict[str, Any]],
+                              answer_ticket_ids: List[str]) -> Tuple[int, bool, str]:
         """
-        검색 결과에서 정답의 순위 찾기
+        검색 결과에서 여러 정답 중 가장 높은 순위 찾기
 
         Args:
             search_results: RAG 검색 결과
-            answer_ticket_id: 정답 티켓 ID
+            answer_ticket_ids: 정답 티켓 ID 리스트
 
         Returns:
-            (순위, 발견 여부) 튜플. 순위는 1부터 시작, 없으면 -1
+            (순위, 발견 여부, 발견된 티켓 ID) 튜플. 순위는 1부터 시작, 없으면 -1
         """
+        best_rank = -1
+        found_ticket = None
+
         for rank, result in enumerate(search_results, start=1):
             metadata = result.get('metadata', {})
             ticket_id = self.extract_ticket_id(metadata)
 
-            if ticket_id and ticket_id == answer_ticket_id:
-                return rank, True
+            if ticket_id and ticket_id in answer_ticket_ids:
+                # 첫 번째 발견된 정답 (가장 높은 순위)
+                best_rank = rank
+                found_ticket = ticket_id
+                break
 
-        return -1, False
+        if best_rank > 0:
+            return best_rank, True, found_ticket
+        else:
+            return -1, False, None
 
-    def evaluate_single_query(self, query: str, answer_ticket_id: str) -> Dict[str, Any]:
+    def evaluate_single_query(self, query: str, answer_ticket_ids: List[str]) -> Dict[str, Any]:
         """
-        단일 쿼리 평가
+        단일 쿼리 평가 (여러 정답 지원)
 
         Args:
             query: 검색 쿼리
-            answer_ticket_id: 정답 티켓 ID
+            answer_ticket_ids: 정답 티켓 ID 리스트
 
         Returns:
             평가 결과 딕셔너리
         """
         try:
-            logger.info(f"🔍 평가 중: '{query}' (정답: {answer_ticket_id})")
+            answer_str = ', '.join(answer_ticket_ids)
+            logger.info(f"🔍 평가 중: '{query}' (정답: {answer_str})")
 
             # RAG 검색 실행
             search_results = self.rag_system.rrf_search(query)
@@ -137,26 +154,29 @@ class RAGEvaluator:
                 logger.warning(f"⚠️ 검색 결과 없음: '{query}'")
                 return {
                     'query': query,
-                    'answer_ticket_id': answer_ticket_id,
+                    'answer_ticket_ids': answer_ticket_ids,
                     'rank': -1,
                     'found': False,
+                    'found_ticket': None,
                     'reciprocal_rank': 0.0,
                     'top_results': []
                 }
 
-            # 정답 순위 찾기
-            rank, found = self.find_answer_rank(search_results, answer_ticket_id)
+            # 여러 정답 중 가장 높은 순위 찾기
+            rank, found, found_ticket = self.find_best_answer_rank(search_results, answer_ticket_ids)
 
-            # 상위 5개 결과 (디버깅용)
+            # 상위 10개 결과 (디버깅용 - 더 많이 표시)
             top_results = []
-            for i, result in enumerate(search_results[:5], start=1):
+            for i, result in enumerate(search_results[:10], start=1):
                 metadata = result.get('metadata', {})
                 ticket_id = self.extract_ticket_id(metadata)
+                is_answer = ticket_id in answer_ticket_ids if ticket_id else False
                 top_results.append({
                     'rank': i,
                     'ticket_id': ticket_id,
+                    'is_answer': is_answer,
                     'score': result.get('score', 0.0),
-                    'rrf_score': metadata.get('rrf_score', 0.0)  # ✅ 메타데이터에서 추출
+                    'rrf_score': metadata.get('rrf_score', 0.0)
                 })
 
             # Reciprocal Rank 계산
@@ -164,17 +184,18 @@ class RAGEvaluator:
 
             result = {
                 'query': query,
-                'answer_ticket_id': answer_ticket_id,
+                'answer_ticket_ids': answer_ticket_ids,
                 'rank': rank,
                 'found': found,
+                'found_ticket': found_ticket,
                 'reciprocal_rank': reciprocal_rank,
                 'top_results': top_results
             }
 
             if found:
-                logger.info(f"✅ 정답 발견: 순위 {rank}")
+                logger.info(f"✅ 정답 발견: {found_ticket} (순위 {rank})")
             else:
-                logger.warning(f"❌ 정답 미발견: {answer_ticket_id}")
+                logger.warning(f"❌ 정답 미발견: {answer_str}")
 
             return result
 
@@ -182,15 +203,16 @@ class RAGEvaluator:
             logger.error(f"❌ 쿼리 평가 실패: {e}")
             return {
                 'query': query,
-                'answer_ticket_id': answer_ticket_id,
+                'answer_ticket_ids': answer_ticket_ids,
                 'rank': -1,
                 'found': False,
+                'found_ticket': None,
                 'reciprocal_rank': 0.0,
                 'error': str(e),
                 'top_results': []
             }
 
-    def evaluate_all(self, test_cases: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    def evaluate_all(self, test_cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         모든 테스트 케이스 평가
 
@@ -210,7 +232,7 @@ class RAGEvaluator:
 
             result = self.evaluate_single_query(
                 test_case['query'],
-                test_case['answer_ticket_id']
+                test_case['answer_ticket_ids']  # 리스트로 변경
             )
             results.append(result)
 
@@ -368,7 +390,8 @@ def main():
             print("\n❌ 정답을 찾지 못한 케이스:")
             for case in failed_cases[:5]:  # 상위 5개만 출력
                 print(f"  - 쿼리: {case['query']}")
-                print(f"    정답: {case['answer_ticket_id']}")
+                answer_str = ', '.join(case['answer_ticket_ids'])
+                print(f"    정답: {answer_str}")
                 if case.get('top_results'):
                     print(f"    상위 결과: {[r['ticket_id'] for r in case['top_results'][:3]]}")
 

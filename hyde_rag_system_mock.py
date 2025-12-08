@@ -60,42 +60,144 @@ class MockHyDEGenerator:
         return default_doc
 
     def generate_multi_queries(self, question: str) -> List[str]:
-        """Mock 멀티 쿼리 생성"""
-        # 질문에 따른 Mock 멀티 쿼리 생성
+        """
+        NCMS 시스템 특화 멀티 쿼리 생성
+
+        규칙:
+        1. 질문의 핵심 의도를 파악
+        2. 기술적 동의어와 구체적인 파일명/용어 포함
+        3. 한국어 문장으로 자연스럽게 작성
+        """
+        question_lower = question.lower()
+
+        # 기술 용어 동의어 매핑 (NCMS/JIRA 시스템 특화)
+        tech_synonyms = {
+            "config": ["application.properties", "yml", "설정 파일", "환경변수", "configuration"],
+            "배치": ["Batch", "Job", "Quartz", "스케줄러", "정기 작업"],
+            "db": ["Oracle", "Tibero", "데이터베이스", "Database", "RDB"],
+            "api": ["REST API", "엔드포인트", "인터페이스", "웹서비스"],
+            "vm": ["가상머신", "Virtual Machine", "서버", "인스턴스"],
+            "exception": ["에러", "오류", "Error", "장애", "예외"],
+            "마이그레이션": ["migration", "이관", "전환", "데이터 이동"],
+            "ecdn": ["CDN", "콘텐츠 전송 네트워크", "캐시 서버"],
+            "sequence": ["시퀀스", "순번", "일련번호"],
+            "preprd": ["Pre-Production", "사전운영", "스테이징"],
+            "stg": ["Staging", "스테이징", "테스트 환경"],
+            "lcms": ["Legacy CMS", "구 CMS", "이전 시스템"],
+            "cp사": ["CP", "콘텐츠 제공자", "Content Provider", "제휴사"],
+            "이미지": ["image", "img", "사진", "그림 파일"],
+            "동영상": ["video", "VOD", "영상", "미디어"],
+            "다운로드": ["download", "받기", "전송"],
+            "메타": ["metadata", "메타데이터", "정보"],
+            "큐": ["queue", "대기열", "메시지큐"]
+        }
+
+        # NCMS 시스템 특화 멀티 쿼리 매핑
         multi_queries_map = {
-            "사용자 인터페이스": [
-                "UI 개선 방법",
-                "사용자 경험 향상 방안",
-                "인터페이스 디자인 최적화"
+            # Config 관련
+            ("config", "설정", "yml", "properties"): [
+                "application.properties 또는 yml 설정 파일을 교체하거나 수정한 이력",
+                "환경변수 설정 변경으로 인한 문제 해결",
+                "configuration 오류로 config 파일을 교체한 케이스"
             ],
-            "서버 접속": [
-                "서버 연결 오류 해결",
-                "네트워크 접속 문제",
-                "서버 통신 장애 대응"
+
+            # 배치 관련
+            ("배치", "batch", "job", "quartz"): [
+                "Batch Job이나 Quartz 스케줄러를 재기동한 이력",
+                "정기 작업이나 배치 프로세스 재시작 케이스",
+                "배치 종료되지 않아서 강제 중단 및 재기동"
             ],
-            "데이터베이스": [
-                "DB 연결 끊김 해결",
-                "데이터베이스 안정성 개선",
-                "DB 성능 최적화 방법"
+
+            # DB 관련
+            ("db", "database", "데이터베이스", "oracle", "tibero", "마이그레이션"): [
+                "Oracle 또는 Tibero 데이터베이스 마이그레이션 후속 작업",
+                "DB 이관 및 전환 작업 이후 조치사항",
+                "데이터베이스 migration 관련 티켓"
             ],
-            "API": [
-                "API 성능 개선",
-                "응답 시간 단축 방법",
-                "서비스 속도 최적화"
+
+            # API 관련
+            ("api", "rest", "엔드포인트"): [
+                "REST API 엔드포인트나 웹서비스 인터페이스 문제",
+                "API 호출 오류 및 응답 이상",
+                "API 필드 조건이나 스펙 문의"
+            ],
+
+            # Exception/오류 관련
+            ("exception", "error", "오류", "에러", "장애"): [
+                "VM이나 서버에서 발생한 Exception 및 에러 로그",
+                "시스템 오류로 인한 장애 대응",
+                "예외 상황 발생 시 조치 이력"
+            ],
+
+            # 환경 관련
+            ("preprd", "stg", "staging", "환경"): [
+                "PrePRD나 Staging 환경 설정 및 초기 세팅",
+                "사전운영 또는 테스트 환경 구축",
+                "환경별 이미지 ECDN 경로 설정"
+            ],
+
+            # 이미지/동영상 다운로드
+            ("이미지", "동영상", "다운로드", "image", "video"): [
+                "이미지나 동영상 파일 다운로드 오류",
+                "미디어 전송 및 받기 지연 문제",
+                "img, video 파일 다운로드 실패 케이스"
+            ],
+
+            # Sequence 관련
+            ("sequence", "시퀀스", "순번"): [
+                "sequence number 불일치 시 조치사항",
+                "시퀀스 순번이 맞지 않을 때 대응 방법",
+                "일련번호 오류 해결"
+            ],
+
+            # CP사/콘텐츠 관련
+            ("cp", "cp사", "콘텐츠", "만료", "이관"): [
+                "CP사 또는 콘텐츠 제공자 이관 작업",
+                "방송사 콘텐츠 만료 처리 절차",
+                "제휴사 Content Provider 전환"
+            ],
+
+            # 메타/큐 관련
+            ("메타", "metadata", "큐", "queue"): [
+                "외부 메타데이터 큐 발송 문제",
+                "메타 정보 전달 queue 오류",
+                "메시지큐 대기열 이상"
+            ],
+
+            # LCMS 레거시
+            ("lcms", "레거시", "구 시스템"): [
+                "LCMS 시절 생성된 Legacy 데이터",
+                "구 CMS나 이전 시스템에서 발생한 문제",
+                "레거시 데이터 정리 이력"
+            ],
+
+            # 테이블/DB 작업
+            ("테이블", "table", "삭제", "drop"): [
+                "데이터베이스 테이블 삭제 또는 drop 이력",
+                "DB table 제거 작업",
+                "테이블 정리 및 삭제 케이스"
+            ],
+
+            # 접속 문제
+            ("접속", "연결", "connection"): [
+                "DB나 서버 접속 불가 문제",
+                "네트워크 연결 오류 대응",
+                "connection 실패 시 조치사항"
             ]
         }
 
-        # 키워드 매칭으로 적절한 멀티 쿼리 선택
-        for keyword, queries in multi_queries_map.items():
-            if keyword in question:
-                logger.info(f"✅ 멀티 쿼리 생성 (키워드: {keyword})")
+        # 키워드 매칭으로 특화 쿼리 선택
+        for keywords, queries in multi_queries_map.items():
+            if any(keyword in question_lower for keyword in keywords):
+                logger.info(f"✅ 멀티 쿼리 생성 (키워드: {keywords[0]})")
                 return queries
 
-        # 기본 멀티 쿼리
+        # 기본 멀티 쿼리 (매칭 실패 시)
+        # 질문에서 핵심 용어 추출 시도
         default_queries = [
-            f"{question} 해결",
-            f"{question} 방법",
-            f"{question} 개선"
+            f"{question} 해결 방법이나 조치사항",
+            f"{question}와 관련된 이력이나 케이스",
+            f"{question} 문제 대응 및 처리"
         ]
         logger.info("✅ 멀티 쿼리 생성 (기본 템플릿)")
         return default_queries
